@@ -97,6 +97,8 @@
 		B3FEA0932D349517000727AD /* PrimaryButtonStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3FEA0922D349517000727AD /* PrimaryButtonStyle.swift */; };
 		B3FEA0952D349537000727AD /* SearchBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3FEA0942D349537000727AD /* SearchBar.swift */; };
 		B3FEA0972D349559000727AD /* SymptomToggleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3FEA0962D349559000727AD /* SymptomToggleView.swift */; };
+		A2D34A9DC31F49F3B8E6AD8E /* APIConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6D7BDB2F8D54151AB86FC87 /* APIConfig.swift */; };
+		19CD0E700CD741748152862B /* SaveHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD14E6C2FE0047789EC1D2BE /* SaveHelper.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -222,6 +224,8 @@
 		B3FEA0922D349517000727AD /* PrimaryButtonStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrimaryButtonStyle.swift; sourceTree = "<group>"; };
 		B3FEA0942D349537000727AD /* SearchBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchBar.swift; sourceTree = "<group>"; };
 		B3FEA0962D349559000727AD /* SymptomToggleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SymptomToggleView.swift; sourceTree = "<group>"; };
+		A6D7BDB2F8D54151AB86FC87 /* APIConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIConfig.swift; sourceTree = "<group>"; };
+		BD14E6C2FE0047789EC1D2BE /* SaveHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SaveHelper.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -333,6 +337,8 @@
 				B33426962D13998800BAAE35 /* Food IntolerancesI am choosing optionsTests */,
 				B33426A02D13998800BAAE35 /* Food IntolerancesI am choosing optionsUITests */,
 				B399F6572D32CA4300172F48 /* FoodIntolerancesApp.swift */,
+				A6D7BDB2F8D54151AB86FC87 /* APIConfig.swift */,
+				BD14E6C2FE0047789EC1D2BE /* SaveHelper.swift */,
 				B3B539C32D3229A3003132AF /* Frameworks */,
 				B3D487B62D55990E00F7E3BA /* GetMoonPhase.swift */,
 				B37132122D77E12F0019E603 /* GoalTrackingView.swift */,
@@ -576,6 +582,8 @@
 				B34C6B422D3C65EE00ECFFF0 /* QuickNoteView.swift in Sources */,
 				B3FEA0912D3494F8000727AD /* IconButton.swift in Sources */,
 				B399F6582D32CA4300172F48 /* FoodIntolerancesApp.swift in Sources */,
+				A2D34A9DC31F49F3B8E6AD8E /* APIConfig.swift in Sources */,
+				19CD0E700CD741748152862B /* SaveHelper.swift in Sources */,
 				B3B539BC2D3203F6003132AF /* TrendsAnalysisPage.swift in Sources */,
 				B3FEA08F2D3494CB000727AD /* SymptomView.swift in Sources */,
 				B3A3843B2D38469000945970 /* DebugTrackedItemsView.swift in Sources */,
