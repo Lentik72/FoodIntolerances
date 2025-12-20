@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A5923076F198E69EB484A490 /* SymptomCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 978C8DB3A9BA2046DA439783 /* SymptomCatalog.swift */; };
+		933F8510E2BB567218295FEE /* CategoryData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CB985202170624F0331DEF3 /* CategoryData.swift */; };
 		B30BBDC62D32D1BA00B26967 /* BodyMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30BBDC52D32D1BA00B26967 /* BodyMapView.swift */; };
 		B30D8CD22D92233900ACE9BC /* ProtocolFetchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30D8CD12D92233900ACE9BC /* ProtocolFetchService.swift */; };
 		B30D8CD42D92238A00ACE9BC /* ProtocolPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30D8CD32D92238A00ACE9BC /* ProtocolPreviewView.swift */; };
@@ -106,14 +108,14 @@
 			containerPortal = B33426772D13998700BAAE35 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = B334267E2D13998700BAAE35;
-			remoteInfo = "Food IntolerancesI am choosing options";
+			remoteInfo = "Food Intolerances";
 		};
 		B334269E2D13998800BAAE35 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = B33426772D13998700BAAE35 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = B334267E2D13998700BAAE35;
-			remoteInfo = "Food IntolerancesI am choosing options";
+			remoteInfo = "Food Intolerances";
 		};
 /* End PBXContainerItemProxy section */
 
@@ -132,6 +134,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		978C8DB3A9BA2046DA439783 /* SymptomCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SymptomCatalog.swift; sourceTree = "<group>"; };
+		5CB985202170624F0331DEF3 /* CategoryData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoryData.swift; sourceTree = "<group>"; };
 		B30BBDC52D32D1BA00B26967 /* BodyMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BodyMapView.swift; sourceTree = "<group>"; };
 		B30D8CD12D92233900ACE9BC /* ProtocolFetchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtocolFetchService.swift; sourceTree = "<group>"; };
 		B30D8CD32D92238A00ACE9BC /* ProtocolPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtocolPreviewView.swift; sourceTree = "<group>"; };
@@ -144,9 +148,9 @@
 		B31A1E982D837C0B0024D855 /* NotificationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationSettingsView.swift; sourceTree = "<group>"; };
 		B31A1E9A2D8388280024D855 /* LocationPermissionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationPermissionManager.swift; sourceTree = "<group>"; };
 		B32086562D2ECC56007EBB69 /* StringArrayTransformer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StringArrayTransformer.swift; sourceTree = "<group>"; };
-		B334267F2D13998700BAAE35 /* Food IntolerancesI am choosing options.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Food IntolerancesI am choosing options.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		B33426932D13998800BAAE35 /* Food IntolerancesI am choosing optionsTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Food IntolerancesI am choosing optionsTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
-		B334269D2D13998800BAAE35 /* Food IntolerancesI am choosing optionsUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Food IntolerancesI am choosing optionsUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		B334267F2D13998700BAAE35 /* Food Intolerances.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Food Intolerances.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		B33426932D13998800BAAE35 /* Food IntolerancesTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Food IntolerancesTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		B334269D2D13998800BAAE35 /* Food IntolerancesUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Food IntolerancesUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		B34C6B2F2D3C5D4C00ECFFF0 /* Symptom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Symptom.swift; sourceTree = "<group>"; };
 		B34C6B332D3C5D7E00ECFFF0 /* SymptomSummarySection.swift .swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SymptomSummarySection.swift .swift"; sourceTree = "<group>"; };
 		B34C6B352D3C5D9A00ECFFF0 /* ActiveProtocolsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveProtocolsSection.swift; sourceTree = "<group>"; };
@@ -227,32 +231,32 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		B33426A52D13998800BAAE35 /* Exceptions for "Food IntolerancesI am choosing options" folder in "Food IntolerancesI am choosing options" target */ = {
+		B33426A52D13998800BAAE35 /* Exceptions for "Food Intolerances" folder in "Food Intolerances" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
-			target = B334267E2D13998700BAAE35 /* Food IntolerancesI am choosing options */;
+			target = B334267E2D13998700BAAE35 /* Food Intolerances */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		B33426812D13998700BAAE35 /* Food IntolerancesI am choosing options */ = {
+		B33426812D13998700BAAE35 /* Food Intolerances */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				B33426A52D13998800BAAE35 /* Exceptions for "Food IntolerancesI am choosing options" folder in "Food IntolerancesI am choosing options" target */,
+				B33426A52D13998800BAAE35 /* Exceptions for "Food Intolerances" folder in "Food Intolerances" target */,
 			);
-			path = "Food IntolerancesI am choosing options";
+			path = "Food Intolerances";
 			sourceTree = "<group>";
 		};
-		B33426962D13998800BAAE35 /* Food IntolerancesI am choosing optionsTests */ = {
+		B33426962D13998800BAAE35 /* Food IntolerancesTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "Food IntolerancesI am choosing optionsTests";
+			path = "Food IntolerancesTests";
 			sourceTree = "<group>";
 		};
-		B33426A02D13998800BAAE35 /* Food IntolerancesI am choosing optionsUITests */ = {
+		B33426A02D13998800BAAE35 /* Food IntolerancesUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "Food IntolerancesI am choosing optionsUITests";
+			path = "Food IntolerancesUITests";
 			sourceTree = "<group>";
 		};
 		B3D485DA2D4E930200F7E3BA /* Models */ = {
@@ -330,11 +334,13 @@
 				B3A383C72D35D93000945970 /* EditTrackedItemView.swift */,
 				B3A0849E2D669D42007CB8B5 /* EnvironmentalViews.swift */,
 				B34C6B472D3C67C200ECFFF0 /* FABAction.swift */,
-				B33426812D13998700BAAE35 /* Food IntolerancesI am choosing options */,
-				B33426962D13998800BAAE35 /* Food IntolerancesI am choosing optionsTests */,
-				B33426A02D13998800BAAE35 /* Food IntolerancesI am choosing optionsUITests */,
+				B33426812D13998700BAAE35 /* Food Intolerances */,
+				B33426962D13998800BAAE35 /* Food IntolerancesTests */,
+				B33426A02D13998800BAAE35 /* Food IntolerancesUITests */,
 				B399F6572D32CA4300172F48 /* FoodIntolerancesApp.swift */,
 				A6D7BDB2F8D54151AB86FC87 /* APIConfig.swift */,
+				978C8DB3A9BA2046DA439783 /* SymptomCatalog.swift */,
+				5CB985202170624F0331DEF3 /* CategoryData.swift */,
 				BD14E6C2FE0047789EC1D2BE /* SaveHelper.swift */,
 				B3B539C32D3229A3003132AF /* Frameworks */,
 				B3D487B62D55990E00F7E3BA /* GetMoonPhase.swift */,
@@ -404,9 +410,9 @@
 		B33426802D13998700BAAE35 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				B334267F2D13998700BAAE35 /* Food IntolerancesI am choosing options.app */,
-				B33426932D13998800BAAE35 /* Food IntolerancesI am choosing optionsTests.xctest */,
-				B334269D2D13998800BAAE35 /* Food IntolerancesI am choosing optionsUITests.xctest */,
+				B334267F2D13998700BAAE35 /* Food Intolerances.app */,
+				B33426932D13998800BAAE35 /* Food IntolerancesTests.xctest */,
+				B334269D2D13998800BAAE35 /* Food IntolerancesUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -423,9 +429,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		B334267E2D13998700BAAE35 /* Food IntolerancesI am choosing options */ = {
+		B334267E2D13998700BAAE35 /* Food Intolerances */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = B33426A62D13998800BAAE35 /* Build configuration list for PBXNativeTarget "Food IntolerancesI am choosing options" */;
+			buildConfigurationList = B33426A62D13998800BAAE35 /* Build configuration list for PBXNativeTarget "Food Intolerances" */;
 			buildPhases = (
 				B334267B2D13998700BAAE35 /* Sources */,
 				B334267C2D13998700BAAE35 /* Frameworks */,
@@ -437,22 +443,22 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				B33426812D13998700BAAE35 /* Food IntolerancesI am choosing options */,
+				B33426812D13998700BAAE35 /* Food Intolerances */,
 				B3D485DA2D4E930200F7E3BA /* Models */,
 				B3D485DD2D4E95E900F7E3BA /* Views */,
 				B3D485F52D52C92C00F7E3BA /* Utilities */,
 			);
-			name = "Food IntolerancesI am choosing options";
+			name = "Food Intolerances";
 			packageProductDependencies = (
 				B3B539C92D322CF0003132AF /* SwiftAA */,
 			);
-			productName = "Food IntolerancesI am choosing options";
-			productReference = B334267F2D13998700BAAE35 /* Food IntolerancesI am choosing options.app */;
+			productName = "Food Intolerances";
+			productReference = B334267F2D13998700BAAE35 /* Food Intolerances.app */;
 			productType = "com.apple.product-type.application";
 		};
-		B33426922D13998800BAAE35 /* Food IntolerancesI am choosing optionsTests */ = {
+		B33426922D13998800BAAE35 /* Food IntolerancesTests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = B33426AB2D13998800BAAE35 /* Build configuration list for PBXNativeTarget "Food IntolerancesI am choosing optionsTests" */;
+			buildConfigurationList = B33426AB2D13998800BAAE35 /* Build configuration list for PBXNativeTarget "Food IntolerancesTests" */;
 			buildPhases = (
 				B334268F2D13998800BAAE35 /* Sources */,
 				B33426902D13998800BAAE35 /* Frameworks */,
@@ -464,18 +470,18 @@
 				B33426952D13998800BAAE35 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				B33426962D13998800BAAE35 /* Food IntolerancesI am choosing optionsTests */,
+				B33426962D13998800BAAE35 /* Food IntolerancesTests */,
 			);
-			name = "Food IntolerancesI am choosing optionsTests";
+			name = "Food IntolerancesTests";
 			packageProductDependencies = (
 			);
-			productName = "Food IntolerancesI am choosing optionsTests";
-			productReference = B33426932D13998800BAAE35 /* Food IntolerancesI am choosing optionsTests.xctest */;
+			productName = "Food IntolerancesTests";
+			productReference = B33426932D13998800BAAE35 /* Food IntolerancesTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
-		B334269C2D13998800BAAE35 /* Food IntolerancesI am choosing optionsUITests */ = {
+		B334269C2D13998800BAAE35 /* Food IntolerancesUITests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = B33426AE2D13998800BAAE35 /* Build configuration list for PBXNativeTarget "Food IntolerancesI am choosing optionsUITests" */;
+			buildConfigurationList = B33426AE2D13998800BAAE35 /* Build configuration list for PBXNativeTarget "Food IntolerancesUITests" */;
 			buildPhases = (
 				B33426992D13998800BAAE35 /* Sources */,
 				B334269A2D13998800BAAE35 /* Frameworks */,
@@ -487,13 +493,13 @@
 				B334269F2D13998800BAAE35 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				B33426A02D13998800BAAE35 /* Food IntolerancesI am choosing optionsUITests */,
+				B33426A02D13998800BAAE35 /* Food IntolerancesUITests */,
 			);
-			name = "Food IntolerancesI am choosing optionsUITests";
+			name = "Food IntolerancesUITests";
 			packageProductDependencies = (
 			);
-			productName = "Food IntolerancesI am choosing optionsUITests";
-			productReference = B334269D2D13998800BAAE35 /* Food IntolerancesI am choosing optionsUITests.xctest */;
+			productName = "Food IntolerancesUITests";
+			productReference = B334269D2D13998800BAAE35 /* Food IntolerancesUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 /* End PBXNativeTarget section */
@@ -519,7 +525,7 @@
 					};
 				};
 			};
-			buildConfigurationList = B334267A2D13998700BAAE35 /* Build configuration list for PBXProject "Food IntolerancesI am choosing options" */;
+			buildConfigurationList = B334267A2D13998700BAAE35 /* Build configuration list for PBXProject "Food Intolerances" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -536,9 +542,9 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				B334267E2D13998700BAAE35 /* Food IntolerancesI am choosing options */,
-				B33426922D13998800BAAE35 /* Food IntolerancesI am choosing optionsTests */,
-				B334269C2D13998800BAAE35 /* Food IntolerancesI am choosing optionsUITests */,
+				B334267E2D13998700BAAE35 /* Food Intolerances */,
+				B33426922D13998800BAAE35 /* Food IntolerancesTests */,
+				B334269C2D13998800BAAE35 /* Food IntolerancesUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -580,6 +586,8 @@
 				B3FEA0912D3494F8000727AD /* IconButton.swift in Sources */,
 				B399F6582D32CA4300172F48 /* FoodIntolerancesApp.swift in Sources */,
 				A2D34A9DC31F49F3B8E6AD8E /* APIConfig.swift in Sources */,
+				A5923076F198E69EB484A490 /* SymptomCatalog.swift in Sources */,
+				933F8510E2BB567218295FEE /* CategoryData.swift in Sources */,
 				19CD0E700CD741748152862B /* SaveHelper.swift in Sources */,
 				B3B539BC2D3203F6003132AF /* TrendsAnalysisPage.swift in Sources */,
 				B3FEA08F2D3494CB000727AD /* SymptomView.swift in Sources */,
@@ -681,12 +689,12 @@
 /* Begin PBXTargetDependency section */
 		B33426952D13998800BAAE35 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = B334267E2D13998700BAAE35 /* Food IntolerancesI am choosing options */;
+			target = B334267E2D13998700BAAE35 /* Food Intolerances */;
 			targetProxy = B33426942D13998800BAAE35 /* PBXContainerItemProxy */;
 		};
 		B334269F2D13998800BAAE35 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = B334267E2D13998700BAAE35 /* Food IntolerancesI am choosing options */;
+			target = B334267E2D13998700BAAE35 /* Food Intolerances */;
 			targetProxy = B334269E2D13998800BAAE35 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -697,14 +705,14 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = "Food IntolerancesI am choosing options/Food_IntolerancesI_am_choosing_options.entitlements";
+				CODE_SIGN_ENTITLEMENTS = "Food Intolerances/Food_Intolerances.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_ASSET_PATHS = "\"Food IntolerancesI am choosing options/Preview Content\"";
+				DEVELOPMENT_ASSET_PATHS = "\"Food Intolerances/Preview Content\"";
 				DEVELOPMENT_TEAM = BTT7KJGSVL;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = "Food IntolerancesI am choosing options/Info.plist";
+				INFOPLIST_FILE = "Food Intolerances/Info.plist";
 				INFOPLIST_KEY_LSApplicationCategoryType = "";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Camera access is needed to take photos of symptoms";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app requires access to your Health data to track sleep patterns and improve symptom analysis.";
@@ -737,14 +745,14 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = "Food IntolerancesI am choosing options/Food_IntolerancesI_am_choosing_options.entitlements";
+				CODE_SIGN_ENTITLEMENTS = "Food Intolerances/Food_Intolerances.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_ASSET_PATHS = "\"Food IntolerancesI am choosing options/Preview Content\"";
+				DEVELOPMENT_ASSET_PATHS = "\"Food Intolerances/Preview Content\"";
 				DEVELOPMENT_TEAM = BTT7KJGSVL;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = "Food IntolerancesI am choosing options/Info.plist";
+				INFOPLIST_FILE = "Food Intolerances/Info.plist";
 				INFOPLIST_KEY_LSApplicationCategoryType = "";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Camera access is needed to take photos of symptoms";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app requires access to your Health data to track sleep patterns and improve symptom analysis.";
@@ -906,7 +914,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Food IntolerancesI am choosing options.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Food IntolerancesI am choosing options";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Food Intolerances.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Food Intolerances";
 			};
 			name = Debug;
 		};
@@ -925,7 +933,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Food IntolerancesI am choosing options.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Food IntolerancesI am choosing options";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Food Intolerances.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Food Intolerances";
 			};
 			name = Release;
 		};
@@ -942,7 +950,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_TARGET_NAME = "Food IntolerancesI am choosing options";
+				TEST_TARGET_NAME = "Food Intolerances";
 			};
 			name = Debug;
 		};
@@ -959,14 +967,14 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_TARGET_NAME = "Food IntolerancesI am choosing options";
+				TEST_TARGET_NAME = "Food Intolerances";
 			};
 			name = Release;
 		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		B334267A2D13998700BAAE35 /* Build configuration list for PBXProject "Food IntolerancesI am choosing options" */ = {
+		B334267A2D13998700BAAE35 /* Build configuration list for PBXProject "Food Intolerances" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				B33426A92D13998800BAAE35 /* Debug */,
@@ -975,7 +983,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		B33426A62D13998800BAAE35 /* Build configuration list for PBXNativeTarget "Food IntolerancesI am choosing options" */ = {
+		B33426A62D13998800BAAE35 /* Build configuration list for PBXNativeTarget "Food Intolerances" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				B33426A72D13998800BAAE35 /* Debug */,
@@ -984,7 +992,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		B33426AB2D13998800BAAE35 /* Build configuration list for PBXNativeTarget "Food IntolerancesI am choosing optionsTests" */ = {
+		B33426AB2D13998800BAAE35 /* Build configuration list for PBXNativeTarget "Food IntolerancesTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				B33426AC2D13998800BAAE35 /* Debug */,
@@ -993,7 +1001,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		B33426AE2D13998800BAAE35 /* Build configuration list for PBXNativeTarget "Food IntolerancesI am choosing optionsUITests" */ = {
+		B33426AE2D13998800BAAE35 /* Build configuration list for PBXNativeTarget "Food IntolerancesUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				B33426AF2D13998800BAAE35 /* Debug */,

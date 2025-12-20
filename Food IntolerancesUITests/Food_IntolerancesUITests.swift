@@ -1,5 +1,5 @@
 //
-//  Food_IntolerancesI_am_choosing_optionsUITests.swift
+//  Food_IntolerancesUITests.swift
 //  Food IntolerancesI am choosing optionsUITests
 //
 //  Created by Leo on 12/18/24.
@@ -7,7 +7,7 @@
 
 import XCTest
 
-final class Food_IntolerancesI_am_choosing_optionsUITests: XCTestCase {
+final class Food_IntolerancesUITests: XCTestCase {
 
     override func setUpWithError() throws {
         // Put setup code here. This method is called before the invocation of each test method in the class.

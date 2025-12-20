@@ -16,9 +16,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "B334267E2D13998700BAAE35"
-               BuildableName = "Food IntolerancesI am choosing options.app"
-               BlueprintName = "Food IntolerancesI am choosing options"
-               ReferencedContainer = "container:Food IntolerancesI am choosing options.xcodeproj">
+               BuildableName = "Food Intolerances.app"
+               BlueprintName = "Food Intolerances"
+               ReferencedContainer = "container:Food Intolerances.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -36,9 +36,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "B33426922D13998800BAAE35"
-               BuildableName = "Food IntolerancesI am choosing optionsTests.xctest"
-               BlueprintName = "Food IntolerancesI am choosing optionsTests"
-               ReferencedContainer = "container:Food IntolerancesI am choosing options.xcodeproj">
+               BuildableName = "Food IntolerancesTests.xctest"
+               BlueprintName = "Food IntolerancesTests"
+               ReferencedContainer = "container:Food Intolerances.xcodeproj">
             </BuildableReference>
          </TestableReference>
          <TestableReference
@@ -47,9 +47,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "B334269C2D13998800BAAE35"
-               BuildableName = "Food IntolerancesI am choosing optionsUITests.xctest"
-               BlueprintName = "Food IntolerancesI am choosing optionsUITests"
-               ReferencedContainer = "container:Food IntolerancesI am choosing options.xcodeproj">
+               BuildableName = "Food IntolerancesUITests.xctest"
+               BlueprintName = "Food IntolerancesUITests"
+               ReferencedContainer = "container:Food Intolerances.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
@@ -69,9 +69,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "B334267E2D13998700BAAE35"
-            BuildableName = "Food IntolerancesI am choosing options.app"
-            BlueprintName = "Food IntolerancesI am choosing options"
-            ReferencedContainer = "container:Food IntolerancesI am choosing options.xcodeproj">
+            BuildableName = "Food Intolerances.app"
+            BlueprintName = "Food Intolerances"
+            ReferencedContainer = "container:Food Intolerances.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -86,9 +86,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "B334267E2D13998700BAAE35"
-            BuildableName = "Food IntolerancesI am choosing options.app"
-            BlueprintName = "Food IntolerancesI am choosing options"
-            ReferencedContainer = "container:Food IntolerancesI am choosing options.xcodeproj">
+            BuildableName = "Food Intolerances.app"
+            BlueprintName = "Food Intolerances"
+            ReferencedContainer = "container:Food Intolerances.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

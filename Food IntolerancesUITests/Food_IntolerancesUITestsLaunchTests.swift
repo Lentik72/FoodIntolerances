@@ -1,5 +1,5 @@
 //
-//  Food_IntolerancesI_am_choosing_optionsUITestsLaunchTests.swift
+//  Food_IntolerancesUITestsLaunchTests.swift
 //  Food IntolerancesI am choosing optionsUITests
 //
 //  Created by Leo on 12/18/24.
@@ -7,7 +7,7 @@
 
 import XCTest
 
-final class Food_IntolerancesI_am_choosing_optionsUITestsLaunchTests: XCTestCase {
+final class Food_IntolerancesUITestsLaunchTests: XCTestCase {
 
     override class var runsForEachTargetApplicationUIConfiguration: Bool {
         true
