@@ -12,6 +12,7 @@ struct EditLogSheet: View {
     @State private var selectedProtocol: TherapyProtocol?
     @State private var showFullScreenImage = false
     @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var showSaveError = false
     
     @Query(filter: #Predicate<TherapyProtocol> { $0.isActive }, sort: \TherapyProtocol.dateAdded)
     private var activeProtocols: [TherapyProtocol]
@@ -120,8 +121,13 @@ struct EditLogSheet: View {
                                 .onTapGesture {
                                     log.severity = rating
                                 }
+                                .accessibilityLabel("\(rating) star\(rating == 1 ? "" : "s")")
+                                .accessibilityHint("Double tap to set severity to \(rating)")
+                                .accessibilityAddTraits(rating <= log.severity ? .isSelected : [])
                         }
                     }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Severity rating, currently \(log.severity) of 5")
                     
                     DatePicker("Date", selection: $log.date, displayedComponents: .date)
                 }
@@ -130,6 +136,7 @@ struct EditLogSheet: View {
                 Section(header: Text("Tracking Status")) {
                     Toggle("Track Over Time", isOn: trackingBinding)
                         .tint(.green)
+                        .accessibilityHint("When enabled, this symptom will be tracked over time")
                     
                     if log.isOngoing == true {
                         if let startDate = log.startDate {
@@ -155,16 +162,20 @@ struct EditLogSheet: View {
                                 Label("Change Protocol", systemImage: "arrow.triangle.2.circlepath")
                             }
                             .foregroundColor(.blue)
-                            
+                            .accessibilityLabel("Change Protocol")
+                            .accessibilityHint("Double tap to select a different protocol")
+
                             Spacer()
-                            
+
                             Button(action: {
                                 log.protocolID = nil
-                                try? modelContext.save()
+                                _ = SaveHelper.save(context: modelContext, showError: $showSaveError)
                             }) {
                                 Label("Remove", systemImage: "trash")
                             }
                             .foregroundColor(.red)
+                            .accessibilityLabel("Remove Protocol")
+                            .accessibilityHint("Double tap to remove the associated protocol")
                         }
                     } else {
                         Button(action: {
@@ -176,6 +187,8 @@ struct EditLogSheet: View {
                             }
                         }
                         .foregroundColor(.blue)
+                        .accessibilityLabel("Add Protocol")
+                        .accessibilityHint("Double tap to assign a protocol to this log")
                     }
                 }
 
@@ -251,18 +264,24 @@ struct EditLogSheet: View {
                             .onTapGesture {
                                 showFullScreenImage = true
                             }
+                            .accessibilityLabel("Symptom photo")
+                            .accessibilityHint("Double tap to view full screen")
                     }
                     
                     PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
                         Label(log.symptomPhotoData == nil ? "Add Photo" : "Change Photo", systemImage: "photo")
                     }
-                    
+                    .accessibilityLabel(log.symptomPhotoData == nil ? "Add Photo" : "Change Photo")
+                    .accessibilityHint("Double tap to select a photo from your library")
+
                     if log.symptomPhotoData != nil {
                         Button(role: .destructive) {
                             log.symptomPhotoData = nil
                         } label: {
                             Label("Delete Photo", systemImage: "trash")
                         }
+                        .accessibilityLabel("Delete Photo")
+                        .accessibilityHint("Double tap to remove the attached photo")
                     }
                 }
 
@@ -302,6 +321,8 @@ struct EditLogSheet: View {
                                     .background(Color.black.opacity(0.5))
                                     .clipShape(Circle())
                             }
+                            .accessibilityLabel("Close")
+                            .accessibilityHint("Double tap to close full screen view")
                         }
                         Spacer()
                     }
@@ -314,6 +335,8 @@ struct EditLogSheet: View {
                     Button("Cancel") {
                         dismiss()
                     }
+                    .accessibilityLabel("Cancel")
+                    .accessibilityHint("Discard changes and close")
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Save") {
@@ -331,6 +354,8 @@ struct EditLogSheet: View {
                             print("Error saving edited log:", error)
                         }
                     }
+                    .accessibilityLabel("Save")
+                    .accessibilityHint("Save changes and close")
                 }
             }
             .sheet(isPresented: $showProtocolRecommendations) {
@@ -341,11 +366,12 @@ struct EditLogSheet: View {
                     },
                     onSelectProtocol: { selectedProtocol in
                         log.protocolID = selectedProtocol.id
-                        try? modelContext.save()
+                        _ = SaveHelper.save(context: modelContext, showError: $showSaveError)
                         showProtocolRecommendations = false
                     }
                 )
             }
+            .saveErrorAlert(isPresented: $showSaveError)
         }
     }
 }

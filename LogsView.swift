@@ -94,7 +94,9 @@ struct LogsView: View {
                                     } label: {
                                         Label("Delete", systemImage: "trash")
                                     }
-                                    
+                                    .accessibilityLabel("Delete log")
+                                    .accessibilityHint("Swipe or double tap to delete this log entry")
+
                                     Button {
                                         logToEdit = log
                                         showEditSheet = true
@@ -102,6 +104,8 @@ struct LogsView: View {
                                         Label("Edit", systemImage: "pencil")
                                     }
                                     .tint(.blue)
+                                    .accessibilityLabel("Edit log")
+                                    .accessibilityHint("Swipe or double tap to edit this log entry")
                                 }
                                 .swipeActions(edge: .leading) {
                                     Button {
@@ -111,7 +115,10 @@ struct LogsView: View {
                                               systemImage: log.isOngoing ?? false ? "checkmark.circle" : "arrow.counterclockwise")
                                     }
                                     .tint(log.isOngoing ?? false ? .green : .orange)
+                                    .accessibilityLabel(log.isOngoing ?? false ? "Mark as resolved" : "Reopen log")
+                                    .accessibilityHint(log.isOngoing ?? false ? "Swipe or double tap to mark this symptom as resolved" : "Swipe or double tap to reopen this log")
                                 }
+                                .accessibilityHint("Double tap to edit. Swipe left to delete or edit. Swipe right to toggle resolved status.")
                         }
                     }
                 }
@@ -122,6 +129,8 @@ struct LogsView: View {
                     Button(action: exportLogs) {
                         Image(systemName: "square.and.arrow.up")
                     }
+                    .accessibilityLabel("Export logs")
+                    .accessibilityHint("Double tap to export your symptom logs")
                 }
             }
             .sheet(item: $selectedLogForProtocol) { log in
@@ -338,6 +347,8 @@ struct LogsView: View {
                 }
             }
             .frame(height: 200)
+            .accessibilityLabel("Severity distribution chart")
+            .accessibilityValue(severityData.map { "Severity \($0.severity): \($0.count) logs" }.joined(separator: ", "))
         }
     }
 

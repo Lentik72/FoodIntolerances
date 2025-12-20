@@ -140,6 +140,8 @@ struct ReviewView: View {
                             .foregroundColor(.blue)
                     }
                     .buttonStyle(BorderlessButtonStyle())
+                    .accessibilityLabel("Browse all protocols")
+                    .accessibilityHint("Double tap to view all available protocols")
                 }
                 
                 if let selectedProtocol = viewModel.selectedProtocol {
@@ -323,6 +325,8 @@ struct ReviewView: View {
             }
             .disabled(!isReviewValid)
             .padding(.top, 10)
+            .accessibilityLabel("Save log entry")
+            .accessibilityHint(isReviewValid ? "Double tap to save your symptom log" : "Add symptoms or food items before saving")
         }
         .padding()
         .sheet(isPresented: $showProtocolRecommendations) {
@@ -575,7 +579,7 @@ struct LogSymptomView: View {
                                         .fill(currentStep.rawValue >= step.rawValue ? Color.blue : Color.gray.opacity(0.3))
                                         .frame(width: 40, height: 40)
                                         .shadow(radius: currentStep == step ? 5 : 0)
-                                    
+
                                     Text("\(step.rawValue + 1)")
                                         .fontWeight(.bold)
                                         .foregroundColor(.white)
@@ -596,6 +600,10 @@ struct LogSymptomView: View {
                                 }
                             }
                             .animation(.easeInOut, value: currentStep)
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel("Step \(step.rawValue + 1): \(step.title)")
+                            .accessibilityValue(currentStep == step ? "Current step" : (currentStep.rawValue > step.rawValue ? "Completed" : "Not yet available"))
+                            .accessibilityHint(step.rawValue <= currentStep.rawValue ? "Double tap to go to this step" : "Complete previous steps first")
                         }
                     }
                     .padding(.horizontal)
@@ -861,10 +869,10 @@ struct FlowLayout: Layout {
                                     Image(systemName: "plus.circle")
                                         .font(.caption)
                                 }
-                                
+
                                 Text(symptom)
                                     .font(.subheadline)
-                                
+
                                 if viewModel.selectedSymptoms.contains(symptom) {
                                     Image(systemName: "checkmark.circle.fill")
                                         .font(.caption)
@@ -882,6 +890,10 @@ struct FlowLayout: Layout {
                             )
                             .cornerRadius(16)
                         }
+                        .accessibilityLabel(symptom == "+ Add New Symptom" ? "Add new symptom" : symptom)
+                        .accessibilityValue(viewModel.selectedSymptoms.contains(symptom) ? "Selected" : "Not selected")
+                        .accessibilityHint(symptom == "+ Add New Symptom" ? "Double tap to add a custom symptom" : "Double tap to toggle selection")
+                        .accessibilityAddTraits(viewModel.selectedSymptoms.contains(symptom) ? .isSelected : [])
                     }
                 }
                 .animation(.easeInOut(duration: 0.2), value: viewModel.selectedSymptoms)
@@ -940,7 +952,7 @@ struct FlowLayout: Layout {
                             HStack(spacing: 4) {
                                 Text(symptom)
                                     .font(.subheadline)
-                                
+
                                 Button(action: {
                                     viewModel.removeSymptom(symptom)
                                 }) {
@@ -949,11 +961,15 @@ struct FlowLayout: Layout {
                                         .font(.caption)
                                 }
                                 .buttonStyle(PlainButtonStyle())
+                                .accessibilityLabel("Remove \(symptom)")
+                                .accessibilityHint("Double tap to remove this symptom from selection")
                             }
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
                             .background(Color.blue.opacity(0.2))
                             .cornerRadius(12)
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel("\(symptom), selected")
                         }
                     }
                     .padding(.vertical, 4)
@@ -1002,11 +1018,16 @@ struct FlowLayout: Layout {
                                             selectedSubcategories.removeAll()
                                         }
                                     }
-                                
+
                                 Text(causeType.rawValue)
                                     .font(.caption)
                                     .foregroundColor(viewModel.causeType == causeType ? .blue : .gray)
                             }
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel("\(causeType.rawValue) cause type")
+                            .accessibilityValue(viewModel.causeType == causeType ? "Selected" : "Not selected")
+                            .accessibilityHint("Double tap to select this cause type")
+                            .accessibilityAddTraits(viewModel.causeType == causeType ? .isSelected : [])
                         }
                     }
                     .padding(.horizontal)
@@ -1034,6 +1055,8 @@ struct FlowLayout: Layout {
                                                 .foregroundColor(.green)
                                                 .cornerRadius(16)
                                         }
+                                        .accessibilityLabel("Add custom subcategory")
+                                        .accessibilityHint("Double tap to add a custom subcategory")
                                     } else {
                                         Button(action: {
                                             if selectedSubcategories.contains(subcategory) {
@@ -1046,17 +1069,21 @@ struct FlowLayout: Layout {
                                                 .padding(.horizontal, 12)
                                                 .padding(.vertical, 8)
                                                 .background(
-                                                    selectedSubcategories.contains(subcategory) 
-                                                        ? Color.blue.opacity(0.2) 
+                                                    selectedSubcategories.contains(subcategory)
+                                                        ? Color.blue.opacity(0.2)
                                                         : Color.gray.opacity(0.2)
                                                 )
                                                 .foregroundColor(
-                                                    selectedSubcategories.contains(subcategory) 
-                                                        ? .blue 
+                                                    selectedSubcategories.contains(subcategory)
+                                                        ? .blue
                                                         : .primary
                                                 )
                                                 .cornerRadius(16)
                                         }
+                                        .accessibilityLabel(subcategory)
+                                        .accessibilityValue(selectedSubcategories.contains(subcategory) ? "Selected" : "Not selected")
+                                        .accessibilityHint("Double tap to toggle selection")
+                                        .accessibilityAddTraits(selectedSubcategories.contains(subcategory) ? .isSelected : [])
                                     }
                                 }
                             }
@@ -1419,6 +1446,8 @@ struct DateNotesView: View {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundColor(.red)
                     }
+                    .accessibilityLabel("Remove photo")
+                    .accessibilityHint("Double tap to remove the selected photo")
                 } else {
                     HStack {
                         Button(action: {
@@ -1430,7 +1459,9 @@ struct DateNotesView: View {
                                 .foregroundColor(.white)
                                 .cornerRadius(8)
                         }
-                        
+                        .accessibilityLabel("Take photo with camera")
+                        .accessibilityHint("Double tap to open the camera")
+
                         Button(action: {
                             showPhotoLibrary = true
                         }) {
@@ -1440,6 +1471,8 @@ struct DateNotesView: View {
                                 .foregroundColor(.white)
                                 .cornerRadius(8)
                         }
+                        .accessibilityLabel("Choose photo from gallery")
+                        .accessibilityHint("Double tap to open the photo library")
                     }
                 }
             }

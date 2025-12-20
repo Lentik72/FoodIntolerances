@@ -64,6 +64,8 @@ struct DashboardView: View {
                                         .cornerRadius(8)
                                 }
                                 .padding(.top, 8)
+                                .accessibilityLabel("Open Settings")
+                                .accessibilityHint("Double tap to open device settings and enable location access")
                             }
                             .padding()
                             .background(Color(UIColor.systemBackground))
@@ -786,6 +788,8 @@ struct StatusIndicator: View {
                                     Image(systemName: "pencil")
                                         .foregroundColor(.blue)
                                 }
+                                .accessibilityLabel("Edit log")
+                                .accessibilityHint("Double tap to edit this log entry")
                             }
                             .padding()
                             .background(Color(UIColor.secondarySystemBackground)) // ✅ Updated to match other cards
@@ -795,6 +799,9 @@ struct StatusIndicator: View {
                                 selectedLog = log
                                 showEditSheet = true
                             }
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel("\(log.itemName), logged on \(log.date.formatted(date: .abbreviated, time: .shortened)), severity \(log.severity)")
+                            .accessibilityHint("Double tap to edit")
                         }
                     }
                 }
@@ -1013,7 +1020,7 @@ struct StatusIndicator: View {
             let label: String
             let color: Color
             let action: () -> Void
-            
+
             var body: some View {
                 VStack(spacing: 4) {
                     Button(action: action) {
@@ -1022,17 +1029,20 @@ struct StatusIndicator: View {
                                 .fill(color)
                                 .frame(width: 60, height: 60)
                                 .shadow(radius: 4)
-                            
+
                             Image(systemName: icon)
                                 .foregroundColor(.white)
                                 .font(.system(size: 24, weight: .bold))
                         }
                     }
+                    .accessibilityLabel(label)
+                    .accessibilityHint("Double tap to open \(label)")
                     Text(label)
                         .font(.caption)
                         .foregroundColor(.primary)
                 }
                 .padding(.horizontal, 4)
+                .accessibilityElement(children: .combine)
             }
         }
 
@@ -1133,7 +1143,7 @@ struct InsightCard: View {
     var iconName: String
     var color: Color
     var action: () -> Void
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -1143,12 +1153,12 @@ struct InsightCard: View {
                     .font(.headline)
                     .foregroundColor(color)
             }
-            
+
             Text(message)
                 .font(.subheadline)
                 .foregroundColor(.primary)
                 .lineLimit(3)
-            
+
             Button(action: action) {
                 Text(actionLabel)
                     .font(.caption)
@@ -1160,11 +1170,15 @@ struct InsightCard: View {
                     .cornerRadius(8)
             }
             .padding(.top, 4)
+            .accessibilityLabel(actionLabel)
+            .accessibilityHint("Double tap to \(actionLabel.lowercased())")
         }
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(UIColor.tertiarySystemBackground))
         .cornerRadius(10)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title): \(message)")
     }
 }
 

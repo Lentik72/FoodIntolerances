@@ -9,6 +9,7 @@ struct CabinetListView: View {
     @State private var showAddSheet = false
     @State private var selectedItemForEditing: CabinetItem?
     @State private var showEditSheet = false
+    @State private var showSaveError = false
 
     var body: some View {
         NavigationView {
@@ -63,25 +64,26 @@ struct CabinetListView: View {
                     HStack {
                         Button(action: {
                             item.logUsage()
-                            try? modelContext.save()
+                            _ = SaveHelper.save(context: modelContext, showError: $showSaveError)
                         }) {
                             Label("Log Use", systemImage: "checkmark.circle")
                                 .font(.caption)
                                 .foregroundColor(.blue)
                         }
-                        
+
                         if let stock = item.currentStock, stock <= (item.refillThreshold ?? 0) {
                             Button(action: {
                                 // Functionality to mark as refilled
                                 item.currentStock = Int(item.quantity ?? "0") ?? 10
-                                try? modelContext.save()
+                                _ = SaveHelper.save(context: modelContext, showError: $showSaveError)
                             }) {
                                 Label("Refilled", systemImage: "arrow.clockwise.circle")
                                     .font(.caption)
                                     .foregroundColor(.green)
                             }
                         }
-                    }                }
+                    }
+                }
                 .contextMenu {
                     Button("Edit") {
                         selectedItemForEditing = item
@@ -110,6 +112,7 @@ struct CabinetListView: View {
             .sheet(item: $selectedItemForEditing) { item in
                 EditCabinetItemSheet(item: item) // ✅ Removed isPresented
             }
+            .saveErrorAlert(isPresented: $showSaveError)
         }
     }
 

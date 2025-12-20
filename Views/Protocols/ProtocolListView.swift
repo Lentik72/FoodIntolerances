@@ -20,6 +20,7 @@ struct ProtocolListView: View {
     @State private var showActiveOnly: Bool = false
     @State private var showSavedProtocolInfo = false
     @State private var lastSavedProtocol: TherapyProtocol?
+    @State private var showSaveError = false
     
     enum SortOption: String, CaseIterable {
         case newestFirst = "Newest First"
@@ -201,14 +202,15 @@ struct ProtocolListView: View {
                     if let importedProtocol = sharingService.importProtocolFromFile(fileURL) {
                         DispatchQueue.main.async {
                             modelContext.insert(importedProtocol)
-                            try? modelContext.save()
+                            _ = SaveHelper.save(context: modelContext, showError: $showSaveError)
                         }
                     }
                 } catch {
                     print("Failed to import file: \(error)")
                 }
             }
-            
+            .saveErrorAlert(isPresented: $showSaveError)
+
             .sheet(item: $lastSavedProtocol) { protocolItem in
                 NewProtocolSavedView(
                     protocol: protocolItem,
