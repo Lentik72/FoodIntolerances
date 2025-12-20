@@ -404,7 +404,6 @@ class LogItemViewModel: ObservableObject {
         
         let now = Date()
             if now.timeIntervalSince(lastFetchTime) < minimumFetchInterval {
-                print("⏱️ Skipping fetch - too soon since last successful fetch")
                 return
             }
         
@@ -427,7 +426,6 @@ class LogItemViewModel: ObservableObject {
                     let decodedResponse = try JSONDecoder().decode(WeatherResponse.self, from: data)
                     
                     let pressureValue = Double(decodedResponse.main.pressure)
-                    print("🌬️ Retrieved Atmospheric Pressure: \(pressureValue) hPa")
                     
                     await MainActor.run {
                         self.atmosphericPressure = "\(Int(pressureValue)) hPa"
@@ -452,7 +450,6 @@ class LogItemViewModel: ObservableObject {
                     }
                 } else {
                     // We're still waiting for first location, wait briefly
-                    print("📍 Waiting for location data...")
                     try? await Task.sleep(nanoseconds: 2_000_000_000) // Wait 2 seconds
                     
                     // Try again if location is now ready
@@ -472,7 +469,6 @@ class LogItemViewModel: ObservableObject {
                                 let decodedResponse = try JSONDecoder().decode(WeatherResponse.self, from: data)
                                 
                                 let pressureValue = Double(decodedResponse.main.pressure)
-                                print("🌬️ Retrieved Atmospheric Pressure: \(pressureValue) hPa")
                                 
                                 await MainActor.run {
                                     self.atmosphericPressure = "\(Int(pressureValue)) hPa"
@@ -503,7 +499,6 @@ class LogItemViewModel: ObservableObject {
             
             await MainActor.run {
                 self.lastUpdated = Date()
-                print("✅ Environmental data updated successfully")
             }
         }
     }
@@ -658,14 +653,12 @@ class LogItemViewModel: ObservableObject {
             
             if otherSymptomsForRegion.isEmpty {
                 selectedBodyAreas.remove(region)
-                print("✅ Removed region \(region) - no remaining symptoms")
             } else {
                 print("ℹ️ Keeping region \(region) - other symptoms exist")
             }
         }
         
         print("❌ Removed symptom: \(standardizedSymptom)")
-        print("📍 Remaining symptoms: \(selectedSymptoms)")
         print("🗺️ Remaining body areas: \(selectedBodyAreas)")
         
         verifySymptomRegionMapping()
@@ -680,11 +673,9 @@ class LogItemViewModel: ObservableObject {
             if let region = symptomToRegion[symptom] {
                 let standardizedRegion = BodyRegionUtility.standardizeRegionName(region)
                 selectedBodyAreas.insert(standardizedRegion)
-                print("✅ Synchronized: Added region \(standardizedRegion) for symptom \(symptom)")
             }
         }
         
-        print("🔄 Body areas synchronized: \(selectedBodyAreas)")
     }
     
     // Add this function to update all selected body areas based on current symptoms
@@ -696,13 +687,11 @@ class LogItemViewModel: ObservableObject {
         for symptom in selectedSymptoms {
             if let region = symptomToRegion[symptom] {
                 selectedBodyAreas.insert(region)
-                print("✅ Added mapped region: \(region) for symptom: \(symptom)")
             } else {
                 print("❌ No mapping for symptom: \(symptom)")
             }
         }
         
-        print("📍 Final selectedBodyAreas: \(selectedBodyAreas)")
     }
     /// Adds a custom symptom to UserDefaults and updates filteredSymptoms and selectedSymptoms
     /// - Parameter symptom: The custom symptom to add
@@ -1059,7 +1048,6 @@ class LogItemViewModel: ObservableObject {
     }
     func refreshEnvironmentalData() {
         Task {
-            print("🔄 Starting environmental data refresh")
             
             // Reset state before refresh
             await MainActor.run {
@@ -1071,13 +1059,10 @@ class LogItemViewModel: ObservableObject {
             if let location = self.locationManager?.currentLocation {
                 // Pass location to environmental service
                 environmentalService.setLocation(latitude: location.latitude, longitude: location.longitude)
-                print("📍 Using current location for refresh: \(location.latitude), \(location.longitude)")
             } else if let cached = self.locationManager?.lastKnownLocation {
                 // Use cached location
                 environmentalService.setLocation(latitude: cached.latitude, longitude: cached.longitude)
-                print("📍 Using cached location for refresh: \(cached.latitude), \(cached.longitude)")
             } else {
-                print("⚠️ No location available for refresh, using fallback")
             }
             
             // Now delegate to the service with location info
@@ -1093,7 +1078,6 @@ class LogItemViewModel: ObservableObject {
                 self.autoMoonPhase = environmentalService.moonPhase
                 self.autoMercuryRetrograde = environmentalService.isMercuryRetrograde
                 self.lastUpdated = Date()
-                print("🔄 Environmental data refresh completed")
             }
         }
     }
@@ -1115,7 +1099,6 @@ class LogItemViewModel: ObservableObject {
         self.previousPressure = environmentalService.previousPressure
         self.lastUpdated = Date() // Trigger UI refresh
         
-        print("✅ ViewModel updated with service data: \(self.atmosphericPressureCategory)")
         
         // Force UI refresh by explicitly publishing changes
         // This extra step ensures SwiftUI views respond to the changes
@@ -1135,11 +1118,9 @@ class LogItemViewModel: ObservableObject {
 
     @MainActor
     public func updateAtmosphericPressure() async {
-        print("🔄 Updating atmospheric pressure from service...")
 
         // Ensure we're not making unnecessary duplicate calls
         if environmentalService.currentAtmosphericTask != nil && !environmentalService.currentAtmosphericTask!.isCancelled {
-            print("⏳ Fetch already in progress. Skipping duplicate request.")
             return
         }
 
@@ -1156,7 +1137,6 @@ class LogItemViewModel: ObservableObject {
     
     @MainActor
     private func useFallbackPressureData() {
-        print("⚠️ Using fallback pressure data")
         
         // Use static value that will still allow the app to function
         let fallbackPressure = 1013.0 // Standard sea level pressure
@@ -1215,11 +1195,8 @@ class LogItemViewModel: ObservableObject {
                     self.updateAtmosphericPressure(currentPressure)
                     self.atmosphericPressureCategory = self.categorizePressure(currentPressure)
                     self.lastUpdated = Date()
-                    print("🌬️ Atmospheric Pressure Updated: \(currentPressure) hPa")
-                    print("🌬️ Category: \(self.atmosphericPressureCategory)")
                 }
             } else {
-                print("⚠️ Failed to decode API response.")
                 DispatchQueue.main.async {
                     self.atmosphericPressureCategory = "Unknown"
                 }
@@ -1268,7 +1245,6 @@ class LogItemViewModel: ObservableObject {
     private func detectPressureChanges(pressures: [Double]) {
         // Don't detect changes if it's first load or if pressures array is too small
         guard !isFirstLoad, pressures.count >= 2 else {
-            print("⚠️ Skipping pressure change detection: first load or insufficient data")
             return
         }
         
@@ -1280,7 +1256,6 @@ class LogItemViewModel: ObservableObject {
         // Update sudden change state on main thread
         DispatchQueue.main.async { [weak self] in
             if change >= self?.pressureChangeThreshold ?? 6.0 {
-                print("⚠️ Significant pressure change detected: \(change) hPa")
                 self?.suddenPressureChange = true
             } else {
                 self?.suddenPressureChange = false
@@ -1336,7 +1311,6 @@ class LogItemViewModel: ObservableObject {
                         requestLocationUpdate(silent: true) // Silent initial request
                     case .notDetermined:
                         if !hasLoggedPermissionRequest {
-                            print("📍 Requesting Location Permission")
                             hasLoggedPermissionRequest = true
                         }
                         locationManager.requestWhenInUseAuthorization()
@@ -1359,7 +1333,6 @@ class LogItemViewModel: ObservableObject {
         
         func requestLocationUpdate(silent: Bool = false) {
             if !silent {
-                print("📍 Starting new location request")
             }
             locationManager.stopUpdatingLocation()
             
@@ -1367,7 +1340,6 @@ class LogItemViewModel: ObservableObject {
             let status = locationManager.authorizationStatus
             if status == .denied || status == .restricted {
                 if !hasLoggedPermissionDenied {
-                    print("⚠️ Location permission denied, using alternative source")
                     hasLoggedPermissionDenied = true
                 }
                 handleLocationPermissionDenied()
@@ -1384,7 +1356,6 @@ class LogItemViewModel: ObservableObject {
                     await MainActor.run {
                         // Use cached location if available
                         if let cached = lastKnownLocation {
-                            print("📍 Using cached location")
                             self.currentLocation = cached
                             if let viewModel = self.viewModel {
                                 Task { await viewModel.fetchAtmosphericPressure() }
@@ -1392,7 +1363,6 @@ class LogItemViewModel: ObservableObject {
                         } else {
                             // Fallback to a default location if we've never had one
                             if !silent {
-                                print("📍 Using fallback location")
                             }
                             self.currentLocation = CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060) // NYC as fallback
                             if let viewModel = self.viewModel {
@@ -1444,7 +1414,6 @@ class LogItemViewModel: ObservableObject {
         }
         
         @objc private func appDidBecomeActive() {
-            print("🚀 App became active. Starting location update.")
             requestLocationUpdate()
         }
         
@@ -1475,7 +1444,6 @@ class LogItemViewModel: ObservableObject {
                 
                 // Only log if it's a significant change
                 if shouldLog {
-                    print("📍 Location updated: \(newLocation.coordinate.latitude), \(newLocation.coordinate.longitude)")
                     self.lastLoggedLocation = newLocation.coordinate
                 }
                 
@@ -1536,7 +1504,6 @@ class LogItemViewModel: ObservableObject {
                 // Dashboard became active - request location if stale
                 let timeSinceLastUpdate = Date().timeIntervalSince(lastLocationUpdateTime ?? .distantPast)
                 if timeSinceLastUpdate > 300 { // 5 minutes
-                    print("📍 Dashboard active - requesting location update")
                     requestLocationUpdate(silent: true)
                 }
                 
@@ -1548,7 +1515,6 @@ class LogItemViewModel: ObservableObject {
                 }
             } else if !active && wasActive {
                 // Dashboard inactive - suspend continuous updates
-                print("📍 Dashboard inactive - suspending updates")
                 locationManager.stopUpdatingLocation()
                 refreshTimer?.invalidate()
                 refreshTimer = nil
@@ -1558,7 +1524,6 @@ class LogItemViewModel: ObservableObject {
         func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
             switch manager.authorizationStatus {
             case .authorizedWhenInUse, .authorizedAlways:
-                print("✅ Location access granted.")
                 requestLocationUpdate()
             case .denied, .restricted:
                 if !hasLoggedPermissionDenied {
@@ -1728,9 +1693,6 @@ class LogItemViewModel: ObservableObject {
         lastPressureReading = currentPressure
         lastPressureTimestamp = now
         
-        print("🌬️ Current Pressure: \(currentPressure) hPa")
-        print("⚡ Sudden Change: \(suddenPressureChange)")
-        print("🌬️ Category: \(atmosphericPressureCategory)")
     }
     
     
@@ -1738,11 +1700,9 @@ class LogItemViewModel: ObservableObject {
     // Also add this fallback method:
     @MainActor
     private func setFallbackAtmosphericPressure() {
-        print("⚠️ Using fallback atmospheric pressure")
         
         // Check if we have any previous cached data first
         if let cachedPressure = UserDefaults.standard.object(forKey: "lastKnownPressure") as? Double {
-            print("📊 Using cached pressure data: \(cachedPressure)")
             updateAtmosphericPressure(cachedPressure)
             self.atmosphericPressure = "\(Int(cachedPressure)) hPa"
             self.atmosphericPressureCategory = self.categorizePressure(cachedPressure)
@@ -1760,7 +1720,6 @@ class LogItemViewModel: ObservableObject {
         let deterministicVariation = sin(seed * 6.28) * 10.0 // ±10 hPa variation
         let fallbackPressure = basePressure + deterministicVariation
         
-        print("⚠️ Using deterministic fallback pressure: \(fallbackPressure) hPa")
         
         // Update the UI
         updateAtmosphericPressure(fallbackPressure)
@@ -1780,9 +1739,7 @@ class LogItemViewModel: ObservableObject {
             if let pressure = currentPressure {
                 updateAtmosphericPressure(pressure)
                 atmosphericPressureCategory = categorizePressure(pressure)
-                print("🌬️ Atmospheric Pressure Category: \(atmosphericPressureCategory)")
             } else {
-                print("⚠️ Failed to convert pressure data.")
                 atmosphericPressureCategory = "Unknown"
             }
         } catch {
@@ -1794,7 +1751,6 @@ class LogItemViewModel: ObservableObject {
     func ensureEnvironmentalDataLoaded() async {
         // If data is still loading, ensure we have some value
         if atmosphericPressureCategory == "Loading..." || atmosphericPressureCategory.isEmpty {
-            print("⚠️ Environmental data still loading, fetching now...")
             
             // Try to fetch one more time
             await fetchAllData()
@@ -1802,7 +1758,6 @@ class LogItemViewModel: ObservableObject {
             // If still loading after fetch, use fallback values
             await MainActor.run {
                 if atmosphericPressureCategory == "Loading..." || atmosphericPressureCategory.isEmpty {
-                    print("⚠️ Using fallback environmental values")
                     atmosphericPressureCategory = "Normal"
                     atmosphericPressure = "1013 hPa"
                     autoMoonPhase = getMoonPhase(for: date)
@@ -1854,13 +1809,11 @@ extension LogItemViewModel {
         if let region = symptomToRegion[standardizedSymptom] {
             let standardizedRegion = BodyRegionUtility.standardizeRegionName(region)
             selectedBodyAreas.insert(standardizedRegion)
-            print("✅ Added region \(standardizedRegion) for symptom \(standardizedSymptom)")
         } else {
             // Report unmapped symptom
             reportUnmappedSymptom(symptomName: standardizedSymptom)
         }
         
-        print("📍 Selected symptoms: \(selectedSymptoms)")
         print("🗺️ Selected body areas: \(selectedBodyAreas)")
         
         verifySymptomRegionMapping()
@@ -1869,7 +1822,6 @@ extension LogItemViewModel {
     // Add this function to LogItemViewModel.swift
     // In LogItemViewModel.swift, update the verifySymptomRegionMapping method
     func verifySymptomRegionMapping() {
-        print("🔍 VERIFYING SYMPTOM-REGION MAPPING")
         print("=================================")
         
         // First pass - collect all changes to make
@@ -1877,11 +1829,9 @@ extension LogItemViewModel {
         _ = [String: String]()
         
         // Check all selected symptoms
-        print("📋 CHECKING SELECTED SYMPTOMS:")
         for symptom in selectedSymptoms {
             if let region = symptomToRegion[symptom] {
                 let standardRegion = BodyRegionUtility.standardizeRegionName(region)
-                print("✅ Symptom '\(symptom)' maps to region '\(region)' (standardized: '\(standardRegion)')")
                 
                 // Check if region is selected
                 if selectedBodyAreas.contains(standardRegion) {
@@ -1891,7 +1841,6 @@ extension LogItemViewModel {
                     regionsToAdd.insert(standardRegion)
                 }
             } else {
-                print("⚠️ Symptom '\(symptom)' has no region mapping!")
             }
         }
         

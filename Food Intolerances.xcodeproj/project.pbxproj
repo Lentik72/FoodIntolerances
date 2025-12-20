@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		8524CC422DFB4B4794C4BF58 /* Constants.swift in Sources */ = {isa = PBXBuildFile; fileRef = 008814905F8E428B987804A4 /* Constants.swift */; };
 		A5923076F198E69EB484A490 /* SymptomCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 978C8DB3A9BA2046DA439783 /* SymptomCatalog.swift */; };
 		933F8510E2BB567218295FEE /* CategoryData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CB985202170624F0331DEF3 /* CategoryData.swift */; };
 		B30BBDC62D32D1BA00B26967 /* BodyMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30BBDC52D32D1BA00B26967 /* BodyMapView.swift */; };
@@ -67,7 +68,6 @@
 		B3A383CC2D35DCBA00945970 /* OrientationObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A383CB2D35DCBA00945970 /* OrientationObserver.swift */; };
 		B3A383CE2D35F7E600945970 /* LogItemViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A383CD2D35F7E600945970 /* LogItemViewModel.swift */; };
 		B3A384392D38462C00945970 /* AddTrackedItemView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A384382D38462C00945970 /* AddTrackedItemView.swift */; };
-		B3A3843B2D38469000945970 /* DebugTrackedItemsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A3843A2D38469000945970 /* DebugTrackedItemsView.swift */; };
 		B3A3843D2D385EE300945970 /* AvoidListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A3843C2D385EE300945970 /* AvoidListView.swift */; };
 		B3A384412D3864E700945970 /* AddAvoidedItemView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A384402D3864E700945970 /* AddAvoidedItemView.swift */; };
 		B3A384432D38655500945970 /* AvoidedItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A384422D38655500945970 /* AvoidedItem.swift */; };
@@ -134,6 +134,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		008814905F8E428B987804A4 /* Constants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Constants.swift; sourceTree = "<group>"; };
 		978C8DB3A9BA2046DA439783 /* SymptomCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SymptomCatalog.swift; sourceTree = "<group>"; };
 		5CB985202170624F0331DEF3 /* CategoryData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoryData.swift; sourceTree = "<group>"; };
 		B30BBDC52D32D1BA00B26967 /* BodyMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BodyMapView.swift; sourceTree = "<group>"; };
@@ -197,7 +198,6 @@
 		B3A383CB2D35DCBA00945970 /* OrientationObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrientationObserver.swift; sourceTree = "<group>"; };
 		B3A383CD2D35F7E600945970 /* LogItemViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogItemViewModel.swift; sourceTree = "<group>"; };
 		B3A384382D38462C00945970 /* AddTrackedItemView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddTrackedItemView.swift; sourceTree = "<group>"; };
-		B3A3843A2D38469000945970 /* DebugTrackedItemsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugTrackedItemsView.swift; sourceTree = "<group>"; };
 		B3A3843C2D385EE300945970 /* AvoidListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvoidListView.swift; sourceTree = "<group>"; };
 		B3A384402D3864E700945970 /* AddAvoidedItemView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddAvoidedItemView.swift; sourceTree = "<group>"; };
 		B3A384422D38655500945970 /* AvoidedItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvoidedItem.swift; sourceTree = "<group>"; };
@@ -329,7 +329,6 @@
 				B30BBDC52D32D1BA00B26967 /* BodyMapView.swift */,
 				B3A084922D663190007CB8B5 /* CollectionExtensions.swift */,
 				B371320E2D77DA8C0019E603 /* CorrelationAnalysisView.swift */,
-				B3A3843A2D38469000945970 /* DebugTrackedItemsView.swift */,
 				B3A084982D669CC3007CB8B5 /* EditLogSheet.swift */,
 				B3A383C72D35D93000945970 /* EditTrackedItemView.swift */,
 				B3A0849E2D669D42007CB8B5 /* EnvironmentalViews.swift */,
@@ -591,7 +590,6 @@
 				19CD0E700CD741748152862B /* SaveHelper.swift in Sources */,
 				B3B539BC2D3203F6003132AF /* TrendsAnalysisPage.swift in Sources */,
 				B3FEA08F2D3494CB000727AD /* SymptomView.swift in Sources */,
-				B3A3843B2D38469000945970 /* DebugTrackedItemsView.swift in Sources */,
 				B34C6B302D3C5D4C00ECFFF0 /* Symptom.swift in Sources */,
 				B371320F2D77DA8C0019E603 /* CorrelationAnalysisView.swift in Sources */,
 				B371321D2D78A0980019E603 /* ProtocolTagsView.swift in Sources */,

@@ -180,15 +180,12 @@ struct DashboardView: View {
                         if newValue {
                             // Prevent cascading updates by using a slight delay
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                print("🔄 showRefreshConfirmation changed")
                             }
                         }
                     }
                     .onChange(of: refreshTrigger) { oldValue, newValue in
-                        print("🔄 refreshTrigger toggled")
                     }
                     .onReceive(viewModel.$lastUpdated) { newDate in
-                        print("🆕 Data refreshed at: \(newDate.formatted())")
                         
                         let shouldUpdate = !showRefreshConfirmation
                         if shouldUpdate {
@@ -250,7 +247,6 @@ struct DashboardView: View {
             
             // ✅ **Listen for Navigation Event from LogSymptomView**
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("NavigateToDashboard"))) { _ in
-                print("🔄 Navigating to Dashboard...")
                 DispatchQueue.main.async {
                     tabManager.selectedTab = .dashboard // Ensure Dashboard is shown
                 }
@@ -278,7 +274,6 @@ struct DashboardView: View {
       
     // ✅ Optimized Refresh Function
     private func refreshDashboard() async {
-        print("🔄 Refresh started...")
 
         // Show refresh indicator with animation
         await MainActor.run {
@@ -317,7 +312,6 @@ struct DashboardView: View {
             }
         }
         
-        print("🔄 Refresh completed")
     }
 }
 
@@ -996,19 +990,15 @@ struct StatusIndicator: View {
             
             // ✅ Moved Refresh Logic to a Function
             private func refreshReminders() {
-                print("🔄 Starting refresh...")
                 isRefreshing = true
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) { // Simulate async work
-                    print("✅ Finished fetching data!")
                     isRefreshing = false
                     showRefreshConfirmation = true
-                    print("🎉 showRefreshConfirmation: \(showRefreshConfirmation)")
                     
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                         withAnimation {
                             showRefreshConfirmation = false
-                            print("🧹 Hiding confirmation message")
                         }
                     }
                 }
@@ -1203,7 +1193,6 @@ class RefreshController {
         refreshDebouncer?.cancel()
         
         if isRefreshing {
-            print("🔄 Refresh already in progress, debouncing...")
             return
         }
         

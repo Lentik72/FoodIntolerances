@@ -21,15 +21,15 @@ class EnvironmentalDataService: ObservableObject {
     
     // Private properties
     private var pressureReadings: [(pressure: Double, timestamp: Date)] = []
-    private let pressureChangeThreshold: Double = 6.0
-    private let pressureReadingInterval: TimeInterval = 3600 // 1 hour in seconds
+    private let pressureChangeThreshold: Double = 6.0  // hPa threshold for sudden change
+    private let pressureReadingInterval: TimeInterval = 3600  // 1 hour in seconds
     private var isFirstLoad: Bool = true
     private var locationManager: LocationService?
     private var mercuryRetrogradePeriods: [(start: Date, end: Date)] = []
     private var manualLocation: CLLocationCoordinate2D?
     private var cancellables = Set<AnyCancellable>()
     private var lastRefreshRequest = Date.distantPast
-    private let minimumRefreshInterval: TimeInterval = 300 // 5 minutes
+    private let minimumRefreshInterval: TimeInterval = 300  // 5 minutes
     
     init(locationManager: LocationService? = nil) {
         if let locationManager = locationManager {
@@ -65,9 +65,6 @@ class EnvironmentalDataService: ObservableObject {
                 if !Task.isCancelled {
                     await MainActor.run {
                         self.lastUpdated = Date() // Trigger UI refresh
-                        print("🌕 Moon Phase:", self.moonPhase)
-                        print("☿ Mercury Retrograde:", self.isMercuryRetrograde)
-                        print("🌬️ Atmospheric Pressure:", self.atmosphericPressure)
                     }
                 }
             }
@@ -85,7 +82,6 @@ class EnvironmentalDataService: ObservableObject {
             if !Task.isCancelled {
                 await MainActor.run {
                     if self.atmosphericPressureCategory == "Loading..." {
-                        print("⚠️ Timeout detected, using fallback data")
                         setFallbackAtmosphericPressure()
                     }
                 }
@@ -102,7 +98,6 @@ class EnvironmentalDataService: ObservableObject {
     
     func refreshEnvironmentalData() {
         Task {
-            print("🔄 Starting environmental data refresh")
             
             // Reset state before refresh
             await MainActor.run {
@@ -132,14 +127,12 @@ class EnvironmentalDataService: ObservableObject {
                 
                 await MainActor.run {
                     self.lastUpdated = Date()
-                    print("🔄 Environmental data refresh completed")
                 }
             }
         }
     }
     
     func resetPressureState() {
-        print("🔄 Resetting pressure state")
         suddenPressureChange = false
         pressureReadings.removeAll()
         currentPressure = 0.0
@@ -177,7 +170,6 @@ class EnvironmentalDataService: ObservableObject {
         // Check if it's too soon for another refresh
         let now = Date()
         if now.timeIntervalSince(lastRefreshRequest) < minimumRefreshInterval {
-            print("⏱️ Refresh cooldown active - last refresh was \(Int(now.timeIntervalSince(lastRefreshRequest)))s ago")
             return false
         }
         
@@ -216,25 +208,21 @@ class EnvironmentalDataService: ObservableObject {
                 if !Task.isCancelled {
                     await MainActor.run {
                         if self.atmosphericPressureCategory == "Loading..." {
-                            print("⏱️ Timeout reached, using fallback data")
                             self.useFallbackPressureData()
                         }
                     }
                 }
             }
 
-            print("🚀 Fetching atmospheric pressure data from OpenWeatherMap...")
 
             // Check if location is available
             let location: CLLocationCoordinate2D
             if let manualLoc = self.manualLocation {
                 // Use manually set location (from refresh)
                 location = manualLoc
-                print("📍 Using manually provided location: \(location.latitude), \(location.longitude)")
             } else if let serviceLoc = self.locationManager?.currentLocation {
                 // Use location from service
                 location = serviceLoc
-                print("📍 Using location from service: \(location.latitude), \(location.longitude)")
             } else {
                 // No location available
                 print("❌ No location available, using fallback pressure data.")
@@ -253,7 +241,6 @@ class EnvironmentalDataService: ObservableObject {
                 let decodedResponse = try JSONDecoder().decode(WeatherResponse.self, from: data)
 
                 let pressureValue = Double(decodedResponse.main.pressure)
-                print("🌬️ Retrieved Atmospheric Pressure: \(pressureValue) hPa")
 
                 await MainActor.run {
                     self.updateAtmosphericPressure(pressureValue)
@@ -276,10 +263,9 @@ class EnvironmentalDataService: ObservableObject {
     
     @MainActor
     func useFallbackPressureData() {
-        print("⚠️ Using fallback pressure data")
         
         // Use static value that will still allow the app to function
-        let fallbackPressure = 1013.0 // Standard sea level pressure
+        let fallbackPressure = 1013.0  // Standard sea level pressure
         
         // Update UI with definitive values, not "Loading..."
         self.atmosphericPressure = "\(Int(fallbackPressure)) hPa"
@@ -316,14 +302,12 @@ class EnvironmentalDataService: ObservableObject {
         // Calculate the result
         for period in mercuryRetrogradePeriods {
             if date >= period.start && date <= period.end {
-                print("☿ Mercury is in Retrograde!")
                 Cache.lastCheckedDate = today
                 Cache.lastResult = true
                 return true
             }
         }
         
-        print("✅ Mercury is NOT in Retrograde.")
         Cache.lastCheckedDate = today
         Cache.lastResult = false
         return false
@@ -365,9 +349,7 @@ class EnvironmentalDataService: ObservableObject {
         
         atmosphericPressureCategory = categorizePressure(currentPressure)
         
-        print("🌬️ Current Pressure: \(currentPressure) hPa")
         print("⚡ Sudden Change: \(suddenPressureChange)")
-        print("🌬️ Category: \(atmosphericPressureCategory)")
     }
     
     @MainActor
@@ -388,11 +370,10 @@ class EnvironmentalDataService: ObservableObject {
         
         // Use date components to seed a deterministic "random" value
         let seed = Double(day + month * 31) / 100.0
-        let basePressure = 1013.0 // Standard sea level pressure
+        let basePressure = 1013.0  // Standard sea level pressure
         let deterministicVariation = sin(seed * 6.28) * 10.0 // ±10 hPa variation
         let fallbackPressure = basePressure + deterministicVariation
         
-        print("⚠️ Using deterministic fallback pressure: \(fallbackPressure) hPa")
         
         // Update the UI
         updateAtmosphericPressure(fallbackPressure)
@@ -482,7 +463,6 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
                     requestLocationUpdate(silent: true) // Silent initial request
                 case .notDetermined:
                     if !hasLoggedPermissionRequest {
-                        print("📍 Requesting Location Permission")
                         hasLoggedPermissionRequest = true
                     }
                     locationManager.requestWhenInUseAuthorization()
@@ -522,7 +502,6 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
             // Dashboard became active - request location if stale
             let timeSinceLastUpdate = Date().timeIntervalSince(lastLocationUpdateTime ?? .distantPast)
             if timeSinceLastUpdate > 300 { // 5 minutes
-                print("📍 Dashboard active - requesting location update")
                 requestLocationUpdate(silent: true)
             }
             
@@ -534,7 +513,6 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
             }
         } else if !active && wasActive {
             // Dashboard inactive - suspend continuous updates
-            print("📍 Dashboard inactive - suspending updates")
             locationManager.stopUpdatingLocation()
             refreshTimer?.invalidate()
             refreshTimer = nil
@@ -543,7 +521,6 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
     
     func requestLocationUpdate(silent: Bool = false) {
         if !silent {
-            print("📍 Starting new location request")
         }
         locationManager.stopUpdatingLocation()
         
@@ -551,7 +528,6 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
         let status = locationManager.authorizationStatus
         if status == .denied || status == .restricted {
             if !hasLoggedPermissionDenied {
-                print("⚠️ Location permission denied, using alternative source")
                 hasLoggedPermissionDenied = true
             }
             handleLocationPermissionDenied()
@@ -568,12 +544,10 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
                 await MainActor.run {
                     // Use cached location if available
                     if let cached = lastKnownLocation {
-                        print("📍 Using cached location")
                         self.currentLocation = cached
                     } else {
                         // Fallback to a default location if we've never had one
                         if !silent {
-                            print("📍 Using fallback location")
                         }
                         self.currentLocation = CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060) // NYC as fallback
                     }
@@ -612,7 +586,6 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
     
     @objc private func appDidBecomeActive() {
-        print("🚀 App became active. Starting location update.")
         requestLocationUpdate()
     }
     
@@ -629,11 +602,9 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
            
            // Only request location if it's been at least 5 minutes since last request
            if now.timeIntervalSince(lastRequestTime) > 300 {
-               print("🚀 App became active. Starting location update.")
                requestLocationUpdate()
                UserDefaults.standard.set(now, forKey: "lastLocationRequestTime")
            } else {
-               print("⏱️ Skipping location update - too soon since last request")
            }
        
         // Calculate distance from last logged location
@@ -656,7 +627,6 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
             
             // Only log if it's a significant change
             if shouldLog {
-                print("📍 Location updated: \(newLocation.coordinate.latitude), \(newLocation.coordinate.longitude)")
                 self.lastLoggedLocation = newLocation.coordinate
             }
             
@@ -688,11 +658,9 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
             // Use a cached location if available
             if let cachedLat = cachedLatitude, let cachedLon = cachedLongitude {
                 self.currentLocation = CLLocationCoordinate2D(latitude: cachedLat, longitude: cachedLon)
-                print("📍 Using cached location due to denied permissions")
             } else {
                 // Use a default fallback location (NYC)
                 self.currentLocation = CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060)
-                print("📍 Using default fallback location (NYC)")
             }
             
             // Persist that we've handled location denial
@@ -709,7 +677,6 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         switch manager.authorizationStatus {
         case .authorizedWhenInUse, .authorizedAlways:
-            print("✅ Location access granted.")
             requestLocationUpdate()
         case .denied, .restricted:
             if !hasLoggedPermissionDenied {
