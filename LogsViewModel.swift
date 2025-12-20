@@ -25,8 +25,5 @@ class LogsViewModel: ObservableObject {
         let categories = logs.map { $0.category }
         return ["All"] + Array(Set(categories)).sorted()
     }
-    
-    func updateAvailableCategories(from logs: [LogEntry]) {
-    }
 }
 

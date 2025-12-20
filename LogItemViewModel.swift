@@ -783,6 +783,19 @@ class LogItemViewModel: ObservableObject {
     
     /// Holds any Combine subscriptions
     private var cancellables = Set<AnyCancellable>()
+
+    /// Stores notification observer tokens for cleanup
+    private var notificationObservers: [NSObjectProtocol] = []
+
+    deinit {
+        // Cancel all Combine subscriptions
+        cancellables.forEach { $0.cancel() }
+        cancellables.removeAll()
+
+        // Remove all notification observers
+        notificationObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        notificationObservers.removeAll()
+    }
     
     // MARK: - Mercury Retrograde Date Ranges
     var mercuryRetrogradePeriods: [(start: Date, end: Date)] = []
@@ -1337,20 +1350,21 @@ class LogItemViewModel: ObservableObject {
         self.suddenPressureChange = false
         
         // Set up a listener for location status changes
-        NotificationCenter.default.addObserver(
+        let observer = NotificationCenter.default.addObserver(
             forName: Notification.Name("LocationPermissionStatus"),
             object: nil,
             queue: .main
         ) { [weak self] notification in
             Task { @MainActor in
                 guard let self = self else { return }
-                
+
                 if let userInfo = notification.object as? [String: String],
                    userInfo["status"] == "denied" {
                     self.atmosphericPressureCategory = "Location Access Denied"
                 }
             }
         }
+        notificationObservers.append(observer)
     }
     
     @MainActor
@@ -1771,7 +1785,18 @@ class LogItemViewModel: ObservableObject {
         }
         
         deinit {
+            // Cancel any pending tasks
             timeoutTask?.cancel()
+
+            // Invalidate the refresh timer
+            refreshTimer?.invalidate()
+            refreshTimer = nil
+
+            // Stop location updates and clear delegate
+            locationManager.stopUpdatingLocation()
+            locationManager.delegate = nil
+
+            // Remove all notification observers
             NotificationCenter.default.removeObserver(self)
         }
     }

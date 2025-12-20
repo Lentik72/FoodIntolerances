@@ -342,18 +342,8 @@ struct ReviewView: View {
             // Navigate to the main protocols page without filtering
             ProtocolListView()
         }
-        .onAppear {
-            // Find protocols that match selected symptoms
-            findMatchingProtocols()
-        }
     }
-    
-    // New function to find matching protocols
-    private func findMatchingProtocols() {
-        // This would need logic to query protocols from the database
-        // Similar to what's in ProtocolRecommendationView
-    }
-    
+
     // Helper method for creating review rows
     private func reviewRow(title: String, value: String) -> some View {
         HStack {

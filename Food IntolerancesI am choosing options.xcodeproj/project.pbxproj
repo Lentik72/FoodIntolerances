@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		B30BBDC62D32D1BA00B26967 /* BodyMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30BBDC52D32D1BA00B26967 /* BodyMapView.swift */; };
-		B30BBDC82D32D23300B26967 /* ChartsComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30BBDC72D32D23300B26967 /* ChartsComponents.swift */; };
 		B30D8CD22D92233900ACE9BC /* ProtocolFetchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30D8CD12D92233900ACE9BC /* ProtocolFetchService.swift */; };
 		B30D8CD42D92238A00ACE9BC /* ProtocolPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30D8CD32D92238A00ACE9BC /* ProtocolPreviewView.swift */; };
 		B30D8CD62D922B6A00ACE9BC /* NewProtocolSavedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30D8CD52D922B6A00ACE9BC /* NewProtocolSavedView.swift */; };
@@ -134,7 +133,6 @@
 
 /* Begin PBXFileReference section */
 		B30BBDC52D32D1BA00B26967 /* BodyMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BodyMapView.swift; sourceTree = "<group>"; };
-		B30BBDC72D32D23300B26967 /* ChartsComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChartsComponents.swift; sourceTree = "<group>"; };
 		B30D8CD12D92233900ACE9BC /* ProtocolFetchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtocolFetchService.swift; sourceTree = "<group>"; };
 		B30D8CD32D92238A00ACE9BC /* ProtocolPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtocolPreviewView.swift; sourceTree = "<group>"; };
 		B30D8CD52D922B6A00ACE9BC /* NewProtocolSavedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewProtocolSavedView.swift; sourceTree = "<group>"; };
@@ -325,7 +323,6 @@
 				B3A3843C2D385EE300945970 /* AvoidListView.swift */,
 				B3A084902D6629D3007CB8B5 /* BodyMapSelectionView.swift */,
 				B30BBDC52D32D1BA00B26967 /* BodyMapView.swift */,
-				B30BBDC72D32D23300B26967 /* ChartsComponents.swift */,
 				B3A084922D663190007CB8B5 /* CollectionExtensions.swift */,
 				B371320E2D77DA8C0019E603 /* CorrelationAnalysisView.swift */,
 				B3A3843A2D38469000945970 /* DebugTrackedItemsView.swift */,
@@ -622,7 +619,6 @@
 				B34C6B4C2D3CA35900ECFFF0 /* SymptomFrequencyChart.swift in Sources */,
 				B3D485712D4BBE8800F7E3BA /* TabEnum.swift in Sources */,
 				B3A383CE2D35F7E600945970 /* LogItemViewModel.swift in Sources */,
-				B30BBDC82D32D23300B26967 /* ChartsComponents.swift in Sources */,
 				B3D4843C2D456CF700F7E3BA /* LogEntry.swift in Sources */,
 				B3D484302D44493200F7E3BA /* RecentProtocolsSection.swift in Sources */,
 				B3A0849B2D669CF9007CB8B5 /* LogsFilterViews.swift in Sources */,
