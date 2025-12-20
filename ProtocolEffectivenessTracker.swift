@@ -76,10 +76,12 @@ struct ProtocolEffectivenessTracker: View {
         
         // Calculate improvement
         let weeks = weeklyAverageSeverity.keys.sorted()
-        guard weeks.count >= 2 else { return 3 } // Default to medium if not enough data
-        
-        let firstWeekSeverity = weeklyAverageSeverity[weeks.first!] ?? 5.0
-        let lastWeekSeverity = weeklyAverageSeverity[weeks.last!] ?? 5.0
+        guard weeks.count >= 2,
+              let firstWeek = weeks.first,
+              let lastWeek = weeks.last else { return 3 } // Default to medium if not enough data
+
+        let firstWeekSeverity = weeklyAverageSeverity[firstWeek] ?? 5.0
+        let lastWeekSeverity = weeklyAverageSeverity[lastWeek] ?? 5.0
         
         let improvement = firstWeekSeverity - lastWeekSeverity
         

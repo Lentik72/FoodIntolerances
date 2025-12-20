@@ -64,6 +64,8 @@ struct FloatingAddButton: View {
                                 .cornerRadius(6)
                         }
                     }
+                    .accessibilityLabel(actions[index].label)
+                    .accessibilityHint("Double tap to \(actions[index].label.lowercased())")
                     .offset(x: CGFloat(cos(angle * .pi / 180)) * radius,
                             y: CGFloat(sin(angle * .pi / 180)) * radius)
                     .transition(.scale)
@@ -90,6 +92,8 @@ struct FloatingAddButton: View {
                         .animation(.spring(response: 0.4, dampingFraction: 0.6), value: showMenu)
                 }
             }
+            .accessibilityLabel(showMenu ? "Close menu" : "Add new item")
+            .accessibilityHint(showMenu ? "Double tap to close the action menu" : "Double tap to open quick actions menu")
             .padding()
             .offset(dragOffset)
             .offset(y: -10)

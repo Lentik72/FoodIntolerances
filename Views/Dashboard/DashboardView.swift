@@ -994,8 +994,10 @@ struct StatusIndicator: View {
                             HStack {
                                 Text(proto.title)
                                 Spacer()
-                                Text(proto.reminderTime!, style: .time)
-                                    .foregroundColor(.secondary)
+                                if let reminderTime = proto.reminderTime {
+                                    Text(reminderTime, style: .time)
+                                        .foregroundColor(.secondary)
+                                }
                             }
                             .padding(8)
                             .background(Color(UIColor.secondarySystemBackground))

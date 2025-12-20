@@ -27,6 +27,7 @@ struct LogsView: View {
     @State private var showEditSheet = false
     @State private var selectedLogForProtocol: LogEntry? = nil
     @State private var showProtocolSheet = false
+    @State private var showSaveError = false
     @Query private var avoidedItems: [AvoidedItem]
 
     enum SortOption: String, CaseIterable, Identifiable {
@@ -143,13 +144,19 @@ struct LogsView: View {
                 Button("Delete", role: .destructive) {
                     if let log = logToDelete {
                         modelContext.delete(log)
-                        try? modelContext.save()
+                        do {
+                            try modelContext.save()
+                        } catch {
+                            showSaveError = true
+                            print("Failed to delete log: \(error)")
+                        }
                     }
                 }
                 Button("Cancel", role: .cancel) { }
             } message: {
                 Text("Are you sure you want to delete this log?")
             }
+            .saveErrorAlert(isPresented: $showSaveError)
             .onAppear {
                 updateAvailableFilters()
             }

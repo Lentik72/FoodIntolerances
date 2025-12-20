@@ -597,11 +597,8 @@ class LogItemViewModel: ObservableObject {
                 let latitude = location.latitude
                 let longitude = location.longitude
                 
-                // Use a direct approach to avoid the locationManager dependency
-                let apiKey = "816e786b3842e5b9ee47464ead16193c"  // Using the same API key as in your EnvironmentalDataService
-                let urlString = "https://api.openweathermap.org/data/2.5/weather?lat=\(latitude)&lon=\(longitude)&appid=\(apiKey)&units=metric"
-                
-                guard let url = URL(string: urlString) else {
+                // Use centralized API configuration
+                guard let url = APIConfig.weatherURL(latitude: latitude, longitude: longitude) else {
                     print("❌ Invalid URL for weather API")
                     return
                 }
@@ -646,10 +643,7 @@ class LogItemViewModel: ObservableObject {
                             let latitude = location.latitude
                             let longitude = location.longitude
                             
-                            let apiKey = "816e786b3842e5b9ee47464ead16193c"
-                            let urlString = "https://api.openweathermap.org/data/2.5/weather?lat=\(latitude)&lon=\(longitude)&appid=\(apiKey)&units=metric"
-                            
-                            guard let url = URL(string: urlString) else {
+                            guard let url = APIConfig.weatherURL(latitude: latitude, longitude: longitude) else {
                                 print("❌ Invalid URL for weather API")
                                 return
                             }
@@ -1022,8 +1016,8 @@ class LogItemViewModel: ObservableObject {
             subcategoriesData = try JSONEncoder().encode(subcategoriesArray)
         } catch {
             print("Error encoding subcategories: \(error)")
-            // Create an encoded empty array to avoid the crash
-            subcategoriesData = try! JSONEncoder().encode([String]())
+            // Use empty Data as fallback - safer than force unwrap
+            subcategoriesData = Data()
         }
         
         // Create new LogEntry without setting complex properties directly
@@ -1407,9 +1401,7 @@ class LogItemViewModel: ObservableObject {
     
     @MainActor
     public func fetchPressureForecast(lat: Double, lon: Double) async {
-        let apiKey = "816e786b3842e5b9ee47464ead16193c"
-        let urlString = "https://api.openweathermap.org/data/2.5/forecast?lat=\(lat)&lon=\(lon)&appid=\(apiKey)"
-        guard let url = URL(string: urlString) else { return }
+        guard let url = APIConfig.forecastURL(latitude: lat, longitude: lon) else { return }
         
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
@@ -1447,9 +1439,10 @@ class LogItemViewModel: ObservableObject {
             return
         }
         
-        // Only compare the most recent values
-        let lastTwo = pressures.suffix(2)
-        let change = abs(lastTwo.last! - lastTwo.first!)
+        // Only compare the most recent values - use safe unwrap
+        let lastTwo = Array(pressures.suffix(2))
+        guard let lastValue = lastTwo.last, let firstValue = lastTwo.first else { return }
+        let change = abs(lastValue - firstValue)
         
         // Update sudden change state on main thread
         DispatchQueue.main.async { [weak self] in

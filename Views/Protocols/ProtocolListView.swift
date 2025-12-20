@@ -182,7 +182,10 @@ struct ProtocolListView: View {
                 allowsMultipleSelection: false
             ) { result in
                 do {
-                    let fileURL = try result.get().first!
+                    guard let fileURL = try result.get().first else {
+                        print("No file selected")
+                        return
+                    }
                     
                     // Start accessing the file
                     guard fileURL.startAccessingSecurityScopedResource() else {

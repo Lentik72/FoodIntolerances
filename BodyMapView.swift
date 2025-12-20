@@ -94,9 +94,9 @@ struct BodyMapView: View {
                             .frame(width: geometry.size.width, height: geometry.size.height)
                             .accessibilityHidden(true)
                         
-                        ForEach(BodyRegionFront.allCases.map { $0.rawValue }, id: \.self) { region in
-                            let frame = frameForFrontRegion(BodyRegionFront(rawValue: region)!, in: geometry)
-                            regionButton(region, frame: frame)
+                        ForEach(BodyRegionFront.allCases, id: \.rawValue) { region in
+                            let frame = frameForFrontRegion(region, in: geometry)
+                            regionButton(region.rawValue, frame: frame)
                         }
                     } else {
                         Image("bodyBack")
@@ -105,9 +105,9 @@ struct BodyMapView: View {
                             .frame(width: geometry.size.width, height: geometry.size.height)
                             .accessibilityHidden(true)
                         
-                        ForEach(BodyRegionBack.allCases.map { $0.rawValue }, id: \.self) { region in
-                            let frame = frameForBackRegion(BodyRegionBack(rawValue: region)!, in: geometry)
-                            regionButton(region, frame: frame)
+                        ForEach(BodyRegionBack.allCases, id: \.rawValue) { region in
+                            let frame = frameForBackRegion(region, in: geometry)
+                            regionButton(region.rawValue, frame: frame)
                         }
                     }
                 }
@@ -385,7 +385,9 @@ struct BodyMapView: View {
                 .padding(2)
         }
         .position(x: frame.midX, y: frame.midY)
-        .accessibilityLabel("\(region.capitalized)")
+        .accessibilityLabel("\(region.replacingOccurrences(of: "_", with: " ").capitalized) body region")
+        .accessibilityHint(isSelected ? "Selected. Double tap to deselect and view symptoms" : "Double tap to select and add symptoms")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 

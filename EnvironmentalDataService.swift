@@ -243,10 +243,7 @@ class EnvironmentalDataService: ObservableObject {
                 return
             }
 
-            let apiKey = "816e786b3842e5b9ee47464ead16193c"  // Your extracted API key
-            let urlString = "https://api.openweathermap.org/data/2.5/weather?lat=\(location.latitude)&lon=\(location.longitude)&appid=\(apiKey)&units=metric"
-
-            guard let url = URL(string: urlString) else {
+            guard let url = APIConfig.weatherURL(latitude: location.latitude, longitude: location.longitude) else {
                 print("❌ Invalid URL for weather API")
                 return
             }

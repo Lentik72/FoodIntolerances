@@ -12,6 +12,8 @@ struct SymptomCheckInView: View {
     @State private var protocolNotes: String = ""
     @State private var notes: String = ""
     @State private var date: Date = Date()
+    @State private var showSaveError = false
+    @State private var saveErrorMessage = ""
     
     var body: some View {
         NavigationStack {
@@ -64,6 +66,11 @@ struct SymptomCheckInView: View {
                 }
             }
             .navigationTitle("\(symptom.name) Check-in")
+            .alert("Save Failed", isPresented: $showSaveError) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(saveErrorMessage)
+            }
         }
     }
     
@@ -97,11 +104,13 @@ struct SymptomCheckInView: View {
         }
         
         modelContext.insert(checkIn)
-        
+
         do {
             try modelContext.save()
             dismiss()
         } catch {
+            saveErrorMessage = "Could not save your check-in. Please try again."
+            showSaveError = true
             print("Failed to save check-in: \(error)")
         }
     }

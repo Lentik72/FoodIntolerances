@@ -113,11 +113,11 @@ struct ProtocolDetailView: View {
                     }
 
                     if let notes = therapyProtocol.notes, notes.contains("Source: http") {
-                        // Extract URL from notes
-                        let detector = try! NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
-                        let matches = detector.matches(in: notes, options: [], range: NSRange(location: 0, length: notes.utf16.count))
-                        
-                        if let match = matches.first, let url = match.url {
+                        // Extract URL from notes safely
+                        if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
+                            let matches = detector.matches(in: notes, options: [], range: NSRange(location: 0, length: notes.utf16.count))
+
+                            if let match = matches.first, let url = match.url {
                             Button {
                                 UIApplication.shared.open(url)
                             } label: {
@@ -128,9 +128,10 @@ struct ProtocolDetailView: View {
                             .controlSize(.large)
                             .tint(.orange)
                             .padding(.horizontal)
+                            }
                         }
                     }
-                    
+
                     Button {
                         showAddItemSheet = true
                     } label: {
