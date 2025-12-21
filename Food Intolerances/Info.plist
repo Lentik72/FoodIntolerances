@@ -22,7 +22,6 @@
 		</dict>
 	</array>
     
-    <!-- Add these keys to your Info.plist file -->
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsArbitraryLoads</key>
@@ -30,13 +29,7 @@
     </dict>
     <key>WKAppBoundDomains</key>
     <array>
-        <!-- Optional: Add specific domains you want to whitelist -->
     </array>
-    <key>NSAppTransportSecurity</key>
-    <dict>
-        <key>NSAllowsArbitraryLoads</key>
-        <true/>
-    </dict>
     
 	<key>UIBackgroundModes</key>
 	<array>
