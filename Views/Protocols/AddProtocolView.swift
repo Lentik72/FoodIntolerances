@@ -18,7 +18,7 @@ struct AddProtocolView: View {
     @State private var tagsString: String = ""
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section(header: Text("Protocol Details")) {
                     TextField("Name", text: $protocolName)

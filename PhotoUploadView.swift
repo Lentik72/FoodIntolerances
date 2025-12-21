@@ -10,7 +10,7 @@ struct PhotoUploadView: View {
     @State private var capturedUIImage: UIImage?
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 20) {
                 if let image = image {
                     image

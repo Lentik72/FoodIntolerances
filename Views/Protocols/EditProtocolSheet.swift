@@ -49,7 +49,7 @@ struct EditProtocolSheet: View {
     }
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 // 📌 GENERAL INFORMATION
                 Section(header: Text("General Information").font(.headline)) {

@@ -34,7 +34,7 @@ struct DashboardView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ZStack {
                 ScrollView {
                     
@@ -68,7 +68,7 @@ struct DashboardView: View {
                                 .accessibilityHint("Double tap to open device settings and enable location access")
                             }
                             .padding()
-                            .background(Color(UIColor.systemBackground))
+                            .background(Color(.systemBackground))
                             .cornerRadius(12)
                             .shadow(radius: 5)
                         }
@@ -85,7 +85,7 @@ struct DashboardView: View {
                                 .foregroundColor(.gray)
                         }
                         .frame(maxWidth: .infinity)
-                        .background(Color(UIColor.secondarySystemBackground))
+                        .background(Color(.secondarySystemBackground))
                         .cornerRadius(10)
                         .shadow(radius: 4)
                         .padding()
@@ -118,7 +118,7 @@ struct DashboardView: View {
                             }
                             .padding()
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(UIColor.systemGroupedBackground))
+                            .background(Color(.systemGroupedBackground))
                             .cornerRadius(10)
                         }
                         .buttonStyle(PlainButtonStyle())
@@ -133,7 +133,7 @@ struct DashboardView: View {
                             }
                             .padding()
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(UIColor.systemGroupedBackground))
+                            .background(Color(.systemGroupedBackground))
                             .cornerRadius(10)
                         }
                         .buttonStyle(PlainButtonStyle())
@@ -148,7 +148,7 @@ struct DashboardView: View {
                             }
                             .padding()
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(UIColor.systemGroupedBackground))
+                            .background(Color(.systemGroupedBackground))
                             .cornerRadius(10)
                         }
                         .buttonStyle(PlainButtonStyle())
@@ -366,7 +366,7 @@ struct DailySummaryCard: View {
             .frame(maxWidth: .infinity)
         }
         .padding()
-        .background(Color(UIColor.secondarySystemBackground))
+        .background(Color(.secondarySystemBackground))
         .cornerRadius(15)
         .shadow(radius: 3)
         .padding(.horizontal)
@@ -655,7 +655,7 @@ struct EnvironmentalFactorsCard: View {
                 .padding(.top, 4)
         }
         .padding()
-        .background(Color(UIColor.secondarySystemBackground))
+        .background(Color(.secondarySystemBackground))
         .cornerRadius(15)
         .shadow(radius: 3)
         .padding(.horizontal)
@@ -734,7 +734,7 @@ struct StatusIndicator: View {
                 .padding(.horizontal)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
-                    backgroundGradient != nil ? AnyView(backgroundGradient!) : AnyView(Color(UIColor.tertiarySystemBackground))
+                    backgroundGradient != nil ? AnyView(backgroundGradient!) : AnyView(Color(.tertiarySystemBackground))
                 )
                 .cornerRadius(12)
             }
@@ -786,7 +786,7 @@ struct StatusIndicator: View {
                                 .accessibilityHint("Double tap to edit this log entry")
                             }
                             .padding()
-                            .background(Color(UIColor.secondarySystemBackground)) // ✅ Updated to match other cards
+                            .background(Color(.secondarySystemBackground)) // ✅ Updated to match other cards
                             .cornerRadius(12)
                             .shadow(radius: 2)
                             .onTapGesture {
@@ -800,7 +800,7 @@ struct StatusIndicator: View {
                     }
                 }
                 .padding()
-                .background(Color(UIColor.secondarySystemBackground)) // ✅ Consistent with other cards
+                .background(Color(.secondarySystemBackground)) // ✅ Consistent with other cards
                 .cornerRadius(15)
                 .shadow(radius: 3)
                 .padding(.horizontal)
@@ -865,7 +865,7 @@ struct StatusIndicator: View {
                     }
                 }
                 .padding()
-                .background(Color(UIColor.secondarySystemBackground))
+                .background(Color(.secondarySystemBackground))
                 .cornerRadius(15)
                 .shadow(radius: 3)
                 .padding(.horizontal)
@@ -881,7 +881,7 @@ struct StatusIndicator: View {
             }
             
             var body: some View {
-                NavigationView {
+                NavigationStack {
                     List(symptomLogs, id: \.id) { log in
                         VStack(alignment: .leading) {
                             Text(log.itemName)
@@ -920,7 +920,7 @@ struct StatusIndicator: View {
                         .foregroundColor(adherenceRate > 75 ? .green : .red)
                 }
                 .padding()
-                .background(Color(UIColor.secondarySystemBackground))
+                .background(Color(.secondarySystemBackground))
                 .cornerRadius(15)
                 .shadow(radius: 3)
                 .padding(.horizontal)
@@ -958,7 +958,7 @@ struct StatusIndicator: View {
                                 }
                             }
                             .padding(8)
-                            .background(Color(UIColor.secondarySystemBackground))
+                            .background(Color(.secondarySystemBackground))
                             .cornerRadius(8)
                         }
                         
@@ -979,7 +979,7 @@ struct StatusIndicator: View {
                     }
                 }
                 .padding()
-                .background(Color(UIColor.secondarySystemBackground))
+                .background(Color(.secondarySystemBackground))
                 .cornerRadius(15)
                 .shadow(radius: 3)
                 .padding(.horizontal)
@@ -1119,7 +1119,7 @@ struct PersonalizedInsightsCard: View {
             }
         }
         .padding()
-        .background(Color(UIColor.secondarySystemBackground))
+        .background(Color(.secondarySystemBackground))
         .cornerRadius(15)
         .shadow(radius: 3)
         .padding(.horizontal)
@@ -1165,7 +1165,7 @@ struct InsightCard: View {
         }
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(UIColor.tertiarySystemBackground))
+        .background(Color(.tertiarySystemBackground))
         .cornerRadius(10)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(title): \(message)")

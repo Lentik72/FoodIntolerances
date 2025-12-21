@@ -19,7 +19,7 @@ struct MainTabView: View {
     @State private var showProtocolTags = false
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ZStack {
                 TabView(selection: $tabManager.selectedTab) {
                     DashboardView()

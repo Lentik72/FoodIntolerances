@@ -29,7 +29,7 @@ struct ProtocolListView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack {
                 HStack(spacing: 12) {
                     Button(action: { showAddSheet = true }) {
@@ -86,7 +86,7 @@ struct ProtocolListView: View {
                             .padding(.horizontal)
                     }
                     .padding()
-                    .background(Color(UIColor.secondarySystemBackground))
+                    .background(Color(.secondarySystemBackground))
                     .cornerRadius(12)
                     .shadow(radius: 3)
                     .padding(.horizontal)

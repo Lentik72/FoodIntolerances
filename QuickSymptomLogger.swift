@@ -88,7 +88,7 @@ struct QuickSymptomLogger: View {
             }
         }
         .padding()
-        .background(Color(UIColor.secondarySystemBackground))
+        .background(Color(.secondarySystemBackground))
         .cornerRadius(15)
         .shadow(radius: 3)
         .padding(.horizontal)
@@ -216,7 +216,7 @@ struct QuickSymptomButton: View {
                 .fontWeight(isSelected ? .bold : .regular)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(isSelected ? Color.blue : Color(UIColor.tertiarySystemBackground))
+                .background(isSelected ? Color.blue : Color(.tertiarySystemBackground))
                 .foregroundColor(isSelected ? .white : .primary)
                 .cornerRadius(20)
                 .shadow(color: isSelected ? Color.blue.opacity(0.5) : Color.clear, radius: 4)

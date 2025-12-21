@@ -18,7 +18,7 @@ struct AddSymptomView: View {
     let columns = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(alignment: .leading, spacing: 20) {
                 Text("Add New Symptom")
                     .font(.title2).bold()

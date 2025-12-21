@@ -460,7 +460,7 @@ struct SymptomSelectionSheetFront: View {
     
     // Extract the symptoms list view to a computed property
     private var symptomsListView: some View {
-        NavigationView {
+        NavigationStack {
             Group {
                 // For the head section in SymptomSelectionSheetFront
                 if region == .head {
@@ -479,7 +479,7 @@ struct SymptomSelectionSheetFront: View {
                                 }
                                 .padding(.horizontal)
                                 .padding(.vertical, 8)
-                                .background(Color(UIColor.secondarySystemBackground))
+                                .background(Color(.secondarySystemBackground))
                                 .cornerRadius(8)
                                 .padding(.horizontal)
                             }
@@ -539,7 +539,7 @@ struct SymptomSelectionSheetFront: View {
                             }
                             .padding(.horizontal)
                             .padding(.vertical, 8)
-                            .background(Color(UIColor.secondarySystemBackground))
+                            .background(Color(.secondarySystemBackground))
                             .cornerRadius(8)
                             .padding(.bottom, 8)
                         }
@@ -588,7 +588,7 @@ struct SymptomRow: View {
             .contentShape(Rectangle())
             .padding(.vertical, 4)
             .padding(.horizontal, 12)
-            .background(Color(UIColor.secondarySystemBackground))
+            .background(Color(.secondarySystemBackground))
             .cornerRadius(8)
         }
     }
@@ -631,7 +631,7 @@ struct SymptomSelectionSheetBack: View {
     }
        
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Group {
                 VStack {
                     // Add filter indicator if a category is selected
@@ -646,11 +646,11 @@ struct SymptomSelectionSheetBack: View {
                         }
                         .padding(.horizontal)
                         .padding(.vertical, 8)
-                        .background(Color(UIColor.secondarySystemBackground))
+                        .background(Color(.secondarySystemBackground))
                         .cornerRadius(8)
                         .padding(.bottom, 8)
                     }
-                    
+
                     List(filteredSymptoms) { symptom in
                         SymptomRow(symptom: symptom, viewModel: viewModel)
                     }

@@ -26,7 +26,7 @@ struct RemindersView: View {
     @State private var showAddReminderSheet = false
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             List {
                 ForEach(reminders) { reminder in
                     HStack {
@@ -82,7 +82,7 @@ struct RemindersView: View {
     }
 
     private var addReminderSheet: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section(header: Text("Reminder Info")) {
                     TextField("Reminder Title", text: $newReminderTitle)

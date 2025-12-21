@@ -12,7 +12,7 @@ struct AddAvoidedItemView: View {
     @State private var isRecommended: Bool = false
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section(header: Text("Item Details")) {
                     TextField("Item Name", text: $itemName)

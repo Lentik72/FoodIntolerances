@@ -10,7 +10,7 @@ struct ProtocolFollowUpView: View {
     @State private var notes: String = ""
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section(header: Text("Protocol Effectiveness")) {
                     Picker("Rate effectiveness", selection: $effectiveness) {

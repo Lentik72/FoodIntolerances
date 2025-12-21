@@ -7,7 +7,7 @@ struct AddNewItemSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section(header: Text("New Item Details")) {
                     TextField("Item Name", text: $viewModel.newItemName)

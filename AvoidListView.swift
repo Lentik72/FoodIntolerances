@@ -15,7 +15,7 @@ struct AvoidListView: View {
     @State private var showAddAvoidItemSheet = false
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             List {
                 // --- Section A: Recommended ---
                 Section(header: Text("Recommended to Avoid")) {

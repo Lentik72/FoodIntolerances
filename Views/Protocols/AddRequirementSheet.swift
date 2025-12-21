@@ -28,7 +28,7 @@ struct AddRequirementSheet: View {
     @State private var useCabinetItem: Bool = false
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section("Requirement Source") {
                     Toggle("Pick from Cabinet?", isOn: $useCabinetItem)

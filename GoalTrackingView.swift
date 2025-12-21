@@ -57,7 +57,7 @@ struct GoalTrackingView: View {
                 }
             }
             .padding()
-            .background(Color(UIColor.systemGroupedBackground))
+            .background(Color(.systemGroupedBackground))
             .cornerRadius(10)
             
             // Progress tracking
@@ -149,7 +149,7 @@ struct SymptomProgressCard: View {
             }
         }
         .padding()
-        .background(Color(UIColor.systemGroupedBackground))
+        .background(Color(.systemGroupedBackground))
         .cornerRadius(10)
     }
 }

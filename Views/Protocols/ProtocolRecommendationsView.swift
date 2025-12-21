@@ -27,7 +27,7 @@ struct ProtocolRecommendationsView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack {
                 // Search & Filter UI
                 // Only show if not called with specific symptoms

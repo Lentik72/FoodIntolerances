@@ -32,7 +32,7 @@ struct AddTrackedItemView: View {
     @State private var activeAlert: AddItemAlert?
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section(header: Text("Item Details")) {
                     TextField("Name", text: $name)

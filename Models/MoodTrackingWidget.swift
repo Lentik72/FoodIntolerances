@@ -49,7 +49,7 @@ struct MoodTrackingWidget: View {
             }
         }
         .padding()
-        .background(Color(UIColor.secondarySystemBackground))
+        .background(Color(.secondarySystemBackground))
         .cornerRadius(15)
         .shadow(radius: 3)
         .padding(.horizontal)

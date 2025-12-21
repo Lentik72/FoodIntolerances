@@ -28,7 +28,7 @@ struct TrackedItemsView: View {
     @State private var itemToDelete: TrackedItem? = nil
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ZStack {
                 // Tap outside to dismiss keyboard
                 Color.clear

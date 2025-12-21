@@ -12,7 +12,7 @@ struct CabinetListView: View {
     @State private var showSaveError = false
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             List(cabinetItems, id: \.id) { item in
                 VStack(alignment: .leading, spacing: 4) {
                     Text(item.name)
@@ -139,7 +139,7 @@ struct AddCabinetItemSheet: View {
     @State private var notes: String = ""
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section("Cabinet Item Details") {
                     TextField("Name", text: $name)
@@ -186,7 +186,7 @@ struct EditCabinetItemSheet: View {
     @State var item: CabinetItem
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section("Edit Item") {
                     TextField("Name", text: $item.name)

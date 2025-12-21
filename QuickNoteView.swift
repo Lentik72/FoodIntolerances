@@ -5,7 +5,7 @@ struct QuickNoteView: View {
     @State private var noteText = ""
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack {
                 TextEditor(text: $noteText)
                     .padding()

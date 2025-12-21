@@ -13,7 +13,7 @@ struct ProtocolVerificationView: View {
     @State private var additionalNotes = ""
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section(header: Text("Protocol Verification")) {
                     VStack(alignment: .leading, spacing: 10) {

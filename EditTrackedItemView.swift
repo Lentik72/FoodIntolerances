@@ -27,7 +27,7 @@ struct EditTrackedItemView: View {
     @State private var activeAlert: EditItemAlert?
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section(header: Text("Item Details")) {
                     TextField("Name", text: $trackedItem.name)

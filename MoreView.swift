@@ -9,7 +9,7 @@ struct MoreView: View {
     @State private var showProtocolTags = false
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             List {
                 Section(header: Text("Settings")) {
                     Button {

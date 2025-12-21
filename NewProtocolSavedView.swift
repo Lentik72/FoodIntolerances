@@ -12,7 +12,7 @@ struct NewProtocolSavedView: View {
     @State private var reminderTime = Date()
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 20) {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 60))
@@ -38,7 +38,7 @@ struct NewProtocolSavedView: View {
                     }
                 }
                 .padding()
-                .background(Color(UIColor.secondarySystemBackground))
+                .background(Color(.secondarySystemBackground))
                 .cornerRadius(10)
                 
                 Button(action: {

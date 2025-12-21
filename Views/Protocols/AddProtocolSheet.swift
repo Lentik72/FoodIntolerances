@@ -34,7 +34,7 @@ struct AddProtocolSheet: View {
     @State private var protocolItems: [TherapyProtocolItemInput] = []
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 // 📌 GENERAL INFORMATION
                 Section(header: Text("Protocol Info").font(.headline)) {

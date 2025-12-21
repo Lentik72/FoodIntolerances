@@ -88,7 +88,7 @@ struct EditLogSheet: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 // Symptoms & Basic Info
                 Section(header: Text("Symptom Details")) {

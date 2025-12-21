@@ -45,7 +45,7 @@ struct QuickAccessSection: View {
             // Add padding at the bottom for a nicer look
             .padding(.bottom, 8)
         }
-        .background(Color(UIColor.secondarySystemBackground))
+        .background(Color(.secondarySystemBackground))
         .cornerRadius(15)
         .shadow(radius: 3)
         .padding(.horizontal)

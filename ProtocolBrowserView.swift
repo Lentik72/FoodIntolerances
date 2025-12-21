@@ -39,7 +39,7 @@ struct ProtocolBrowserView: View {
     ]
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 0) {
                 
                 // Disclaimer Banner
@@ -53,7 +53,7 @@ struct ProtocolBrowserView: View {
                         .foregroundColor(.secondary)
                 }
                 .padding()
-                .background(Color(UIColor.secondarySystemBackground))
+                .background(Color(.secondarySystemBackground))
                 .cornerRadius(8)
                 .padding(.horizontal)
                 
@@ -130,7 +130,7 @@ struct ProtocolBrowserView: View {
                                             .foregroundColor(.blue)
                                     }
                                     .padding()
-                                    .background(Color(UIColor.secondarySystemBackground))
+                                    .background(Color(.secondarySystemBackground))
                                     .cornerRadius(10)
                                     .padding(.horizontal)
                                 }
@@ -162,7 +162,7 @@ struct ProtocolBrowserView: View {
                                             }
                                         }
                                         .padding()
-                                        .background(Color(UIColor.secondarySystemBackground))
+                                        .background(Color(.secondarySystemBackground))
                                         .cornerRadius(10)
                                         .padding(.horizontal)
                                     }
@@ -238,7 +238,7 @@ struct ProtocolBrowserView: View {
                         }
                     }
                     .padding()
-                    .background(Color(UIColor.systemBackground))
+                    .background(Color(.systemBackground))
                 }
             }
             .sheet(isPresented: $showExtractedProtocol) {
@@ -893,7 +893,7 @@ struct ProtocolExtractionView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section(header: Text("Protocol Details")) {
                     TextField("Title", text: $title)

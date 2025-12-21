@@ -43,7 +43,7 @@ struct ProtocolItemCard: View {
             }
         }
         .padding()
-        .background(Color(UIColor.secondarySystemBackground))
+        .background(Color(.secondarySystemBackground))
         .cornerRadius(10)
         .shadow(radius: 2)
         .onTapGesture {

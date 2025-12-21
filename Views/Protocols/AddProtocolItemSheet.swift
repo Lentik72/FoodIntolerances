@@ -22,7 +22,7 @@ struct AddProtocolItemSheet: View {
     @State private var selectedCabinet: CabinetItem? = nil
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section("Item Info") {
                     TextField("Name", text: $itemName)

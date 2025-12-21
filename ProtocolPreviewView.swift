@@ -83,7 +83,7 @@ struct ProtocolPreviewView: View {
                         }
                     }
                     .padding()
-                    .background(Color(UIColor.secondarySystemBackground))
+                    .background(Color(.secondarySystemBackground))
                     .cornerRadius(15)
                     .padding(.horizontal)
                 }
@@ -121,7 +121,7 @@ struct ProtocolPreviewView: View {
                 .disabled(reviewStage == .verification && !verificationChecked)
             }
             .padding()
-            .background(Color(UIColor.systemBackground))
+            .background(Color(.systemBackground))
         }
         .navigationTitle("Protocol Review")
         .navigationBarItems(trailing: Button("Cancel") {

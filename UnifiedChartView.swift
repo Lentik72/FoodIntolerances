@@ -26,7 +26,7 @@ struct UnifiedChartView: View {
                 symptomOccurrencesChart()
             }
         }
-        .background(Color(UIColor.secondarySystemBackground))
+        .background(Color(.secondarySystemBackground))
         .cornerRadius(12)
         .shadow(radius: 4)
         .padding(.horizontal)

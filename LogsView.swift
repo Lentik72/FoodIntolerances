@@ -37,7 +37,7 @@ struct LogsView: View {
     }
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 // Search Section
                 Section {

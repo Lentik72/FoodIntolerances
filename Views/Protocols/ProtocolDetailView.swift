@@ -381,7 +381,7 @@ struct ProtocolItemsSection: View {
                         .foregroundColor(.gray)
                         .frame(maxWidth: .infinity)
                         .padding()
-                        .background(Color(UIColor.tertiarySystemFill))
+                        .background(Color(.tertiarySystemFill))
                         .cornerRadius(10)
                         .padding(.horizontal)
                 } else {

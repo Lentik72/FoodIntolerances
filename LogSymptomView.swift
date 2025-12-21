@@ -121,7 +121,7 @@ struct ReviewView: View {
                     }
                 }
                 .padding()
-                .background(Color(UIColor.systemGray6))
+                .background(Color(.systemGray6))
                 .cornerRadius(10)
             }
             
@@ -253,7 +253,7 @@ struct ReviewView: View {
                 }
             }
             .padding(.vertical, 10)
-            .background(Color(UIColor.secondarySystemBackground))
+            .background(Color(.secondarySystemBackground))
             .cornerRadius(12)
             
             VStack(alignment: .leading, spacing: 15) {
@@ -434,7 +434,7 @@ struct LogSymptomView: View {
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack {
                 StepperView(currentStep: $viewModel.currentStep)
                     .padding()
@@ -669,7 +669,7 @@ struct SymptomSelectionView: View {
         }
         
         var body: some View {
-            NavigationView {
+            NavigationStack {
                 List {
                     if matchingProtocols.isEmpty {
                         Section {
@@ -1300,7 +1300,7 @@ struct AffectedAreasView: View {
             } else {
                 BodyMapView()
                     .frame(height: 400)
-                    .background(Color(UIColor.systemGroupedBackground))
+                    .background(Color(.systemGroupedBackground))
                     .cornerRadius(10)
                     .onAppear {
                         autoSelectBodyAreas()
@@ -1519,7 +1519,7 @@ struct DateNotesView: View {
                     .foregroundColor(.purple)
             }
             .padding()
-            .background(Color(UIColor.secondarySystemBackground))
+            .background(Color(.secondarySystemBackground))
             .cornerRadius(10)
             
             Spacer()
