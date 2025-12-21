@@ -20,10 +20,5 @@ class LogsViewModel: ObservableObject {
     @Published var allFoods: [String] = []
     @Published var allMoonPhases: [String] = []
     @Published var allMercuryStatuses: [String] = ["In Retrograde", "Direct"]
-    
-    private func getUniqueCategories(from logs: [LogEntry]) -> [String] {
-        let categories = logs.map { $0.category }
-        return ["All"] + Array(Set(categories)).sorted()
-    }
 }
 

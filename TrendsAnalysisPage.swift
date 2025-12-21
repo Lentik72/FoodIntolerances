@@ -122,26 +122,3 @@ struct TrendsAnalysisPage_Previews: PreviewProvider {
             .modelContainer(for: [LogEntry.self, TrackedItem.self, AvoidedItem.self, OngoingSymptom.self, SymptomCheckIn.self], inMemory: true)
     }
 }
-
-extension TrendsAnalysisPage {
-    static func autoPopulateRecommendedItem(
-        name: String,
-        type: AvoidedItemType,
-        reason: String? = nil,
-        modelContext: ModelContext
-    ) {
-        let recommended = AvoidedItem(
-            name: name,
-            type: type,
-            reason: reason,
-            isRecommended: true
-        )
-        modelContext.insert(recommended)
-        do {
-            try modelContext.save()
-            print(">>> Inserted recommended item:", recommended.name)
-        } catch {
-            print(">>> Error auto-populating recommended item:", error)
-        }
-    }
-}

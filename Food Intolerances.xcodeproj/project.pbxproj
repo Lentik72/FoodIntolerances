@@ -20,12 +20,9 @@
 		B31A1E952D833E5F0024D855 /* SymptomManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B31A1E942D833E5F0024D855 /* SymptomManager.swift */; };
 		B31A1E972D837B780024D855 /* EnvironmentalDataService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B31A1E962D837B780024D855 /* EnvironmentalDataService.swift */; };
 		B31A1E992D837C0B0024D855 /* NotificationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B31A1E982D837C0B0024D855 /* NotificationSettingsView.swift */; };
-		B31A1E9B2D8388280024D855 /* LocationPermissionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B31A1E9A2D8388280024D855 /* LocationPermissionManager.swift */; };
 		B32086572D2ECC56007EBB69 /* StringArrayTransformer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B32086562D2ECC56007EBB69 /* StringArrayTransformer.swift */; };
 		B34C6B302D3C5D4C00ECFFF0 /* Symptom.swift in Sources */ = {isa = PBXBuildFile; fileRef = B34C6B2F2D3C5D4C00ECFFF0 /* Symptom.swift */; };
-		B34C6B342D3C5D7E00ECFFF0 /* SymptomSummarySection.swift .swift in Sources */ = {isa = PBXBuildFile; fileRef = B34C6B332D3C5D7E00ECFFF0 /* SymptomSummarySection.swift .swift */; };
 		B34C6B362D3C5D9A00ECFFF0 /* ActiveProtocolsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B34C6B352D3C5D9A00ECFFF0 /* ActiveProtocolsSection.swift */; };
-		B34C6B382D3C5DB100ECFFF0 /* SymptomTrendChart.swift .swift in Sources */ = {isa = PBXBuildFile; fileRef = B34C6B372D3C5DB100ECFFF0 /* SymptomTrendChart.swift .swift */; };
 		B34C6B3C2D3C5FE500ECFFF0 /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B34C6B3B2D3C5FE500ECFFF0 /* MainTabView.swift */; };
 		B34C6B3E2D3C611600ECFFF0 /* PieChartView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B34C6B3D2D3C611600ECFFF0 /* PieChartView.swift */; };
 		B34C6B422D3C65EE00ECFFF0 /* QuickNoteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B34C6B412D3C65EE00ECFFF0 /* QuickNoteView.swift */; };
@@ -33,7 +30,6 @@
 		B34C6B462D3C671D00ECFFF0 /* ImagePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B34C6B452D3C671D00ECFFF0 /* ImagePicker.swift */; };
 		B34C6B482D3C67C200ECFFF0 /* FABAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = B34C6B472D3C67C200ECFFF0 /* FABAction.swift */; };
 		B34C6B4A2D3CA2F600ECFFF0 /* SeverityTrendChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = B34C6B492D3CA2F600ECFFF0 /* SeverityTrendChart.swift */; };
-		B34C6B4C2D3CA35900ECFFF0 /* SymptomFrequencyChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = B34C6B4B2D3CA35900ECFFF0 /* SymptomFrequencyChart.swift */; };
 		B3712F8D2D6FF4780019E603 /* LogCategory.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3712F8C2D6FF4780019E603 /* LogCategory.swift */; };
 		B3712F8F2D70D5DC0019E603 /* AppError.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3712F8E2D70D5DC0019E603 /* AppError.swift */; };
 		B371320D2D77DA5D0019E603 /* SymptomPredictionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B371320C2D77DA5D0019E603 /* SymptomPredictionService.swift */; };
@@ -60,7 +56,6 @@
 		B3A084972D669CA0007CB8B5 /* LogRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A084962D669CA0007CB8B5 /* LogRowView.swift */; };
 		B3A084992D669CC3007CB8B5 /* EditLogSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A084982D669CC3007CB8B5 /* EditLogSheet.swift */; };
 		B3A0849B2D669CF9007CB8B5 /* LogsFilterViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A0849A2D669CF9007CB8B5 /* LogsFilterViews.swift */; };
-		B3A0849D2D669D1F007CB8B5 /* LogsHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A0849C2D669D1F007CB8B5 /* LogsHelpers.swift */; };
 		B3A0849F2D669D42007CB8B5 /* EnvironmentalViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A0849E2D669D42007CB8B5 /* EnvironmentalViews.swift */; };
 		B3A383C22D35C77200945970 /* TrackedItemsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A383C12D35C77200945970 /* TrackedItemsView.swift */; };
 		B3A383C82D35D93000945970 /* EditTrackedItemView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A383C72D35D93000945970 /* EditTrackedItemView.swift */; };
@@ -147,15 +142,12 @@
 		B31A1E942D833E5F0024D855 /* SymptomManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SymptomManager.swift; sourceTree = "<group>"; };
 		B31A1E962D837B780024D855 /* EnvironmentalDataService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvironmentalDataService.swift; sourceTree = "<group>"; };
 		B31A1E982D837C0B0024D855 /* NotificationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationSettingsView.swift; sourceTree = "<group>"; };
-		B31A1E9A2D8388280024D855 /* LocationPermissionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationPermissionManager.swift; sourceTree = "<group>"; };
 		B32086562D2ECC56007EBB69 /* StringArrayTransformer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StringArrayTransformer.swift; sourceTree = "<group>"; };
 		B334267F2D13998700BAAE35 /* Food Intolerances.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Food Intolerances.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		B33426932D13998800BAAE35 /* Food IntolerancesTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Food IntolerancesTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		B334269D2D13998800BAAE35 /* Food IntolerancesUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Food IntolerancesUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		B34C6B2F2D3C5D4C00ECFFF0 /* Symptom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Symptom.swift; sourceTree = "<group>"; };
-		B34C6B332D3C5D7E00ECFFF0 /* SymptomSummarySection.swift .swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SymptomSummarySection.swift .swift"; sourceTree = "<group>"; };
 		B34C6B352D3C5D9A00ECFFF0 /* ActiveProtocolsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveProtocolsSection.swift; sourceTree = "<group>"; };
-		B34C6B372D3C5DB100ECFFF0 /* SymptomTrendChart.swift .swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SymptomTrendChart.swift .swift"; sourceTree = "<group>"; };
 		B34C6B3B2D3C5FE500ECFFF0 /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
 		B34C6B3D2D3C611600ECFFF0 /* PieChartView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PieChartView.swift; sourceTree = "<group>"; };
 		B34C6B412D3C65EE00ECFFF0 /* QuickNoteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickNoteView.swift; sourceTree = "<group>"; };
@@ -163,7 +155,6 @@
 		B34C6B452D3C671D00ECFFF0 /* ImagePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePicker.swift; sourceTree = "<group>"; };
 		B34C6B472D3C67C200ECFFF0 /* FABAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FABAction.swift; sourceTree = "<group>"; };
 		B34C6B492D3CA2F600ECFFF0 /* SeverityTrendChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeverityTrendChart.swift; sourceTree = "<group>"; };
-		B34C6B4B2D3CA35900ECFFF0 /* SymptomFrequencyChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SymptomFrequencyChart.swift; sourceTree = "<group>"; };
 		B3712F8C2D6FF4780019E603 /* LogCategory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogCategory.swift; sourceTree = "<group>"; };
 		B3712F8E2D70D5DC0019E603 /* AppError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppError.swift; sourceTree = "<group>"; };
 		B371320C2D77DA5D0019E603 /* SymptomPredictionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SymptomPredictionService.swift; sourceTree = "<group>"; };
@@ -190,7 +181,6 @@
 		B3A084962D669CA0007CB8B5 /* LogRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogRowView.swift; sourceTree = "<group>"; };
 		B3A084982D669CC3007CB8B5 /* EditLogSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditLogSheet.swift; sourceTree = "<group>"; };
 		B3A0849A2D669CF9007CB8B5 /* LogsFilterViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogsFilterViews.swift; sourceTree = "<group>"; };
-		B3A0849C2D669D1F007CB8B5 /* LogsHelpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogsHelpers.swift; sourceTree = "<group>"; };
 		B3A0849E2D669D42007CB8B5 /* EnvironmentalViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvironmentalViews.swift; sourceTree = "<group>"; };
 		B3A383C12D35C77200945970 /* TrackedItemsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackedItemsView.swift; sourceTree = "<group>"; };
 		B3A383C72D35D93000945970 /* EditTrackedItemView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditTrackedItemView.swift; sourceTree = "<group>"; };
@@ -312,7 +302,6 @@
 				B30D8CD32D92238A00ACE9BC /* ProtocolPreviewView.swift */,
 				B3C6A42B2D8A19A900684767 /* MoreView.swift */,
 				B3C6A4292D8A113000684767 /* QuickSymptomLogger.swift */,
-				B31A1E9A2D8388280024D855 /* LocationPermissionManager.swift */,
 				B31A1E982D837C0B0024D855 /* NotificationSettingsView.swift */,
 				B31A1E962D837B780024D855 /* EnvironmentalDataService.swift */,
 				B31A1E922D833E410024D855 /* BodyRegionUtility.swift */,
@@ -352,7 +341,6 @@
 				B3A383CD2D35F7E600945970 /* LogItemViewModel.swift */,
 				B3A084962D669CA0007CB8B5 /* LogRowView.swift */,
 				B3A0849A2D669CF9007CB8B5 /* LogsFilterViews.swift */,
-				B3A0849C2D669D1F007CB8B5 /* LogsHelpers.swift */,
 				B3B539B72D320097003132AF /* LogsView.swift */,
 				B3A084942D669C80007CB8B5 /* LogsViewModel.swift */,
 				B3B539B52D31FE3F003132AF /* LogSymptomView.swift */,
@@ -386,13 +374,10 @@
 				B34C6B2F2D3C5D4C00ECFFF0 /* Symptom.swift */,
 				B3D484212D42EB9300F7E3BA /* SymptomCheckIn.swift */,
 				B3D484252D42EBE300F7E3BA /* SymptomCheckInView.swift */,
-				B34C6B4B2D3CA35900ECFFF0 /* SymptomFrequencyChart.swift */,
 				B371320C2D77DA5D0019E603 /* SymptomPredictionService.swift */,
 				B3D4856A2D4AF59100F7E3BA /* SymptomSelectionView.swift */,
-				B34C6B332D3C5D7E00ECFFF0 /* SymptomSummarySection.swift .swift */,
 				B3FEA0962D349559000727AD /* SymptomToggleView.swift */,
 				B3A0848C2D662792007CB8B5 /* SymptomTrackingView.swift */,
-				B34C6B372D3C5DB100ECFFF0 /* SymptomTrendChart.swift .swift */,
 				B3FEA08E2D3494CB000727AD /* SymptomView.swift */,
 				B3D485702D4BBE8800F7E3BA /* TabEnum.swift */,
 				B3D485722D4C22B100F7E3BA /* TabManager.swift */,
@@ -622,7 +607,6 @@
 				B3FEA0972D349559000727AD /* SymptomToggleView.swift in Sources */,
 				B3FEA0932D349517000727AD /* PrimaryButtonStyle.swift in Sources */,
 				B37132172D77E3CA0019E603 /* SmartProtocolRecommender.swift in Sources */,
-				B34C6B4C2D3CA35900ECFFF0 /* SymptomFrequencyChart.swift in Sources */,
 				B3D485712D4BBE8800F7E3BA /* TabEnum.swift in Sources */,
 				B3A383CE2D35F7E600945970 /* LogItemViewModel.swift in Sources */,
 				B3D4843C2D456CF700F7E3BA /* LogEntry.swift in Sources */,
@@ -646,7 +630,6 @@
 				B34C6B442D3C660500ECFFF0 /* PhotoUploadView.swift in Sources */,
 				B3C434452D63885B00EC68BF /* ProtocolFollowUpView.swift in Sources */,
 				B31A1D4F2D8311B10024D855 /* UnifiedChartView.swift in Sources */,
-				B34C6B342D3C5D7E00ECFFF0 /* SymptomSummarySection.swift .swift in Sources */,
 				B3A383C22D35C77200945970 /* TrackedItemsView.swift in Sources */,
 				B3C6A42A2D8A113000684767 /* QuickSymptomLogger.swift in Sources */,
 				B39DDCCC2D7BAD93008476E9 /* SwiftDataFix.swift in Sources */,
@@ -655,13 +638,10 @@
 				B34C6B482D3C67C200ECFFF0 /* FABAction.swift in Sources */,
 				B3B539B62D31FE3F003132AF /* LogSymptomView.swift in Sources */,
 				B399F6562D32C8E900172F48 /* ModelsAndExtensions.swift in Sources */,
-				B34C6B382D3C5DB100ECFFF0 /* SymptomTrendChart.swift .swift in Sources */,
 				B3D487BB2D56397F00F7E3BA /* SeasonService.swift in Sources */,
-				B31A1E9B2D8388280024D855 /* LocationPermissionManager.swift in Sources */,
 				B31A1E972D837B780024D855 /* EnvironmentalDataService.swift in Sources */,
 				B31A1E932D833E410024D855 /* BodyRegionUtility.swift in Sources */,
 				B3D4856D2D4B037000F7E3BA /* AddNewItemSheet.swift in Sources */,
-				B3A0849D2D669D1F007CB8B5 /* LogsHelpers.swift in Sources */,
 				B3A084932D663190007CB8B5 /* CollectionExtensions.swift in Sources */,
 				B3A383CA2D35DA5000945970 /* TrackedItem.swift in Sources */,
 				B3A084952D669C80007CB8B5 /* LogsViewModel.swift in Sources */,

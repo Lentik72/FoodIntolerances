@@ -83,7 +83,7 @@ private struct LogHeaderView: View {
     var body: some View {
         HStack(alignment: .center) {
             Circle()
-                .fill(colorForSeverity(severity))
+                .fill(BodyRegionUtility.colorForSeverity(severity))
                 .frame(width: 16, height: 16)
             
             VStack(alignment: .leading, spacing: 4) {
