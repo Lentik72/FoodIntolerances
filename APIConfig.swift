@@ -1,12 +1,11 @@
 import Foundation
 
 /// Centralized API configuration
-/// API keys should be stored in Info.plist, NOT hardcoded in source code
+/// API keys are loaded from Secrets.xcconfig (gitignored) via Info.plist
 enum APIConfig {
 
     /// OpenWeatherMap API key
-    /// To configure: Add "OPENWEATHER_API_KEY" to your Info.plist
-    /// For production: Use environment variables or a secure secrets manager
+    /// To configure: Copy Secrets.xcconfig.template to Secrets.xcconfig and add your key
     static var openWeatherAPIKey: String {
         // First try to get from Info.plist
         if let key = Bundle.main.infoDictionary?["OPENWEATHER_API_KEY"] as? String,
@@ -15,13 +14,20 @@ enum APIConfig {
             return key
         }
 
-        // Fallback for development - should be removed before App Store submission
+        // No fallback - require proper configuration
         #if DEBUG
-        print("⚠️ Warning: Using fallback API key. Add OPENWEATHER_API_KEY to Info.plist for production.")
-        return "816e786b3842e5b9ee47464ead16193c"
+        fatalError("""
+            OPENWEATHER_API_KEY not configured.
+
+            To fix:
+            1. Copy Secrets.xcconfig.template to Secrets.xcconfig
+            2. Add your OpenWeather API key to Secrets.xcconfig
+            3. In Xcode, add Secrets.xcconfig to your project's build configuration
+
+            Get a free API key at: https://openweathermap.org/api
+            """)
         #else
-        // In release builds, require proper configuration
-        fatalError("OPENWEATHER_API_KEY not configured in Info.plist. Please add your API key.")
+        fatalError("OPENWEATHER_API_KEY not configured. Please check your build configuration.")
         #endif
     }
 
