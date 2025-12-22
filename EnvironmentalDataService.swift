@@ -25,7 +25,6 @@ class EnvironmentalDataService: ObservableObject {
     private let pressureReadingInterval: TimeInterval = 3600  // 1 hour in seconds
     private var isFirstLoad: Bool = true
     private var locationManager: LocationService?
-    private var mercuryRetrogradePeriods: [(start: Date, end: Date)] = []
     private var manualLocation: CLLocationCoordinate2D?
     private var cancellables = Set<AnyCancellable>()
     private var lastRefreshRequest = Date.distantPast
@@ -38,7 +37,6 @@ class EnvironmentalDataService: ObservableObject {
             // Create a new location service instance if none provided
             self.locationManager = LocationService()
         }
-        setupMercuryRetrogradePeriods()
     }
     
     func setLocation(latitude: Double, longitude: Double) {
@@ -144,7 +142,7 @@ class EnvironmentalDataService: ObservableObject {
     }
     
     func isMercuryRetrogradeApproaching(for date: Date) -> Bool {
-        for period in mercuryRetrogradePeriods {
+        for period in MercuryRetrograde.periods {
             let daysUntilRetrograde = Calendar.current.dateComponents([.day], from: date, to: period.start).day ?? Int.max
             if daysUntilRetrograde >= 0 && daysUntilRetrograde <= 3 {
                 return true
@@ -154,14 +152,7 @@ class EnvironmentalDataService: ObservableObject {
     }
     
     func categorizePressure(_ pressure: Double) -> String {
-        switch pressure {
-        case ..<1000:
-            return "Low"
-        case 1000...1020:
-            return "Normal"
-        default:
-            return "High"
-        }
+        PressureCategory.from(pressure: pressure).rawValue
     }
     
     // MARK: - Private Methods
@@ -287,30 +278,7 @@ class EnvironmentalDataService: ObservableObject {
     }
     
    public func checkMercuryInRetrograde(for date: Date) -> Bool {
-        struct Cache {
-            static var lastCheckedDate: Date?
-            static var lastResult: Bool?
-        }
-        
-        let today = Calendar.current.startOfDay(for: date)
-        if let lastChecked = Cache.lastCheckedDate,
-           Calendar.current.isDate(lastChecked, inSameDayAs: today),
-           let cachedResult = Cache.lastResult {
-            return cachedResult
-        }
-        
-        // Calculate the result
-        for period in mercuryRetrogradePeriods {
-            if date >= period.start && date <= period.end {
-                Cache.lastCheckedDate = today
-                Cache.lastResult = true
-                return true
-            }
-        }
-        
-        Cache.lastCheckedDate = today
-        Cache.lastResult = false
-        return false
+        MercuryRetrograde.isRetrograde(on: date)
     }
     
     private func updateAtmosphericPressure(_ pressure: Double) {
@@ -383,28 +351,7 @@ class EnvironmentalDataService: ObservableObject {
         // Cache this value for future fallbacks
         UserDefaults.standard.set(fallbackPressure, forKey: "lastKnownPressure")
     }
-    
-    private func setupMercuryRetrogradePeriods() {
-        mercuryRetrogradePeriods = [
-            // 2025 periods
-            (start: createDate(year: 2025, month: 3, day: 14), end: createDate(year: 2025, month: 4, day: 7)),
-            (start: createDate(year: 2025, month: 7, day: 17), end: createDate(year: 2025, month: 8, day: 11)),
-            (start: createDate(year: 2025, month: 11, day: 9), end: createDate(year: 2025, month: 11, day: 29)),
-            // 2026 periods
-            (start: createDate(year: 2026, month: 2, day: 25), end: createDate(year: 2026, month: 3, day: 20)),
-            (start: createDate(year: 2026, month: 6, day: 29), end: createDate(year: 2026, month: 7, day: 23)),
-            (start: createDate(year: 2026, month: 10, day: 24), end: createDate(year: 2026, month: 11, day: 13))
-        ]
-    }
-    
-    private func createDate(year: Int, month: Int, day: Int) -> Date {
-        var components = DateComponents()
-        components.year = year
-        components.month = month
-        components.day = day
-        return Calendar.current.date(from: components) ?? Date()
-    }
-    
+
     // MARK: - Model for Weather Data
 
     struct WeatherResponse: Codable {
