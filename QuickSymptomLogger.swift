@@ -193,14 +193,7 @@ struct QuickSymptomLogger: View {
     }
     
     private func severityDescription(_ value: Int) -> String {
-        switch value {
-        case 1: return "Mild"
-        case 2: return "Moderate"
-        case 3: return "Significant"
-        case 4: return "Severe"
-        case 5: return "Extreme"
-        default: return ""
-        }
+        AppConstants.Severity.description(for: value)
     }
 }
 

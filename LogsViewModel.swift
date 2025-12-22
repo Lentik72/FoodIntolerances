@@ -15,7 +15,7 @@ class LogsViewModel: ObservableObject {
     @Published var hasSuddenPressureChange: Bool = false
     @Published var selectedMercuryStatus: Set<String> = []
     @Published var selectedAtmosphericPressureCategories: Set<String> = []
-    @Published var allAtmosphericPressureCategories: [String] = ["Low", "Normal", "High"]
+    @Published var allAtmosphericPressureCategories: [String] = AppConstants.AtmosphericPressure.categories
     @Published var allSymptoms: [String] = ["Headache", "Nausea", "Fatigue", "Abdominal Pain", "Dizziness"]
     @Published var allFoods: [String] = []
     @Published var allMoonPhases: [String] = []
