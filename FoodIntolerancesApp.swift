@@ -19,7 +19,7 @@ struct FoodIntolerancesApp: App {
     init() {
         // Ensure transformers are registered before any other code runs
         _ = FoodIntolerancesApp.registerTransformers
-        print("App initialization - StringArrayTransformer registered")
+        Logger.info("StringArrayTransformer registered", category: .app)
         
         NotificationManager.shared.requestNotificationPermission()
             setupGlobalErrorHandling()
@@ -59,7 +59,7 @@ struct FoodIntolerancesApp: App {
             
             return container
         } catch {
-            print("Error creating ModelContainer: \(error)")
+            Logger.error(error, message: "Error creating ModelContainer", category: .data)
             fatalError("Could not create ModelContainer: \(error)")
         }
     }()
@@ -87,12 +87,10 @@ struct FoodIntolerancesApp: App {
                 ])
                 .resetSwiftDataCache()
                 .onAppear {
-                    #if DEBUG
-                    print("App started in DEBUG mode")
+                    Logger.debug("App started in DEBUG mode", category: .app)
                     if enableDiagnostics {
-                        print("🔍 Diagnostics mode enabled")
+                        Logger.debug("Diagnostics mode enabled", category: .app)
                     }
-                    #endif
                 }
         }
     }
@@ -100,7 +98,7 @@ struct FoodIntolerancesApp: App {
     // Helper to migrate any data
     private func migrateData() {
         if !UserDefaults.standard.bool(forKey: "hasPerformedSymptomMigration") {
-            print("Setting up for data migration on first access")
+            Logger.info("Setting up for data migration on first access", category: .migration)
             UserDefaults.standard.set(true, forKey: "hasPerformedSymptomMigration")
         }
     }
@@ -113,12 +111,12 @@ struct FoodIntolerancesApp: App {
             queue: .main
         ) { notification in
             if let error = notification.object as? Error {
-                print("⚠️ Global error handler caught: \(error.localizedDescription)")
-                
+                Logger.warning("Global error handler caught: \(error.localizedDescription)", category: .app)
+
                 // Attempt recovery for known error types
                 if error.localizedDescription.contains("SwiftData") ||
                    error.localizedDescription.contains("Core Data") {
-                    print("🔄 Attempting SwiftData recovery...")
+                    Logger.info("Attempting SwiftData recovery...", category: .data)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         Task { @MainActor in
                             try? self.sharedModelContainer.mainContext.save()
@@ -134,9 +132,9 @@ struct FoodIntolerancesApp: App {
     static func recoverFromSwiftDataErrors(container: ModelContainer) {
         do {
             try container.mainContext.save()
-            print("✅ Successfully recovered SwiftData context")
+            Logger.info("Successfully recovered SwiftData context", category: .data)
         } catch {
-            print("⚠️ SwiftData recovery attempt failed: \(error.localizedDescription)")
+            Logger.warning("SwiftData recovery attempt failed: \(error.localizedDescription)", category: .data)
         }
     }
 }

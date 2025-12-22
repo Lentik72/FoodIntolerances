@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		8524CC422DFB4B4794C4BF58 /* Constants.swift in Sources */ = {isa = PBXBuildFile; fileRef = 008814905F8E428B987804A4 /* Constants.swift */; };
+		LOGGER00000000000000001 /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = LOGGER00000000000000002 /* Logger.swift */; };
 		A5923076F198E69EB484A490 /* SymptomCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 978C8DB3A9BA2046DA439783 /* SymptomCatalog.swift */; };
 		933F8510E2BB567218295FEE /* CategoryData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CB985202170624F0331DEF3 /* CategoryData.swift */; };
 		B30BBDC62D32D1BA00B26967 /* BodyMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30BBDC52D32D1BA00B26967 /* BodyMapView.swift */; };
@@ -130,6 +131,7 @@
 
 /* Begin PBXFileReference section */
 		008814905F8E428B987804A4 /* Constants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Constants.swift; sourceTree = "<group>"; };
+		LOGGER00000000000000002 /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
 		978C8DB3A9BA2046DA439783 /* SymptomCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SymptomCatalog.swift; sourceTree = "<group>"; };
 		5CB985202170624F0331DEF3 /* CategoryData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoryData.swift; sourceTree = "<group>"; };
 		B30BBDC52D32D1BA00B26967 /* BodyMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BodyMapView.swift; sourceTree = "<group>"; };
@@ -330,6 +332,7 @@
 				978C8DB3A9BA2046DA439783 /* SymptomCatalog.swift */,
 				5CB985202170624F0331DEF3 /* CategoryData.swift */,
 				008814905F8E428B987804A4 /* Constants.swift */,
+				LOGGER00000000000000002 /* Logger.swift */,
 				BD14E6C2FE0047789EC1D2BE /* SaveHelper.swift */,
 				B3B539C32D3229A3003132AF /* Frameworks */,
 				B3D487B62D55990E00F7E3BA /* GetMoonPhase.swift */,
@@ -574,6 +577,7 @@
 				A5923076F198E69EB484A490 /* SymptomCatalog.swift in Sources */,
 				933F8510E2BB567218295FEE /* CategoryData.swift in Sources */,
 				8524CC422DFB4B4794C4BF58 /* Constants.swift in Sources */,
+				LOGGER00000000000000001 /* Logger.swift in Sources */,
 				19CD0E700CD741748152862B /* SaveHelper.swift in Sources */,
 				B3B539BC2D3203F6003132AF /* TrendsAnalysisPage.swift in Sources */,
 				B3FEA08F2D3494CB000727AD /* SymptomView.swift in Sources */,
