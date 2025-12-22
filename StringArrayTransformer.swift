@@ -1,5 +1,4 @@
 import Foundation
-import CoreData
 import SwiftData
 
 @objc(StringArrayTransformer)

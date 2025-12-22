@@ -1,5 +1,4 @@
 import SwiftUI
-import Combine
 
 extension Notification.Name {
     static let filterBySymptom = Notification.Name("filterBySymptom")

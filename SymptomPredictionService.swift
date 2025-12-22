@@ -1,7 +1,6 @@
 // Create a new file: SymptomPredictionService.swift
 import Foundation
 import SwiftData
-import CoreML
 
 class SymptomPredictionService {
     @MainActor
