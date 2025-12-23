@@ -2,12 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>OPENWEATHER_API_KEY</key>
-    <string>$(OPENWEATHER_API_KEY)</string>
-
-    <key>LSSupportsOpeningDocumentsInPlace</key>
-    <true/>
-    
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
@@ -21,16 +15,13 @@
 			</array>
 		</dict>
 	</array>
-    
-    <key>NSAppTransportSecurity</key>
-    <dict>
-        <key>NSAllowsArbitraryLoads</key>
-        <true/>
-    </dict>
-    <key>WKAppBoundDomains</key>
-    <array>
-    </array>
-    
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+	<key>OPENWEATHER_API_KEY</key>
+	<string>816e786b3842e5b9ee47464ead16193c</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>
@@ -42,7 +33,7 @@
 			<array>
 				<string>public.data</string>
 			</array>
-            <key>UTTypeDescription</key>
+			<key>UTTypeDescription</key>
 			<string>Symptom Tracker Protocol</string>
 			<key>UTTypeIdentifier</key>
 			<string>com.yourdomain.symptomtracker.protocol</string>
@@ -55,5 +46,7 @@
 			</dict>
 		</dict>
 	</array>
+	<key>WKAppBoundDomains</key>
+	<array/>
 </dict>
 </plist>

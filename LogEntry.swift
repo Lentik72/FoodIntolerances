@@ -16,7 +16,7 @@ class LogEntry: Identifiable {
             do {
                 return try JSONDecoder().decode([String].self, from: subcategoriesData)
             } catch {
-                print("Error decoding subcategories: \(error)")
+                Logger.error(error, message: "Error decoding subcategories", category: .data)
                 return []
             }
         }
@@ -24,7 +24,7 @@ class LogEntry: Identifiable {
             do {
                 subcategoriesData = try JSONEncoder().encode(newValue)
             } catch {
-                print("Error encoding subcategories: \(error)")
+                Logger.error(error, message: "Error encoding subcategories", category: .data)
                 subcategoriesData = Data()
             }
         }
@@ -113,9 +113,9 @@ class LogEntry: Identifiable {
         self.category = category
         do {
                 self.symptomsData = try JSONEncoder().encode(symptoms)
-                print("Successfully encoded symptoms of size: \(symptoms.count)")
+                Logger.debug("Successfully encoded symptoms of size: \(symptoms.count)", category: .data)
             } catch {
-                print("Error encoding symptoms in init: \(error)")
+                Logger.error(error, message: "Error encoding symptoms in init", category: .data)
                 self.symptomsData = Data() // Empty data to avoid nil
             }
         self.severity = severity
@@ -140,14 +140,14 @@ class LogEntry: Identifiable {
             do {
                 self.subcategoriesData = try JSONEncoder().encode(subcats)
             } catch {
-                print("Error encoding subcategories in init: \(error)")
+                Logger.error(error, message: "Error encoding subcategories in init", category: .data)
                 self.subcategoriesData = Data()
             }
         } else {
             do {
                 self.subcategoriesData = try JSONEncoder().encode([String]())
             } catch {
-                print("Error encoding empty subcategories in init: \(error)")
+                Logger.error(error, message: "Error encoding empty subcategories in init", category: .data)
                 self.subcategoriesData = Data()
             }
         }
@@ -185,48 +185,48 @@ class LogEntry: Identifiable {
             }
             
             if LogControl.shouldLog {
-                print("Getting symptoms from data of size: \(symptomsData.count)")
+                Logger.debug("Getting symptoms from data of size: \(symptomsData.count)", category: .data)
             }
-            
-            guard !symptomsData.isEmpty else { 
+
+            guard !symptomsData.isEmpty else {
                 if LogControl.shouldLog {
-                    print("Empty symptoms data")
+                    Logger.debug("Empty symptoms data", category: .data)
                 }
-                return [] 
+                return []
             }
-            
+
             do {
                 let decoded = try JSONDecoder().decode([String].self, from: symptomsData)
                 if LogControl.shouldLog {
-                    print("Successfully decoded \(decoded.count) symptoms")
+                    Logger.debug("Successfully decoded \(decoded.count) symptoms", category: .data)
                 }
                 return decoded
             } catch {
                 if LogControl.shouldLog {
-                    print("Error decoding symptoms: \(error)")
+                    Logger.error(error, message: "Error decoding symptoms", category: .data)
                 }
-                
+
                 // Add recovery mechanism for corrupted data
                 if let symptomString = String(data: symptomsData, encoding: .utf8),
                    !symptomString.isEmpty {
                     if LogControl.shouldLog {
-                        print("Attempting recovery from string: \(symptomString)")
+                        Logger.debug("Attempting recovery from string: \(symptomString)", category: .data)
                     }
                     // Try to recover if it's a single string
                     return [symptomString]
                 }
-                
+
                 return []
             }
         }
         set {
             // Similar logic for set operations
-            print("Setting symptoms to: \(newValue)")
+            Logger.debug("Setting symptoms to: \(newValue)", category: .data)
             do {
                 symptomsData = try JSONEncoder().encode(newValue)
-                print("Successfully encoded symptoms of size: \(symptomsData.count)")
+                Logger.debug("Successfully encoded symptoms of size: \(symptomsData.count)", category: .data)
             } catch {
-                print("Error encoding symptoms: \(error)")
+                Logger.error(error, message: "Error encoding symptoms", category: .data)
                 symptomsData = Data()
             }
         }

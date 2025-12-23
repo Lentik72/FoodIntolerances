@@ -77,7 +77,7 @@ class LogItemViewModel: ObservableObject {
                     selectedSymptoms.remove(symptom)
                 }
             }
-            print("Current selectedSymptoms: \(selectedSymptoms)")
+            Logger.debug("Current selectedSymptoms: \(selectedSymptoms)", category: .ui)
         }
     /// Severity rating for the symptom (1 to 5)
     @Published var severity: Double = 1
@@ -417,7 +417,7 @@ class LogItemViewModel: ObservableObject {
                 
                 // Use centralized API configuration
                 guard let url = APIConfig.weatherURL(latitude: latitude, longitude: longitude) else {
-                    print("❌ Invalid URL for weather API")
+                    Logger.error("Invalid URL for weather API", category: .network)
                     return
                 }
                 
@@ -434,12 +434,12 @@ class LogItemViewModel: ObservableObject {
                         self.lastUpdated = Date() // ✅ Trigger UI refresh
                     }
                 } catch {
-                    print("❌ Error fetching atmospheric pressure: \(error.localizedDescription)")
+                    Logger.error(error, message: "Error fetching atmospheric pressure", category: .network)
                     await MainActor.run {
                         self.setFallbackAtmosphericPressure()
                     }
                 }
-                
+
                 self.lastFetchTime = Date()
                 
             } else {
@@ -460,7 +460,7 @@ class LogItemViewModel: ObservableObject {
                             let longitude = location.longitude
                             
                             guard let url = APIConfig.weatherURL(latitude: latitude, longitude: longitude) else {
-                                print("❌ Invalid URL for weather API")
+                                Logger.error("Invalid URL for weather API", category: .network)
                                 return
                             }
                             
@@ -478,7 +478,7 @@ class LogItemViewModel: ObservableObject {
                                     self.lastFetchTime = Date()
                                 }
                             } catch {
-                                print("❌ Error fetching atmospheric pressure: \(error.localizedDescription)")
+                                Logger.error(error, message: "Error fetching atmospheric pressure", category: .network)
                                 await MainActor.run {
                                     self.setFallbackAtmosphericPressure()
                                 }
@@ -536,7 +536,7 @@ class LogItemViewModel: ObservableObject {
     }
     
     func reportUnmappedSymptom(symptomName: String) {
-        print("🚨 Unmapped Symptom Reported: \(symptomName)")
+        Logger.warning("Unmapped Symptom Reported: \(symptomName)", category: .data)
         // Optionally, you can add more logic here like storing unmapped symptoms
     }
     
@@ -654,12 +654,12 @@ class LogItemViewModel: ObservableObject {
             if otherSymptomsForRegion.isEmpty {
                 selectedBodyAreas.remove(region)
             } else {
-                print("ℹ️ Keeping region \(region) - other symptoms exist")
+                Logger.debug("Keeping region \(region) - other symptoms exist", category: .data)
             }
         }
-        
-        print("❌ Removed symptom: \(standardizedSymptom)")
-        print("🗺️ Remaining body areas: \(selectedBodyAreas)")
+
+        Logger.debug("Removed symptom: \(standardizedSymptom)", category: .data)
+        Logger.debug("Remaining body areas: \(selectedBodyAreas)", category: .data)
         
         verifySymptomRegionMapping()
     }
@@ -688,7 +688,7 @@ class LogItemViewModel: ObservableObject {
             if let region = symptomToRegion[symptom] {
                 selectedBodyAreas.insert(region)
             } else {
-                print("❌ No mapping for symptom: \(symptom)")
+                Logger.warning("No mapping for symptom: \(symptom)", category: .data)
             }
         }
         
@@ -704,9 +704,9 @@ class LogItemViewModel: ObservableObject {
             filteredSymptoms.append(trimmedSymptom)
             // Also add to selectedSymptoms
             addSymptom(trimmedSymptom)
-            print("Added custom symptom: \(trimmedSymptom)")
+            Logger.info("Added custom symptom: \(trimmedSymptom)", category: .data)
         } else {
-            print("Symptom '\(trimmedSymptom)' already exists.")
+            Logger.debug("Symptom '\(trimmedSymptom)' already exists.", category: .data)
         }
     }
     
@@ -726,7 +726,7 @@ class LogItemViewModel: ObservableObject {
                 $0.lowercased().contains(lowercasedQuery)
             }
         }
-        print("Filtered Symptoms: \(filteredSymptoms)")
+        Logger.debug("Filtered Symptoms: \(filteredSymptoms)", category: .ui)
     }
     
     /// Adds a new category or symptom based on newItemType
@@ -744,20 +744,20 @@ class LogItemViewModel: ObservableObject {
                 self.customCategories.append(trimmedName)
                 self.selectedCategory = trimmedName
                 UserDefaults.standard.set(self.customCategories, forKey: "customCategories")
-                print("Added new category: \(trimmedName)")
+                Logger.info("Added new category: \(trimmedName)", category: .data)
             } else {
                 self.alertMessage = "Category '\(trimmedName)' already exists."
                 self.showAlert = true
-                print("Category '\(trimmedName)' already exists.")
+                Logger.debug("Category '\(trimmedName)' already exists.", category: .data)
             }
         case .symptom:
             if !self.predefinedSymptoms.contains(trimmedName) && !(UserDefaults.standard.stringArray(forKey: "customSymptoms") ?? []).contains(trimmedName) {
                 addCustomSymptom(trimmedName)
-                print("Added new symptom: \(trimmedName)")
+                Logger.info("Added new symptom: \(trimmedName)", category: .data)
             } else {
                 self.alertMessage = "Symptom '\(trimmedName)' already exists."
                 self.showAlert = true
-                print("Symptom '\(trimmedName)' already exists.")
+                Logger.debug("Symptom '\(trimmedName)' already exists.", category: .data)
             }
         }
         self.newItemName = ""
@@ -813,14 +813,13 @@ class LogItemViewModel: ObservableObject {
     ///   - context: The ModelContext for data persistence
     ///   - linkedTrackedItemID: Optional UUID of a linked tracked item
     func saveLog(using context: ModelContext, linkedTrackedItemID: UUID? = nil) {
-        // Add debug prints
-        print("Saving log with \(selectedSymptoms.count) symptoms: \(selectedSymptoms)")
-        
+        Logger.debug("Saving log with \(selectedSymptoms.count) symptoms: \(selectedSymptoms)", category: .data)
+
         let validation = validateInput()
         guard validation.isValid else {
             self.alertMessage = validation.message
             self.showAlert = true
-            print("Validation failed: \(validation.message)")
+            Logger.warning("Validation failed: \(validation.message)", category: .data)
             return
         }
         
@@ -836,7 +835,7 @@ class LogItemViewModel: ObservableObject {
         do {
             subcategoriesData = try JSONEncoder().encode(subcategoriesArray)
         } catch {
-            print("Error encoding subcategories: \(error)")
+            Logger.error(error, message: "Error encoding subcategories", category: .data)
             // Use empty Data as fallback - safer than force unwrap
             subcategoriesData = Data()
         }
@@ -869,7 +868,7 @@ class LogItemViewModel: ObservableObject {
         newLog.subcategoriesData = subcategoriesData
         
         if let selectedProtocol = selectedProtocol {
-            print("Linking protocol: \(selectedProtocol.title) to log")
+            Logger.debug("Linking protocol: \(selectedProtocol.title) to log", category: .data)
             // Only set the ID, not the direct relationship
             newLog.protocolID = selectedProtocol.id
         }
@@ -909,13 +908,13 @@ class LogItemViewModel: ObservableObject {
         
         do {
             try context.save()
-            print("Successfully saved log")
+            Logger.info("Successfully saved log", category: .data)
             self.showSavedMessage = true
             for symptom in selectedSymptoms {
                 storeRecentSymptom(symptom)
             }
         } catch {
-            print("❌ Error saving log: \(error.localizedDescription)")
+            Logger.error(error, message: "Error saving log", category: .data)
             self.alertMessage = "Failed to save log. Please try again."
             self.showAlert = true
             self.alertType = .error
@@ -1086,7 +1085,7 @@ class LogItemViewModel: ObservableObject {
     
     @MainActor
     public func fetchAtmosphericPressure() async {
-        print("🌦️ Delegating atmospheric pressure fetch to EnvironmentalDataService")
+        Logger.debug("Delegating atmospheric pressure fetch to EnvironmentalDataService", category: .network)
         
         // Instead of reimplementing the fetch logic here, delegate to the service
         await environmentalService.fetchAtmosphericPressure()
@@ -1169,17 +1168,17 @@ class LogItemViewModel: ObservableObject {
     @MainActor
     func fetchAtmosphericPressureWithURL(_ urlString: String) async {
         guard let url = URL(string: urlString) else {
-            print("❌ Invalid URL.")
+            Logger.error("Invalid URL.", category: .network)
             self.atmosphericPressureCategory = "Unknown"
             return
         }
-        
+
         do {
             let (data, response) = try await URLSession.shared.data(from: url)
             if let httpResponse = response as? HTTPURLResponse {
-                print("🌐 HTTP Status Code:", httpResponse.statusCode)
+                Logger.debug("HTTP Status Code: \(httpResponse.statusCode)", category: .network)
                 if httpResponse.statusCode == 429 {
-                    print("❌ Rate limit exceeded. Retrying in 60 seconds...")
+                    Logger.warning("Rate limit exceeded. Retrying in 60 seconds...", category: .network)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
                         Task {
                             await self.fetchAtmosphericPressureWithURL(urlString)
@@ -1202,13 +1201,13 @@ class LogItemViewModel: ObservableObject {
                 }
             }
         } catch {
-            print("❌ API Error:", error.localizedDescription)
+            Logger.error(error, message: "API Error", category: .network)
             DispatchQueue.main.async {
                 self.atmosphericPressureCategory = "Unknown"
             }
         }
     }
-    
+
     @MainActor
     public func fetchPressureForecast(lat: Double, lon: Double) async {
         guard let url = APIConfig.forecastURL(latitude: lat, longitude: lon) else { return }
@@ -1232,7 +1231,7 @@ class LogItemViewModel: ObservableObject {
                 }
             }
         } catch {
-            print("Error parsing forecast JSON: \(error)")
+            Logger.error(error, message: "Error parsing forecast JSON", category: .network)
         }
     }
     
@@ -1469,14 +1468,14 @@ class LogItemViewModel: ObservableObject {
                 switch clError.code {
                 case .denied:
                     if !hasLoggedPermissionDenied {
-                        print("❌ Location access denied. Prompting user to enable permissions.")
+                        Logger.warning("Location access denied. Prompting user to enable permissions.", category: .location)
                         hasLoggedPermissionDenied = true
                     }
                     Task { @MainActor in
                         await self.handleLocationDenied()
                     }
                 default:
-                    print("❌ Location Error: \(clError.localizedDescription)")
+                    Logger.error("Location Error: \(clError.localizedDescription)", category: .location)
                     Task { @MainActor in
                         self.viewModel?.atmosphericPressureCategory = "Location Error"
                     }
@@ -1510,7 +1509,7 @@ class LogItemViewModel: ObservableObject {
                 // Start periodic refresh timer when dashboard is active
                 refreshTimer?.invalidate()
                 refreshTimer = Timer.scheduledTimer(withTimeInterval: 1800, repeats: true) { [weak self] _ in
-                    print("⏰ Periodic location refresh timer fired")
+                    Logger.debug("Periodic location refresh timer fired", category: .location)
                     self?.requestLocationUpdate(silent: true)
                 }
             } else if !active && wasActive {
@@ -1527,7 +1526,7 @@ class LogItemViewModel: ObservableObject {
                 requestLocationUpdate()
             case .denied, .restricted:
                 if !hasLoggedPermissionDenied {
-                    print("❌ Location access denied. Using alternative data source.")
+                    Logger.warning("Location access denied. Using alternative data source.", category: .location)
                     hasLoggedPermissionDenied = true
                 }
                 Task { @MainActor in
@@ -1555,7 +1554,7 @@ class LogItemViewModel: ObservableObject {
                 }
             case .notDetermined:
                 if !hasLoggedPermissionRequest {
-                    print("❓ Location permission not determined.")
+                    Logger.debug("Location permission not determined.", category: .location)
                     hasLoggedPermissionRequest = true
                 }
                 // Only request once
@@ -1608,11 +1607,11 @@ class LogItemViewModel: ObservableObject {
     func fetchPressure(from url: URL) async -> Double? {
         do {
             let (data, response) = try await URLSession.shared.data(from: url)
-            
+
             if let httpResponse = response as? HTTPURLResponse {
-                print("🌐 HTTP Status Code:", httpResponse.statusCode)
+                Logger.debug("HTTP Status Code: \(httpResponse.statusCode)", category: .network)
                 if !(200...299).contains(httpResponse.statusCode) {
-                    print("❌ API returned non-successful status code")
+                    Logger.error("API returned non-successful status code", category: .network)
                     return nil
                 }
             }
@@ -1622,9 +1621,9 @@ class LogItemViewModel: ObservableObject {
             return currentPressure
         } catch {
             if let urlError = error as? URLError, urlError.code == .cancelled {
-                print("API request was cancelled, not updating atmospheric pressure.")
+                Logger.debug("API request was cancelled, not updating atmospheric pressure.", category: .network)
             } else {
-                print("❌ API Error:", error.localizedDescription)
+                Logger.error(error, message: "API Error", category: .network)
             }
             return nil
         }
@@ -1743,7 +1742,7 @@ class LogItemViewModel: ObservableObject {
                 atmosphericPressureCategory = "Unknown"
             }
         } catch {
-            print("❌ Failed to parse pressure response:", error.localizedDescription)
+            Logger.error(error, message: "Failed to parse pressure response", category: .network)
             atmosphericPressureCategory = "Unknown"
         }
     }
@@ -1813,8 +1812,8 @@ extension LogItemViewModel {
             // Report unmapped symptom
             reportUnmappedSymptom(symptomName: standardizedSymptom)
         }
-        
-        print("🗺️ Selected body areas: \(selectedBodyAreas)")
+
+        Logger.debug("Selected body areas: \(selectedBodyAreas)", category: .data)
         
         verifySymptomRegionMapping()
     }
@@ -1822,7 +1821,7 @@ extension LogItemViewModel {
     // Add this function to LogItemViewModel.swift
     // In LogItemViewModel.swift, update the verifySymptomRegionMapping method
     func verifySymptomRegionMapping() {
-        print("=================================")
+        Logger.debug("=================================", category: .data)
         
         // First pass - collect all changes to make
         var regionsToAdd = Set<String>()
@@ -1835,22 +1834,22 @@ extension LogItemViewModel {
                 
                 // Check if region is selected
                 if selectedBodyAreas.contains(standardRegion) {
-                    print("  ✓ Region '\(standardRegion)' is selected")
+                    Logger.debug("Region '\(standardRegion)' is selected", category: .data)
                 } else {
-                    print("  ❌ Region '\(standardRegion)' is NOT selected")
+                    Logger.debug("Region '\(standardRegion)' is NOT selected", category: .data)
                     regionsToAdd.insert(standardRegion)
                 }
             } else {
             }
         }
-        
+
         // Now apply all changes at once
         for regionToAdd in regionsToAdd {
             selectedBodyAreas.insert(regionToAdd)
-            print("  🔧 Added region '\(regionToAdd)' to selectedBodyAreas")
+            Logger.debug("Added region '\(regionToAdd)' to selectedBodyAreas", category: .data)
         }
-        
-        print("=================================")
+
+        Logger.debug("=================================", category: .data)
     }
 }
 

@@ -86,11 +86,11 @@ class NotificationManager: ObservableObject {
     func requestNotificationPermission(completion: @escaping (Bool) -> Void = { _ in }) {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             if let error = error {
-                print("❌ Error requesting notifications: \(error.localizedDescription)")
+                Logger.error(error, message: "Error requesting notifications", category: .notification)
             } else {
-                print(granted ? "✅ Notifications enabled" : "🚫 Notifications denied")
+                Logger.info(granted ? "Notifications enabled" : "Notifications denied", category: .notification)
             }
-            
+
             DispatchQueue.main.async {
                 completion(granted)
             }
@@ -119,12 +119,12 @@ class NotificationManager: ObservableObject {
         
         UNUserNotificationCenter.current().add(request) { error in
             if let error = error {
-                print("❌ Error scheduling protocol notification: \(error.localizedDescription)")
+                Logger.error(error, message: "Error scheduling protocol notification", category: .notification)
             } else {
-                print("✅ Protocol notification scheduled for \(therapyProtocol.title) at \(dateComponents.hour ?? 0):\(dateComponents.minute ?? 0)")
+                Logger.info("Protocol notification scheduled for \(therapyProtocol.title) at \(dateComponents.hour ?? 0):\(dateComponents.minute ?? 0)", category: .notification)
             }
         }
-        
+
         // Schedule advance reminder if enabled
         if reminderAdvanceNoticeMinutes > 0 {
             scheduleAdvanceReminder(for: therapyProtocol, minutes: reminderAdvanceNoticeMinutes, baseTime: reminderTime)
@@ -138,7 +138,7 @@ class NotificationManager: ObservableObject {
                     "protocol-advance-\(therapyProtocol.id.uuidString)"
                 ]
             )
-            print("🗑️ Canceled notifications for \(therapyProtocol.title)")
+            Logger.debug("Canceled notifications for \(therapyProtocol.title)", category: .notification)
         }
         
         private func scheduleAdvanceReminder(for therapyProtocol: TherapyProtocol, minutes: Int, baseTime: Date) {
@@ -163,9 +163,9 @@ class NotificationManager: ObservableObject {
             
             UNUserNotificationCenter.current().add(request) { error in
                 if let error = error {
-                    print("❌ Error scheduling advance protocol notification: \(error.localizedDescription)")
+                    Logger.error(error, message: "Error scheduling advance protocol notification", category: .notification)
                 } else {
-                    print("✅ Advance protocol notification scheduled for \(therapyProtocol.title)")
+                    Logger.info("Advance protocol notification scheduled for \(therapyProtocol.title)", category: .notification)
                 }
             }
         }
@@ -177,7 +177,7 @@ class NotificationManager: ObservableObject {
                     .map { $0.identifier }
                 
                 UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: protocolIdentifiers)
-                print("🗑️ Canceled all protocol notifications: \(protocolIdentifiers.count) notifications removed")
+                Logger.debug("Canceled all protocol notifications: \(protocolIdentifiers.count) notifications removed", category: .notification)
             }
         }
         
@@ -185,7 +185,7 @@ class NotificationManager: ObservableObject {
             // This method would need to access all active protocols from the model context
             // Since we can't directly access ModelContext here, this would be called from a view
             // that passes the protocols to reschedule
-            print("⚠️ rescheduleAllProtocolReminders should be called with protocols from a view")
+            Logger.warning("rescheduleAllProtocolReminders should be called with protocols from a view", category: .notification)
         }
         
         // MARK: - Symptom Check-In Reminders
@@ -211,9 +211,9 @@ class NotificationManager: ObservableObject {
 
             UNUserNotificationCenter.current().add(request) { error in
                 if let error = error {
-                    print("❌ Error scheduling symptom check-in notification: \(error.localizedDescription)")
+                    Logger.error(error, message: "Error scheduling symptom check-in notification", category: .notification)
                 } else {
-                    print("✅ Notification scheduled for \(symptom.name) at \(dateComponents.hour ?? 0):\(dateComponents.minute ?? 0)")
+                    Logger.info("Notification scheduled for \(symptom.name) at \(dateComponents.hour ?? 0):\(dateComponents.minute ?? 0)", category: .notification)
                 }
             }
         }
@@ -221,7 +221,7 @@ class NotificationManager: ObservableObject {
         func cancelSymptomCheckInNotification(for symptom: OngoingSymptom) {
             let identifier = "symptom-checkin-\(symptom.id.uuidString)"
             UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [identifier])
-            print("🗑️ Canceled symptom check-in notification for \(symptom.name)")
+            Logger.debug("Canceled symptom check-in notification for \(symptom.name)", category: .notification)
         }
         
         private func cancelAllSymptomReminders() {
@@ -231,7 +231,7 @@ class NotificationManager: ObservableObject {
                     .map { $0.identifier }
                 
                 UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: symptomIdentifiers)
-                print("🗑️ Canceled all symptom check-in notifications: \(symptomIdentifiers.count) notifications removed")
+                Logger.debug("Canceled all symptom check-in notifications: \(symptomIdentifiers.count) notifications removed", category: .notification)
             }
         }
         
@@ -239,7 +239,7 @@ class NotificationManager: ObservableObject {
             // This method would need to access all ongoing symptoms from the model context
             // Since we can't directly access ModelContext here, this would be called from a view
             // that passes the symptoms to reschedule
-            print("⚠️ rescheduleAllSymptomReminders should be called with symptoms from a view")
+            Logger.warning("rescheduleAllSymptomReminders should be called with symptoms from a view", category: .notification)
         }
         
         // MARK: - Refill Reminders
@@ -263,9 +263,9 @@ class NotificationManager: ObservableObject {
             
             UNUserNotificationCenter.current().add(request) { error in
                 if let error = error {
-                    print("❌ Error scheduling refill notification: \(error.localizedDescription)")
+                    Logger.error(error, message: "Error scheduling refill notification", category: .notification)
                 } else {
-                    print("✅ Refill notification scheduled for \(item.name)")
+                    Logger.info("Refill notification scheduled for \(item.name)", category: .notification)
                 }
             }
         }
@@ -293,15 +293,15 @@ class NotificationManager: ObservableObject {
             
             UNUserNotificationCenter.current().add(request) { error in
                 if let error = error {
-                    print("❌ Error scheduling daily summary notification: \(error.localizedDescription)")
+                    Logger.error(error, message: "Error scheduling daily summary notification", category: .notification)
                 } else {
-                    print("✅ Daily summary notification scheduled for \(dateComponents.hour ?? 0):\(dateComponents.minute ?? 0)")
+                    Logger.info("Daily summary notification scheduled for \(dateComponents.hour ?? 0):\(dateComponents.minute ?? 0)", category: .notification)
                 }
             }
         }
         
         func cancelDailySummary() {
             UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["daily-summary"])
-            print("🗑️ Canceled daily summary notification")
+            Logger.debug("Canceled daily summary notification", category: .notification)
         }
     }

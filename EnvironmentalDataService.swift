@@ -176,7 +176,7 @@ class EnvironmentalDataService: ObservableObject {
     }
     
     public func fetchAtmosphericPressure() async {
-        print("🌦️ Starting atmospheric pressure fetch")
+        Logger.debug("Starting atmospheric pressure fetch", category: .network)
 
         // Cancel any existing task before starting a new one
         currentAtmosphericTask?.cancel()
@@ -216,14 +216,14 @@ class EnvironmentalDataService: ObservableObject {
                 location = serviceLoc
             } else {
                 // No location available
-                print("❌ No location available, using fallback pressure data.")
+                Logger.warning("No location available, using fallback pressure data.", category: .location)
                 timeoutTask.cancel() // Cancel timeout task first
                 await MainActor.run { self.useFallbackPressureData() }
                 return
             }
 
             guard let url = APIConfig.weatherURL(latitude: location.latitude, longitude: location.longitude) else {
-                print("❌ Invalid URL for weather API")
+                Logger.error("Invalid URL for weather API", category: .network)
                 return
             }
 
@@ -241,7 +241,7 @@ class EnvironmentalDataService: ObservableObject {
                 }
 
             } catch {
-                print("❌ Error fetching atmospheric pressure: \(error.localizedDescription)")
+                Logger.error(error, message: "Error fetching atmospheric pressure", category: .network)
                 await MainActor.run { self.useFallbackPressureData() }
             }
             
@@ -316,15 +316,15 @@ class EnvironmentalDataService: ObservableObject {
         }
         
         atmosphericPressureCategory = categorizePressure(currentPressure)
-        
-        print("⚡ Sudden Change: \(suddenPressureChange)")
+
+        Logger.debug("Sudden Change: \(suddenPressureChange)", category: .data)
     }
     
     @MainActor
     public func setFallbackAtmosphericPressure() {
         // Check if we have any previous cached data first
         if let cachedPressure = UserDefaults.standard.object(forKey: "lastKnownPressure") as? Double {
-            print("📊 Using cached pressure data: \(cachedPressure)")
+            Logger.debug("Using cached pressure data: \(cachedPressure)", category: .data)
             updateAtmosphericPressure(cachedPressure)
             self.atmosphericPressure = "\(Int(cachedPressure)) hPa"
             self.atmosphericPressureCategory = self.categorizePressure(cachedPressure)
@@ -437,7 +437,7 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
                 self?.locationManager.stopUpdatingLocation()
                 self?.refreshTimer?.invalidate()
                 self?.refreshTimer = nil
-                print("📱 App in background - stopping location updates")
+                Logger.debug("App in background - stopping location updates", category: .location)
             }
     }
     
@@ -455,7 +455,7 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
             // Start periodic refresh timer for when dashboard is active
             refreshTimer?.invalidate()
             refreshTimer = Timer.scheduledTimer(withTimeInterval: 1800, repeats: true) { [weak self] _ in
-                print("⏰ Periodic location refresh timer fired")
+                Logger.debug("Periodic location refresh timer fired", category: .location)
                 self?.requestLocationUpdate(silent: true)
             }
         } else if !active && wasActive {
@@ -587,14 +587,14 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
             switch clError.code {
             case .denied:
                 if !hasLoggedPermissionDenied {
-                    print("❌ Location access denied. Prompting user to enable permissions.")
+                    Logger.warning("Location access denied. Prompting user to enable permissions.", category: .location)
                     hasLoggedPermissionDenied = true
                 }
                 Task { @MainActor in
                     await self.handleLocationDenied()
                 }
             default:
-                print("❌ Location Error: \(clError.localizedDescription)")
+                Logger.error("Location Error: \(clError.localizedDescription)", category: .location)
             }
         }
     }
@@ -627,7 +627,7 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
             requestLocationUpdate()
         case .denied, .restricted:
             if !hasLoggedPermissionDenied {
-                print("❌ Location access denied. Using alternative data source.")
+                Logger.warning("Location access denied. Using alternative data source.", category: .location)
                 hasLoggedPermissionDenied = true
             }
             Task { @MainActor in
@@ -644,7 +644,7 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
             }
         case .notDetermined:
             if !hasLoggedPermissionRequest {
-                print("❓ Location permission not determined.")
+                Logger.debug("Location permission not determined.", category: .location)
                 hasLoggedPermissionRequest = true
             }
             // Only request once
