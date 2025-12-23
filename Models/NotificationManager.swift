@@ -6,7 +6,11 @@ import SwiftUI
 
 class NotificationManager: ObservableObject {
     static let shared = NotificationManager()
-    
+
+    // MARK: - Notification Privacy Setting
+    /// When true, notifications show generic text instead of health details
+    @AppStorage("hideSensitiveNotificationContent") var hideSensitiveNotificationContent: Bool = true
+
     // User settings with defaults
     @AppStorage("enableProtocolReminders") private var enableProtocolReminders: Bool = true
     @AppStorage("enableSymptomReminders") private var enableSymptomReminders: Bool = true
@@ -81,8 +85,37 @@ class NotificationManager: ObservableObject {
         reminderAdvanceNoticeMinutes = minutes
     }
     
+    // MARK: - Privacy-Aware Content Helper
+
+    /// Creates notification content respecting privacy settings
+    /// - Parameters:
+    ///   - detailedTitle: Full title with health details (e.g., "Reminder: Magnesium Protocol")
+    ///   - genericTitle: Generic title for lock screen privacy (e.g., "Health Assistant Reminder")
+    ///   - detailedBody: Full body with health details
+    ///   - genericBody: Generic body for lock screen privacy (e.g., "You have a scheduled reminder")
+    /// - Returns: Configured notification content
+    private func createPrivacyAwareContent(
+        detailedTitle: String,
+        genericTitle: String = "Health Assistant",
+        detailedBody: String,
+        genericBody: String = "You have a health reminder"
+    ) -> UNMutableNotificationContent {
+        let content = UNMutableNotificationContent()
+
+        if hideSensitiveNotificationContent {
+            content.title = genericTitle
+            content.body = genericBody
+        } else {
+            content.title = detailedTitle
+            content.body = detailedBody
+        }
+
+        content.sound = .default
+        return content
+    }
+
     // MARK: - Permission Request
-    
+
     func requestNotificationPermission(completion: @escaping (Bool) -> Void = { _ in }) {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             if let error = error {
@@ -101,11 +134,13 @@ class NotificationManager: ObservableObject {
     
     func scheduleReminder(for therapyProtocol: TherapyProtocol) {
         guard enableProtocolReminders && therapyProtocol.isActive else { return }
-        
-        let content = UNMutableNotificationContent()
-        content.title = "Reminder: \(therapyProtocol.title)"
-        content.body = "It's time for your scheduled therapy: \(therapyProtocol.instructions)"
-        content.sound = .default
+
+        let content = createPrivacyAwareContent(
+            detailedTitle: "Reminder: \(therapyProtocol.title)",
+            genericTitle: "Protocol Reminder",
+            detailedBody: "It's time for your scheduled therapy: \(therapyProtocol.instructions)",
+            genericBody: "You have a scheduled protocol reminder"
+        )
         
         // Use protocol's reminder time or default if not set
         let reminderTime = therapyProtocol.reminderTime ?? defaultReminderTime
@@ -192,11 +227,13 @@ class NotificationManager: ObservableObject {
         
         func scheduleSymptomCheckIn(for symptom: OngoingSymptom, at reminderTime: Date) {
             guard enableSymptomReminders else { return }
-            
-            let content = UNMutableNotificationContent()
-            content.title = "Symptom Check-in: \(symptom.name)"
-            content.body = "Time to log your \(symptom.name) symptom status"
-            content.sound = .default
+
+            let content = createPrivacyAwareContent(
+                detailedTitle: "Symptom Check-in: \(symptom.name)",
+                genericTitle: "Health Check-in",
+                detailedBody: "Time to log your \(symptom.name) symptom status",
+                genericBody: "Time for your scheduled check-in"
+            )
 
             var dateComponents = Calendar.current.dateComponents([.hour, .minute], from: reminderTime)
             dateComponents.second = 0

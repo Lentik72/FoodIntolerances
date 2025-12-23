@@ -59,6 +59,10 @@ class UserProfile: Identifiable {
     @Attribute var enableSupplementReminders: Bool = true
     @Attribute var enableWeatherAlerts: Bool = true
 
+    // MARK: - Notification Privacy
+    /// When ON, notifications show generic text instead of health details (for lock screen privacy)
+    @Attribute var hideSensitiveNotificationContent: Bool = true
+
     // MARK: - AI Suggestion Level
     @Attribute var aiSuggestionLevel: String = "standard"  // "minimal", "standard", "proactive"
 

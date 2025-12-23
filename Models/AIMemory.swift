@@ -848,6 +848,76 @@ struct MemoryHealthCheck {
     }
 }
 
+// MARK: - Memory Maintenance Scheduler
+
+/// Manages periodic memory maintenance to keep AI system healthy
+class MemoryMaintenanceScheduler {
+    static let shared = MemoryMaintenanceScheduler()
+
+    /// Key for storing last maintenance run date
+    private let lastRunKey = "aiMemoryLastMaintenanceRun"
+
+    /// Minimum hours between maintenance runs
+    private let minimumHoursBetweenRuns: Int = 24
+
+    /// Last time maintenance was run
+    var lastMaintenanceDate: Date? {
+        get { UserDefaults.standard.object(forKey: lastRunKey) as? Date }
+        set { UserDefaults.standard.set(newValue, forKey: lastRunKey) }
+    }
+
+    /// Whether maintenance should run (hasn't run in last 24 hours)
+    var shouldRunMaintenance: Bool {
+        guard let lastRun = lastMaintenanceDate else { return true }
+        let hoursSinceLastRun = Calendar.current.dateComponents(
+            [.hour],
+            from: lastRun,
+            to: Date()
+        ).hour ?? 0
+        return hoursSinceLastRun >= minimumHoursBetweenRuns
+    }
+
+    /// Run maintenance if needed (call on app foreground)
+    /// - Parameter memories: All AI memories from the model context
+    /// - Returns: Number of issues fixed, or nil if maintenance was skipped
+    @discardableResult
+    func runMaintenanceIfNeeded(memories: [AIMemory]) -> Int? {
+        guard shouldRunMaintenance else {
+            Logger.debug("Skipping AI maintenance - last run was recent", category: .data)
+            return nil
+        }
+
+        Logger.info("Running AI memory maintenance...", category: .data)
+
+        // Run on background queue to avoid UI jank
+        let fixedCount = MemoryHealthCheck.runMaintenanceCheck(memories: memories)
+
+        lastMaintenanceDate = Date()
+
+        if fixedCount > 0 {
+            Logger.info("AI maintenance complete: fixed \(fixedCount) issues", category: .data)
+        } else {
+            Logger.debug("AI maintenance complete: no issues found", category: .data)
+        }
+
+        return fixedCount
+    }
+
+    /// Force maintenance to run regardless of schedule (for testing/debugging)
+    @discardableResult
+    func forceRunMaintenance(memories: [AIMemory]) -> Int {
+        Logger.info("Force running AI memory maintenance...", category: .data)
+        let fixedCount = MemoryHealthCheck.runMaintenanceCheck(memories: memories)
+        lastMaintenanceDate = Date()
+        return fixedCount
+    }
+
+    /// Reset maintenance schedule (for testing)
+    func resetSchedule() {
+        lastMaintenanceDate = nil
+    }
+}
+
 // MARK: - AI System Status (Debug/Internal)
 
 /// Provides a quick health summary of the AI system for debugging
