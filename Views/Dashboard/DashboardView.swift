@@ -118,22 +118,24 @@ struct DashboardView: View {
                             UpcomingRemindersCard(protocols: activeProtocols, isRefreshing: $isRefreshing, showRefreshConfirmation: $showRefreshConfirmation)
                         }
 
-                        // Quick tools row (compact)
-                        HStack(spacing: 12) {
-                            QuickToolButton(icon: "questionmark.circle", label: "Can I Eat?", color: .purple) {
-                                // Navigate to FoodQueryView
+                        // Quick tools row (scrollable for flexibility)
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 12) {
+                                QuickToolButton(icon: "questionmark.circle", label: "Can I Eat?", color: .purple) {
+                                    // Navigate to FoodQueryView
+                                }
+                                QuickToolButton(icon: "hand.raised.fill", label: "Avoid List", color: .red) {
+                                    activeSheet = .avoidList
+                                }
+                                QuickToolButton(icon: "bell.fill", label: "Reminders", color: .orange) {
+                                    tabManager.selectedTab = .more
+                                }
+                                QuickToolButton(icon: "chart.bar.fill", label: "Trends", color: .blue) {
+                                    tabManager.selectedTab = .trends
+                                }
                             }
-                            QuickToolButton(icon: "hand.raised.fill", label: "Avoid List", color: .red) {
-                                activeSheet = .avoidList
-                            }
-                            QuickToolButton(icon: "bell.fill", label: "Reminders", color: .orange) {
-                                tabManager.selectedTab = .more
-                            }
-                            QuickToolButton(icon: "chart.bar.fill", label: "Trends", color: .blue) {
-                                tabManager.selectedTab = .trends
-                            }
+                            .padding(.horizontal)
                         }
-                        .padding(.horizontal)
                     }
                     .padding()
                     .id(refreshTrigger ? "refresh-on" : "refresh-off")
@@ -1383,8 +1385,8 @@ struct AIInsightsSummaryCard: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("AI Health Assistant")
                         .font(.headline)
-                    Text(aiModeLabel)
-                        .font(.caption2)
+                    Text("Today at a glance")
+                        .font(.caption)
                         .foregroundColor(.secondary)
                 }
                 Spacer()
@@ -1430,6 +1432,7 @@ struct AIInsightsSummaryCard: View {
             }
         }
         .padding(16)
+        .frame(minHeight: 160) // Lock minimum height to prevent jitter
         .background(Color(.secondarySystemBackground))
         .cornerRadius(16)
         .padding(.horizontal)
@@ -1583,8 +1586,9 @@ struct QuickToolButton: View {
                     .font(.caption2)
                     .foregroundColor(.primary)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
-            .frame(maxWidth: .infinity)
+            .frame(width: 80)
             .padding(.vertical, 12)
             .background(Color(.tertiarySystemBackground))
             .cornerRadius(12)
