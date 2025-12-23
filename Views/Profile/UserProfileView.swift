@@ -17,9 +17,18 @@ struct UserProfileView: View {
     @State private var targetSleepHours: Double = 8.0
     @State private var memoryLevel: AIMemoryLevel = .patterns
 
+    // Optional Health Details (height/weight)
+    @State private var heightFeet: String = ""
+    @State private var heightInches: String = ""
+    @State private var heightCm: String = ""
+    @State private var weightLbs: String = ""
+    @State private var weightKg: String = ""
+    @State private var unitPreference: String = "imperial"
+
     // UI State
     @State private var showConditionsPicker = false
     @State private var hasChanges = false
+    @State private var showClearMeasurementsAlert = false
 
     private var profile: UserProfile? {
         userProfiles.first
@@ -103,6 +112,83 @@ struct UserProfileView: View {
                         Slider(value: $targetSleepHours, in: 4...12, step: 0.5)
                             .onChange(of: targetSleepHours) { _, _ in hasChanges = true }
                     }
+                }
+
+                // Optional Health Details Section
+                Section {
+                    Picker("Units", selection: $unitPreference) {
+                        Text("Imperial (ft, lbs)").tag("imperial")
+                        Text("Metric (cm, kg)").tag("metric")
+                    }
+                    .onChange(of: unitPreference) { _, _ in hasChanges = true }
+
+                    if unitPreference == "imperial" {
+                        HStack {
+                            Text("Height")
+                            Spacer()
+                            TextField("ft", text: $heightFeet)
+                                .keyboardType(.numberPad)
+                                .multilineTextAlignment(.trailing)
+                                .frame(width: 40)
+                                .onChange(of: heightFeet) { _, _ in hasChanges = true }
+                            Text("'")
+                            TextField("in", text: $heightInches)
+                                .keyboardType(.numberPad)
+                                .multilineTextAlignment(.trailing)
+                                .frame(width: 40)
+                                .onChange(of: heightInches) { _, _ in hasChanges = true }
+                            Text("\"")
+                        }
+
+                        HStack {
+                            Text("Weight")
+                            Spacer()
+                            TextField("lbs", text: $weightLbs)
+                                .keyboardType(.numberPad)
+                                .multilineTextAlignment(.trailing)
+                                .frame(width: 80)
+                                .onChange(of: weightLbs) { _, _ in hasChanges = true }
+                            Text("lbs")
+                        }
+                    } else {
+                        HStack {
+                            Text("Height")
+                            Spacer()
+                            TextField("cm", text: $heightCm)
+                                .keyboardType(.numberPad)
+                                .multilineTextAlignment(.trailing)
+                                .frame(width: 80)
+                                .onChange(of: heightCm) { _, _ in hasChanges = true }
+                            Text("cm")
+                        }
+
+                        HStack {
+                            Text("Weight")
+                            Spacer()
+                            TextField("kg", text: $weightKg)
+                                .keyboardType(.numberPad)
+                                .multilineTextAlignment(.trailing)
+                                .frame(width: 80)
+                                .onChange(of: weightKg) { _, _ in hasChanges = true }
+                            Text("kg")
+                        }
+                    }
+
+                    if profile?.heightCm != nil || profile?.weightKg != nil {
+                        Button(role: .destructive) {
+                            showClearMeasurementsAlert = true
+                        } label: {
+                            HStack {
+                                Image(systemName: "trash")
+                                Text("Clear Measurements")
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Optional Health Details")
+                } footer: {
+                    Text("Used to improve health context and screening suggestions. This is optional and can be removed anytime.")
+                        .font(.caption)
                 }
 
                 // AI Memory Section
@@ -189,7 +275,25 @@ struct UserProfileView: View {
             .onAppear {
                 loadProfile()
             }
+            .alert("Clear Measurements?", isPresented: $showClearMeasurementsAlert) {
+                Button("Cancel", role: .cancel) { }
+                Button("Clear", role: .destructive) {
+                    clearMeasurements()
+                }
+            } message: {
+                Text("This will remove your height and weight data. You can add it again anytime.")
+            }
         }
+    }
+
+    private func clearMeasurements() {
+        profile?.clearBodyMeasurements()
+        heightFeet = ""
+        heightInches = ""
+        heightCm = ""
+        weightLbs = ""
+        weightKg = ""
+        try? modelContext.save()
     }
 
     private func loadProfile() {
@@ -204,6 +308,29 @@ struct UserProfileView: View {
         dietType = profile.dietType ?? ""
         targetSleepHours = profile.targetSleepHours
         memoryLevel = AIMemoryLevel(rawValue: profile.memoryLevel) ?? .patterns
+        unitPreference = profile.unitPreference
+
+        // Load height/weight
+        if let cm = profile.heightCm {
+            if unitPreference == "imperial" {
+                let totalInches = cm / 2.54
+                let feet = Int(totalInches / 12)
+                let inches = Int(totalInches.truncatingRemainder(dividingBy: 12))
+                heightFeet = String(feet)
+                heightInches = String(inches)
+            } else {
+                heightCm = String(Int(cm))
+            }
+        }
+
+        if let kg = profile.weightKg {
+            if unitPreference == "imperial" {
+                let lbs = Int(kg * 2.20462)
+                weightLbs = String(lbs)
+            } else {
+                weightKg = String(Int(kg))
+            }
+        }
 
         hasChanges = false
     }
@@ -224,6 +351,37 @@ struct UserProfileView: View {
         profile.dietType = dietType.isEmpty ? nil : dietType
         profile.targetSleepHours = targetSleepHours
         profile.memoryLevel = memoryLevel.rawValue
+        profile.unitPreference = unitPreference
+
+        // Save height (convert to cm for internal storage)
+        if unitPreference == "imperial" {
+            if let feet = Double(heightFeet), let inches = Double(heightInches) {
+                let totalInches = (feet * 12) + inches
+                profile.heightCm = totalInches * 2.54
+                profile.bodyMeasurementsUpdated = Date()
+            } else if heightFeet.isEmpty && heightInches.isEmpty {
+                // Don't clear if just empty - user might not have entered yet
+            }
+        } else {
+            if let cm = Double(heightCm) {
+                profile.heightCm = cm
+                profile.bodyMeasurementsUpdated = Date()
+            }
+        }
+
+        // Save weight (convert to kg for internal storage)
+        if unitPreference == "imperial" {
+            if let lbs = Double(weightLbs) {
+                profile.weightKg = lbs / 2.20462
+                profile.bodyMeasurementsUpdated = Date()
+            }
+        } else {
+            if let kg = Double(weightKg) {
+                profile.weightKg = kg
+                profile.bodyMeasurementsUpdated = Date()
+            }
+        }
+
         profile.lastUpdated = Date()
 
         do {

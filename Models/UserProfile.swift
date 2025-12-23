@@ -24,6 +24,48 @@ class UserProfile: Identifiable {
         }
     }
 
+    // MARK: - Optional Health Details (not required, used for screening context only)
+    /// Height in centimeters (internally stored as metric, displayed based on preference)
+    @Attribute var heightCm: Double?
+    /// Weight in kilograms (internally stored as metric, displayed based on preference)
+    @Attribute var weightKg: Double?
+    /// When height/weight were last updated
+    @Attribute var bodyMeasurementsUpdated: Date?
+    /// User preference for units: "imperial" or "metric"
+    @Attribute var unitPreference: String = "imperial"
+
+    /// Height displayed in user's preferred format
+    var heightDisplayString: String? {
+        guard let cm = heightCm else { return nil }
+        if unitPreference == "imperial" {
+            let totalInches = cm / 2.54
+            let feet = Int(totalInches / 12)
+            let inches = Int(totalInches.truncatingRemainder(dividingBy: 12))
+            return "\(feet)'\(inches)\""
+        } else {
+            return "\(Int(cm)) cm"
+        }
+    }
+
+    /// Weight displayed in user's preferred format
+    var weightDisplayString: String? {
+        guard let kg = weightKg else { return nil }
+        if unitPreference == "imperial" {
+            let lbs = kg * 2.20462
+            return "\(Int(lbs)) lbs"
+        } else {
+            return "\(Int(kg)) kg"
+        }
+    }
+
+    /// Clear body measurements (for privacy)
+    func clearBodyMeasurements() {
+        heightCm = nil
+        weightKg = nil
+        bodyMeasurementsUpdated = nil
+        lastUpdated = Date()
+    }
+
     // MARK: - Lifestyle
     @Attribute var activityLevel: String?  // "Sedentary", "Light", "Moderate", "Active", "Very Active"
     @Attribute var dietType: String?  // "Omnivore", "Vegetarian", "Vegan", "Pescatarian", "Other"
