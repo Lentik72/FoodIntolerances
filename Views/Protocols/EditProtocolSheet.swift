@@ -139,7 +139,7 @@ struct EditProtocolSheet: View {
             try modelContext.save()
             isPresented = false
         } catch {
-            print("❌ Error saving protocol changes: \(error)")
+            Logger.error(error, message: "Error saving protocol changes", category: .data)
         }
     }
 }

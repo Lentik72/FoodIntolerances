@@ -72,7 +72,7 @@ struct AddProtocolView: View {
             try modelContext.save()
             dismiss()
         } catch {
-            print("Error saving new protocol: \(error)")
+            Logger.error(error, message: "Error saving new protocol", category: .data)
         }
     }
 }

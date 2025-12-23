@@ -50,7 +50,7 @@ struct ProtocolFollowUpView: View {
             try modelContext.save()
             dismiss()
         } catch {
-            print("Error saving protocol feedback: \(error)")
+            Logger.error(error, message: "Error saving protocol feedback", category: .data)
         }
     }
 }

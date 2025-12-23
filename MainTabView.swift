@@ -43,10 +43,10 @@ struct MainTabView: View {
                 }
                 .onAppear {
                     NotificationCenter.default.addObserver(forName: Notification.Name("NavigateToDashboard"), object: nil, queue: .main) { _ in
-                        print("🔄 Navigating to Dashboard...")
+                        Logger.debug("Navigating to Dashboard...", category: .ui)
                         DispatchQueue.main.async {
                             tabManager.selectedTab = .dashboard
-                            print("✅ Tab changed to Dashboard: \(tabManager.selectedTab)")
+                            Logger.debug("Tab changed to Dashboard: \(tabManager.selectedTab)", category: .ui)
                         }
                     }
                 }

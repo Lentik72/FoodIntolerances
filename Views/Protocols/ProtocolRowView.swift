@@ -46,7 +46,7 @@ struct ProtocolRowView: View {
         do {
             try modelContext.save()
         } catch {
-            print("Error saving protocol status: \(error)")
+            Logger.error(error, message: "Error saving protocol status", category: .data)
         }
     }
 }

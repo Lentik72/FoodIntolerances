@@ -545,7 +545,7 @@ struct LogSymptomView: View {
                             
                             // Use a slightly longer delay to ensure alert is fully dismissed
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                print("📢 Posting NavigateToDashboard notification...")
+                                Logger.debug("Posting NavigateToDashboard notification...", category: .ui)
                                 NotificationCenter.default.post(name: Notification.Name("NavigateToDashboard"), object: nil)
                             }
                         }
@@ -743,7 +743,7 @@ struct SymptomSelectionView: View {
                 if !viewModel.symptomSearchText.isEmpty {
                     Button(action: {
                         viewModel.symptomSearchText = ""
-                        print("Cleared search text.")
+                        Logger.debug("Cleared search text.", category: .ui)
                     }) {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundColor(.gray)
@@ -916,17 +916,17 @@ struct FlowLayout: Layout {
                     viewModel.selectedSymptoms.remove(symptom)
                 }
             }
-            print("Current selectedSymptoms: \(viewModel.selectedSymptoms)")
+            Logger.debug("Current selectedSymptoms: \(viewModel.selectedSymptoms)", category: .ui)
         }
-        
+
         private func addCustomSymptom() {
             let trimmedName = newSymptomName.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmedName.isEmpty else { return }
-            
+
             viewModel.addCustomSymptom(trimmedName)
             newSymptomName = ""
             showingAddSymptomAlert = false
-            print("Custom symptom added: \(trimmedName)")
+            Logger.debug("Custom symptom added: \(trimmedName)", category: .data)
         }
     }
     
@@ -1403,9 +1403,9 @@ struct AffectedAreasView: View {
                 // Standardize the region name
                 let standardizedRegion = BodyRegionUtility.standardizeRegionName(region)
                 newAreas.insert(standardizedRegion)
-                print("✅ Mapped region \(standardizedRegion) for symptom \(symptom)")
+                Logger.debug("Mapped region \(standardizedRegion) for symptom \(symptom)", category: .data)
             } else {
-                print("❌ No mapping for symptom: \(symptom)")
+                Logger.warning("No mapping for symptom: \(symptom)", category: .data)
             }
         }
         

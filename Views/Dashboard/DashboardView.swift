@@ -267,7 +267,7 @@ struct DashboardView: View {
             let descriptor = FetchDescriptor<LogEntry>(sortBy: [SortDescriptor(\LogEntry.date, order: .reverse)])
             return try modelContext.fetch(descriptor)
         } catch {
-            print("Error fetching logs manually: \(error)")
+            Logger.error(error, message: "Error fetching logs manually", category: .data)
             return []
         }
     }

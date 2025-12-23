@@ -77,14 +77,14 @@ struct VoiceInputView: View {
             try audioSession.setCategory(.record, mode: .default)
             try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
         } catch {
-            print("Failed to set up audio session: \(error)")
+            Logger.error(error, message: "Failed to set up audio session", category: .app)
             return
         }
-        
+
         recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
-        
+
         guard let recognitionRequest = recognitionRequest else {
-            print("Unable to create speech recognition request")
+            Logger.error("Unable to create speech recognition request", category: .app)
             return
         }
         
@@ -120,7 +120,7 @@ struct VoiceInputView: View {
                    try audioEngine.start()
                    isRecording = true
                } catch {
-                   print("Audio engine failed to start: \(error)")
+                   Logger.error(error, message: "Audio engine failed to start", category: .app)
                }
            }
            

@@ -20,7 +20,7 @@ struct SaveHelper {
             try context.save()
             return true
         } catch {
-            print("Save failed: \(error.localizedDescription)")
+            Logger.error(error, message: "Save failed", category: .data)
             errorMessage?.wrappedValue = "Could not save your data. Please try again."
             showError?.wrappedValue = true
             return false
@@ -38,7 +38,7 @@ struct SaveHelper {
             try context.save()
             return true
         } catch {
-            print("Save failed: \(error.localizedDescription)")
+            Logger.error(error, message: "Save failed", category: .data)
             showError?.wrappedValue = true
             return false
         }

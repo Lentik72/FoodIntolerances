@@ -83,7 +83,7 @@ class TherapyProtocol: Identifiable {
                 let data = try JSONEncoder().encode(symptoms)
                 self.symptomsData = data
             } catch {
-                print("Error encoding symptoms array: \(error)")
+                Logger.error(error, message: "Error encoding symptoms array", category: .data)
                 // Create an empty data object to avoid crashes
                 self.symptomsData = Data()
             }

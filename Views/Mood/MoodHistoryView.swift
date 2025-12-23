@@ -104,7 +104,7 @@ struct MoodHistoryView: View {
             do {
                 try modelContext.save()
             } catch {
-                print("Error deleting mood entry: \(error.localizedDescription)")
+                Logger.error(error, message: "Error deleting mood entry", category: .data)
             }
         }
     }

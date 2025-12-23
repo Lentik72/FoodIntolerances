@@ -157,7 +157,7 @@ struct LogsView: View {
                             try modelContext.save()
                         } catch {
                             showSaveError = true
-                            print("Failed to delete log: \(error)")
+                            Logger.error(error, message: "Failed to delete log", category: .data)
                         }
                     }
                 }
@@ -223,9 +223,8 @@ struct LogsView: View {
        }
 
     private func matchesSymptoms(_ log: LogEntry) -> Bool {
-        // Print for debugging
-        print("Log symptoms: \(log.symptoms), Selected symptoms: \(viewModel.selectedSymptoms)")
-        
+        Logger.debug("Log symptoms: \(log.symptoms), Selected symptoms: \(viewModel.selectedSymptoms)", category: .data)
+
         return viewModel.selectedSymptoms.isEmpty ||
         !viewModel.selectedSymptoms.isDisjoint(with: Set(log.symptoms))
     }
@@ -323,7 +322,7 @@ struct LogsView: View {
 
     private func exportLogs() {
         // Export implementation
-        print("Export Logs button tapped.")
+        Logger.debug("Export Logs button tapped.", category: .ui)
     }
 
     @ViewBuilder

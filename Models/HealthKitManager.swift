@@ -17,7 +17,7 @@ class HealthKitManager: ObservableObject {
             if success {
                 self.fetchSleepData()
             } else if let error = error {
-                print("Authorization error: \(error.localizedDescription)")
+                Logger.error(error, message: "HealthKit authorization error", category: .health)
             }
         }
     }

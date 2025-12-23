@@ -11,23 +11,23 @@ class ProtocolSharingService {
         encoder.outputFormatting = .prettyPrinted
         
         guard let jsonData = try? encoder.encode(ProtocolExportData(from: `protocol`)) else {
-            print("Failed to encode protocol to JSON")
+            Logger.error("Failed to encode protocol to JSON", category: .data)
             return nil
         }
-        
+
         // Create temporary file
         let fileName = `protocol`.title.replacingOccurrences(of: " ", with: "_") + ".protocol"
         let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
-        
+
         do {
             try jsonData.write(to: fileURL)
             return fileURL
         } catch {
-            print("Failed to write protocol to file: \(error)")
+            Logger.error(error, message: "Failed to write protocol to file", category: .data)
             return nil
         }
     }
-    
+
     // Import a protocol from a file
     func importProtocolFromFile(_ fileURL: URL) -> TherapyProtocol? {
         do {
@@ -36,7 +36,7 @@ class ProtocolSharingService {
             let exportData = try decoder.decode(ProtocolExportData.self, from: data)
             return exportData.toTherapyProtocol()
         } catch {
-            print("Failed to import protocol: \(error)")
+            Logger.error(error, message: "Failed to import protocol", category: .data)
             return nil
         }
     }

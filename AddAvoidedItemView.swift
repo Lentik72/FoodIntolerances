@@ -69,10 +69,10 @@ struct AddAvoidedItemView: View {
         modelContext.insert(newItem)
         do {
             try modelContext.save()
-            print(">>> Successfully saved new AvoidedItem:", newItem.name)
+            Logger.info("Successfully saved new AvoidedItem: \(newItem.name)", category: .data)
             dismiss()
         } catch {
-            print(">>> Error saving avoid item:", error)
+            Logger.error(error, message: "Error saving avoid item", category: .data)
         }
     }
 }

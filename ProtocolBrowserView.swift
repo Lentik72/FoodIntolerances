@@ -253,7 +253,7 @@ struct ProtocolBrowserView: View {
                             // Navigate back home
                             showWebView = false
                         } catch {
-                            print("Error saving protocol: \(error)")
+                            Logger.error(error, message: "Error saving protocol", category: .data)
                         }
                     }
                 }
@@ -470,7 +470,7 @@ struct WebViewContainer: UIViewRepresentable {
                     DispatchQueue.main.async {
                         guard let self = self else { return }
                         self.parent.isLoading = false
-                        print("Navigation timed out after 10 seconds")
+                        Logger.warning("Navigation timed out after 10 seconds", category: .network)
                     }
                 }
             }
@@ -524,9 +524,9 @@ struct WebViewContainer: UIViewRepresentable {
                         if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
                             return
                         }
-                        
+
                         // Display error message for other cases
-                        print("Web navigation error: \(error.localizedDescription)")
+                        Logger.error("Web navigation error: \(error.localizedDescription)", category: .network)
                     }
                 }
             }
@@ -772,9 +772,9 @@ struct WebViewContainer: UIViewRepresentable {
             
             webView.evaluateJavaScript(javascript) { [weak self] result, error in
                 guard let self = self else { return }
-                
+
                 if let error = error {
-                    print("JavaScript error: \(error)")
+                    Logger.error(error, message: "JavaScript error", category: .network)
                     return
                 }
                 
@@ -1090,14 +1090,14 @@ struct ProtocolExtractionView: View {
         
         // Double-check symptoms data before saving
         if newProtocol.symptoms == nil || newProtocol.symptoms?.isEmpty == true {
-            print("Warning: Symptoms array is empty after initialization")
+            Logger.warning("Symptoms array is empty after initialization", category: .data)
             // Use a different approach to set symptoms
             if let protocolToModify = newProtocol as? TherapyProtocol {
                 do {
                     let symptomsData = try JSONEncoder().encode(symptomsList)
                     protocolToModify.symptomsData = symptomsData
                 } catch {
-                    print("Error manually encoding symptoms: \(error)")
+                    Logger.error(error, message: "Error manually encoding symptoms", category: .data)
                 }
             }
         }

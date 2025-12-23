@@ -93,7 +93,7 @@ struct AddRequirementSheet: View {
             clearFields()
             dismiss()
         } catch {
-            print("Error saving requirement: \(error)")
+            Logger.error(error, message: "Error saving requirement", category: .data)
         }
     }
     

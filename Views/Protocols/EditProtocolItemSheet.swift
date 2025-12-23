@@ -28,7 +28,7 @@ struct EditProtocolItemSheet: View {
                     try modelContext.save()
                     isPresented = false
                 } catch {
-                    print("Error saving item: \(error)")
+                    Logger.error(error, message: "Error saving item", category: .data)
                 }
             }
         }

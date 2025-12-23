@@ -20,10 +20,10 @@ class StringArrayTransformer: ValueTransformer {
     // Helper method to control logging
     private func log(_ message: String) {
         if Self.logCount < Self.maxLogEntries {
-            print(message)
+            Logger.debug(message, category: .data)
             Self.logCount += 1
         } else if Self.logCount == Self.maxLogEntries {
-            print("StringArrayTransformer: Further logging suppressed to reduce console output")
+            Logger.debug("StringArrayTransformer: Further logging suppressed to reduce console output", category: .data)
             Self.logCount += 1
         }
     }
@@ -137,7 +137,7 @@ extension StringArrayTransformer {
         if ValueTransformer(forName: name) == nil {
             let transformer = StringArrayTransformer()
             ValueTransformer.setValueTransformer(transformer, forName: name)
-            print("App initialization - StringArrayTransformer registered")
+            Logger.info("App initialization - StringArrayTransformer registered", category: .app)
         }
     }
 }

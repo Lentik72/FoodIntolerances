@@ -149,9 +149,9 @@ struct NotificationSettingsView: View {
         
         UNUserNotificationCenter.current().add(request) { error in
             if let error = error {
-                print("❌ Error sending test notification: \(error.localizedDescription)")
+                Logger.error(error, message: "Error sending test notification", category: .notification)
             } else {
-                print("✅ Test notification scheduled (will appear in 5 seconds)")
+                Logger.info("Test notification scheduled (will appear in 5 seconds)", category: .notification)
             }
         }
     }

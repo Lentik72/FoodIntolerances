@@ -181,7 +181,7 @@ struct AddProtocolSheet: View {
             try modelContext.save()
             isPresented = false
         } catch {
-            print("❌ Error saving new protocol: \(error)")
+            Logger.error(error, message: "Error saving new protocol", category: .data)
         }
     }
 }

@@ -72,7 +72,7 @@ struct AddProtocolItemSheet: View {
             try modelContext.save()
             dismiss()
         } catch {
-            print("Error saving ProtocolItem: \(error)")
+            Logger.error(error, message: "Error saving ProtocolItem", category: .data)
         }
     }
 }

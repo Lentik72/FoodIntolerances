@@ -146,7 +146,7 @@ struct QuickSymptomLogger: View {
             let sortedSymptoms = symptomFrequency.sorted { $0.value > $1.value }.prefix(10).map { $0.key }
             recentSymptoms = Array(sortedSymptoms)
         } catch {
-            print("Error fetching log entries: \(error)")
+            Logger.error(error, message: "Error fetching log entries", category: .data)
         }
     }
     

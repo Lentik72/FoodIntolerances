@@ -111,7 +111,7 @@ struct SymptomCheckInView: View {
         } catch {
             saveErrorMessage = "Could not save your check-in. Please try again."
             showSaveError = true
-            print("Failed to save check-in: \(error)")
+            Logger.error(error, message: "Failed to save check-in", category: .data)
         }
     }
 }

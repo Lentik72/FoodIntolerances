@@ -20,10 +20,10 @@ struct SwiftDataResetModifier: ViewModifier {
                     let _ = try modelContext.fetch(protocolDescriptor)
                     
                     try modelContext.save()
-                    print("✅ SwiftData cache reset complete")
+                    Logger.info("SwiftData cache reset complete", category: .data)
                 } catch {
-                    print("❌ SwiftData cache reset failed: \(error.localizedDescription)")
-                    
+                    Logger.error(error, message: "SwiftData cache reset failed", category: .data)
+
                     // Attempt recovery when error occurs
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                         recoverFromSwiftDataError()
@@ -31,13 +31,13 @@ struct SwiftDataResetModifier: ViewModifier {
                 }
             }
     }
-    
+
     private func recoverFromSwiftDataError() {
         do {
             try modelContext.save()
-            print("✅ SwiftData recovery successful")
+            Logger.info("SwiftData recovery successful", category: .data)
         } catch {
-            print("❌ SwiftData recovery attempt failed: \(error.localizedDescription)")
+            Logger.error(error, message: "SwiftData recovery attempt failed", category: .data)
         }
     }
 }

@@ -99,13 +99,13 @@ struct GoalTrackingView: View {
         
         do {
             try modelContext.save()
-            
+
             // Reset form
             goalSymptom = ""
             targetSeverity = 1
             targetDate = Date().addingTimeInterval(60*60*24*30)
         } catch {
-            print("Error saving symptom goal: \(error)")
+            Logger.error(error, message: "Error saving symptom goal", category: .data)
         }
     }
 }

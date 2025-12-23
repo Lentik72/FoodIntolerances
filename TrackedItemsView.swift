@@ -165,7 +165,7 @@ struct TrackedItemsView: View {
         do {
             try modelContext.save()
         } catch {
-            print("Failed to save context: \(error)")
+            Logger.error(error, message: "Failed to save context", category: .data)
         }
     }
 

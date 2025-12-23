@@ -64,7 +64,7 @@ extension AppError {
             appError = .saveFailed(error.localizedDescription)
         }
         
-        print("Error occurred: \(appError.localizedDescription)")
+        Logger.error("Error occurred: \(appError.localizedDescription)", category: .app)
         
         // Use the method instead of direct property access
         DispatchQueue.main.async {

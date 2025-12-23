@@ -121,7 +121,7 @@ struct CabinetListView: View {
         do {
             try modelContext.save()
         } catch {
-            print("Error deleting CabinetItem: \(error)")
+            Logger.error(error, message: "Error deleting CabinetItem", category: .data)
         }
     }
 }
@@ -169,7 +169,7 @@ struct AddCabinetItemSheet: View {
                             try modelContext.save()
                             isPresented = false
                         } catch {
-                            print("Error saving new cabinet item: \(error)")
+                            Logger.error(error, message: "Error saving new cabinet item", category: .data)
                         }
                     }
                 }
@@ -217,7 +217,7 @@ struct EditCabinetItemSheet: View {
             try modelContext.save()
             dismiss() // ✅ Close the sheet immediately after saving
         } catch {
-            print("Error saving changes: \(error)")
+            Logger.error(error, message: "Error saving changes", category: .data)
         }
     }
 }

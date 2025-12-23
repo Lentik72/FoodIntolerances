@@ -101,19 +101,19 @@ struct AvoidListView: View {
 
     // Debug: Print userItems + manual fetch
     private func debugItems() {
-        print(">>> OnAppear: userItems.count =", userItems.count)
+        Logger.debug("OnAppear: userItems.count = \(userItems.count)", category: .data)
         for item in userItems {
-            print(">>> userItem ->", item.name, "isRecommended:", item.isRecommended)
+            Logger.debug("userItem -> \(item.name), isRecommended: \(item.isRecommended)", category: .data)
         }
         do {
             let descriptor = FetchDescriptor<AvoidedItem>()
             let allItems = try modelContext.fetch(descriptor)
-            print(">>> Manual fetch: all AvoidedItem count =", allItems.count)
+            Logger.debug("Manual fetch: all AvoidedItem count = \(allItems.count)", category: .data)
             for item in allItems {
-                print(">>> Fetched item ->", item.name, "isRecommended:", item.isRecommended)
+                Logger.debug("Fetched item -> \(item.name), isRecommended: \(item.isRecommended)", category: .data)
             }
         } catch {
-            print(">>> Manual fetch error:", error)
+            Logger.error(error, message: "Manual fetch error", category: .data)
         }
     }
 
@@ -122,9 +122,9 @@ struct AvoidListView: View {
         item.isRecommended = false
         do {
             try modelContext.save()
-            print("Item confirmed: \(item.name)")
+            Logger.debug("Item confirmed: \(item.name)", category: .data)
         } catch {
-            print("Failed to confirm item: \(error)")
+            Logger.error(error, message: "Failed to confirm item", category: .data)
         }
     }
 
@@ -136,9 +136,9 @@ struct AvoidListView: View {
         }
         do {
             try modelContext.save()
-            print("Items deleted.")
+            Logger.debug("Items deleted.", category: .data)
         } catch {
-            print("Failed to delete items: \(error)")
+            Logger.error(error, message: "Failed to delete items", category: .data)
         }
     }
 }

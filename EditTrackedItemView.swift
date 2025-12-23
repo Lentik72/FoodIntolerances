@@ -95,21 +95,21 @@ struct EditTrackedItemView: View {
     }
 
     private func saveChanges() {
-        print("saveChanges() called")
+        Logger.debug("saveChanges() called", category: .data)
 
         let trimmedName = trackedItem.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else {
-            print("Validation failed: Name is empty")
+            Logger.debug("Validation failed: Name is empty", category: .data)
             activeAlert = .validationError
             return
         }
 
         do {
             try modelContext.save()
-            print("modelContext.save() succeeded in EditTrackedItemView")
+            Logger.info("modelContext.save() succeeded in EditTrackedItemView", category: .data)
             activeAlert = .confirmation
         } catch {
-            print("modelContext.save() failed with error: \(error)")
+            Logger.error(error, message: "modelContext.save() failed", category: .data)
             activeAlert = .saveError("Failed to save changes. Please try again.")
         }
     }

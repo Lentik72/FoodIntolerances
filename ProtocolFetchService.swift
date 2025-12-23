@@ -15,7 +15,7 @@ class ProtocolFetchService: ObservableObject {
         // Debounce rapid searches
         let now = Date()
         if now.timeIntervalSince(lastFetchTime) < fetchCooldown && !fetchedProtocols.isEmpty {
-            print("Search cooldown active - using cached results")
+            Logger.debug("Search cooldown active - using cached results", category: .network)
             return
         }
         

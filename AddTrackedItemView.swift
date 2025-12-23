@@ -88,11 +88,11 @@ struct AddTrackedItemView: View {
     }
 
     private func saveItem() {
-        print("saveItem() called")
+        Logger.debug("saveItem() called", category: .data)
 
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else {
-            print("Validation failed: Name is empty")
+            Logger.debug("Validation failed: Name is empty", category: .data)
             activeAlert = .validationError
             return
         }
@@ -107,14 +107,14 @@ struct AddTrackedItemView: View {
         )
 
         modelContext.insert(newItem)
-        print("Inserted new TrackedItem: \(newItem)")
+        Logger.debug("Inserted new TrackedItem: \(newItem)", category: .data)
 
         do {
             try modelContext.save()
-            print("modelContext.save() succeeded")
+            Logger.info("modelContext.save() succeeded", category: .data)
             activeAlert = .confirmation
         } catch {
-            print("modelContext.save() failed with error: \(error)")
+            Logger.error(error, message: "modelContext.save() failed", category: .data)
             activeAlert = .saveError("Failed to save the tracked item. Please try again.")
         }
     }

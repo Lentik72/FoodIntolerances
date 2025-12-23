@@ -249,7 +249,7 @@ struct ProtocolDetailView: View {
         do {
             try modelContext.save()
         } catch {
-            print("Error deleting protocol item: \(error)")
+            Logger.error(error, message: "Error deleting protocol item", category: .data)
         }
     }
 
@@ -258,27 +258,27 @@ struct ProtocolDetailView: View {
             tags.removeAll { $0 == "Web Source - Unverified" || $0 == "Requires Verification" }
             tags.append("Verified by User")
             therapyProtocol.tags = tags
-            
+
             // Update notes if needed
             if let notes = therapyProtocol.notes, notes.contains("DISCLAIMER") {
                 therapyProtocol.notes = notes.replacingOccurrences(of: "DISCLAIMER: This protocol was imported from the web and has not been medically verified.", with: "NOTE: This protocol was imported from the web and has been verified by the user.")
             }
-            
+
             do {
                 try modelContext.save()
             } catch {
-                print("Error marking protocol as verified: \(error)")
+                Logger.error(error, message: "Error marking protocol as verified", category: .data)
             }
         }
     }
-    
+
     private func deleteProtocol() {
         modelContext.delete(therapyProtocol)
         do {
             try modelContext.save()
             dismiss()
         } catch {
-            print("Error deleting protocol: \(error)")
+            Logger.error(error, message: "Error deleting protocol", category: .data)
         }
     }
 
@@ -388,7 +388,7 @@ struct ProtocolItemsSection: View {
                     LazyVStack(spacing: 10) {
                         ForEach(therapyProtocol.items, id: \.id) { item in
                             ProtocolItemCard(item: item, onTap: {
-                                print("Tapped on \(item.itemName)")
+                                Logger.debug("Tapped on \(item.itemName)", category: .ui)
                             })
                             .contextMenu {
                                 Button(role: .destructive) {

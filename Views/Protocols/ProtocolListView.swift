@@ -184,20 +184,20 @@ struct ProtocolListView: View {
             ) { result in
                 do {
                     guard let fileURL = try result.get().first else {
-                        print("No file selected")
+                        Logger.debug("No file selected", category: .data)
                         return
                     }
-                    
+
                     // Start accessing the file
                     guard fileURL.startAccessingSecurityScopedResource() else {
-                        print("Failed to access the file")
+                        Logger.warning("Failed to access the file", category: .data)
                         return
                     }
-                    
+
                     defer {
                         fileURL.stopAccessingSecurityScopedResource()
                     }
-                    
+
                     let sharingService = ProtocolSharingService()
                     if let importedProtocol = sharingService.importProtocolFromFile(fileURL) {
                         DispatchQueue.main.async {
@@ -206,7 +206,7 @@ struct ProtocolListView: View {
                         }
                     }
                 } catch {
-                    print("Failed to import file: \(error)")
+                    Logger.error(error, message: "Failed to import file", category: .data)
                 }
             }
             .saveErrorAlert(isPresented: $showSaveError)
@@ -522,8 +522,8 @@ struct ProtocolListView: View {
         
         do {
             try modelContext.save()
-            print("✅ Base protocols created successfully!")
-            
+            Logger.info("Base protocols created successfully!", category: .data)
+
             // Now update them with the actual symptoms and tags
             protocol1.symptoms = ["Bloating", "Indigestion", "Irregular Bowel Movements"]
             protocol1.tags = ["Gut Health", "Probiotics", "Fiber"]
@@ -574,9 +574,9 @@ struct ProtocolListView: View {
             protocol16.tags = ["Mobility", "Stretching", "Recovery"]
             
             try modelContext.save()
-            print("✅ Protocols updated with symptoms and tags!")
+            Logger.info("Protocols updated with symptoms and tags!", category: .data)
         } catch {
-            print("❌ Error saving protocols: \(error)")
+            Logger.error(error, message: "Error saving protocols", category: .data)
         }
     }
             
@@ -858,24 +858,24 @@ struct ProtocolListView: View {
                 do {
                     try modelContext.save()
                 } catch {
-                    print("❌ Error deleting protocol: \(error)")
+                    Logger.error(error, message: "Error deleting protocol", category: .data)
                 }
             }
-            
+
             private func autoDeactivateProtocols() {
                 let today = Date()
-                
+
                 for proto in protocols where proto.isActive {
                     if let endDate = proto.endDate, endDate < today {
                         proto.isActive = false
-                        print("⏸️ Protocol '\(proto.title)' has been auto-deactivated.")
+                        Logger.info("Protocol '\(proto.title)' has been auto-deactivated.", category: .data)
                     }
                 }
-                
+
                 do {
                     try modelContext.save()
                 } catch {
-                    print("❌ Error auto-deactivating protocols: \(error)")
+                    Logger.error(error, message: "Error auto-deactivating protocols", category: .data)
                 }
             }
             
@@ -903,7 +903,7 @@ struct ProtocolListView: View {
         do {
             try modelContext.save()
         } catch {
-            print("Error activating protocol: \(error)")
+            Logger.error(error, message: "Error activating protocol", category: .data)
         }
     }
         }

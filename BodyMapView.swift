@@ -113,7 +113,7 @@ struct BodyMapView: View {
                 }
             }
             .onChange(of: viewModel.selectedBodyAreas) { oldValue, newValue in
-                print("selectedBodyAreas changed to: \(newValue)")
+                Logger.debug("selectedBodyAreas changed to: \(newValue)", category: .ui)
                 selectedBodyAreas = newValue
             }
         }
@@ -144,11 +144,11 @@ struct BodyMapView: View {
     private func toggleRegionSelection(_ region: String) {
         withAnimation(.easeInOut(duration: 0.2)) {
             let standardizedRegion = BodyRegionUtility.standardizeRegionName(region)
-            print("🔄 Region toggled: \(standardizedRegion)")
-            
+            Logger.debug("Region toggled: \(standardizedRegion)", category: .ui)
+
             // Open the symptom selection sheet
             selectedRegion = SelectedRegion(name: region)
-            
+
             // Toggle selection in ViewModel
             if viewModel.selectedBodyAreas.contains(standardizedRegion) {
                 viewModel.selectedBodyAreas.remove(standardizedRegion)
@@ -156,12 +156,12 @@ struct BodyMapView: View {
             } else {
                 viewModel.selectedBodyAreas.insert(standardizedRegion)
             }
-            
+
             // Ensure local state stays synced with ViewModel
             selectedBodyAreas = viewModel.selectedBodyAreas
-            print("📍 Current selected areas: \(selectedBodyAreas)")
+            Logger.debug("Current selected areas: \(selectedBodyAreas)", category: .ui)
         }
-        
+
         viewModel.verifySymptomRegionMapping()
     }
 
@@ -371,7 +371,7 @@ struct BodyMapView: View {
         return Button(action: {
             toggleRegionSelection(region)
             hapticFeedback()
-            print("🎯 Tapped region: \(region), isSelected: \(isSelected)")
+            Logger.debug("Tapped region: \(region), isSelected: \(isSelected)", category: .ui)
         }) {
             Rectangle()
                 .fill(isSelected ? Color.green.opacity(0.5) : Color.clear)
@@ -666,9 +666,9 @@ struct SymptomSelectionSheetBack: View {
             }
         }
         .onAppear {
-            print("Back view symptoms count: \(symptoms.count)")
-            print("Current selected symptoms: \(viewModel.selectedSymptoms)")
-            print("Back view symptoms for \(region.rawValue): \(symptoms.map { $0.name }.joined(separator: ", "))")
+            Logger.debug("Back view symptoms count: \(symptoms.count)", category: .ui)
+            Logger.debug("Current selected symptoms: \(viewModel.selectedSymptoms)", category: .ui)
+            Logger.debug("Back view symptoms for \(region.rawValue): \(symptoms.map { $0.name }.joined(separator: ", "))", category: .ui)
         }
     }
 }

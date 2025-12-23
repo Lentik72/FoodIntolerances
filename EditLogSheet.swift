@@ -351,7 +351,7 @@ struct EditLogSheet: View {
                             try modelContext.save()
                             dismiss()
                         } catch {
-                            print("Error saving edited log:", error)
+                            Logger.error(error, message: "Error saving edited log", category: .data)
                         }
                     }
                     .accessibilityLabel("Save")
