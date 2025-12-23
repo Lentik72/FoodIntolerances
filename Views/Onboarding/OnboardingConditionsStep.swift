@@ -8,9 +8,14 @@ struct OnboardingConditionsStep: View {
     var onBack: () -> Void
 
     @State private var customCondition: String = ""
-    @State private var showAddCustom: Bool = false
+    @State private var showAddCustomSheet: Bool = false
 
     let commonConditions = CommonHealthCondition.all
+
+    // Custom conditions that user added (not in the common list)
+    private var customAddedConditions: [String] {
+        selectedConditions.filter { !commonConditions.contains($0) }.sorted()
+    }
 
     var body: some View {
         ScrollView {
@@ -66,40 +71,44 @@ struct OnboardingConditionsStep: View {
                         )
                     }
 
-                    // Add custom
-                    if showAddCustom {
+                    // Custom added conditions
+                    ForEach(customAddedConditions, id: \.self) { condition in
                         HStack {
-                            TextField("Enter condition", text: $customCondition)
-                                .textFieldStyle(.roundedBorder)
-
+                            Image(systemName: selectedConditions.contains(condition) ? "checkmark.circle.fill" : "circle")
+                                .foregroundColor(.blue)
+                            Text(condition)
+                                .foregroundColor(.primary)
+                            Spacer()
                             Button(action: {
-                                if !customCondition.isEmpty {
-                                    selectedConditions.insert(customCondition)
-                                    customCondition = ""
-                                    showAddCustom = false
-                                }
+                                selectedConditions.remove(condition)
                             }) {
-                                Image(systemName: "plus.circle.fill")
-                                    .font(.title2)
-                                    .foregroundColor(.blue)
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.gray)
                             }
                         }
-                        .padding(.horizontal)
-                    } else {
-                        Button(action: { showAddCustom = true }) {
-                            HStack {
-                                Image(systemName: "plus.circle")
-                                    .foregroundColor(.blue)
-                                Text("Add other condition")
-                                    .foregroundColor(.blue)
-                                Spacer()
-                            }
-                            .padding()
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(Color.blue.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [5]))
-                            )
+                        .padding()
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color.blue.opacity(0.1))
+                        )
+                    }
+
+                    // Add custom button
+                    Button(action: { showAddCustomSheet = true }) {
+                        HStack {
+                            Image(systemName: "plus.circle.fill")
+                                .foregroundColor(.blue)
+                            Text("Add Other Condition")
+                                .foregroundColor(.blue)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.gray)
                         }
+                        .padding()
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.blue.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [5]))
+                        )
                     }
                 }
                 .padding(.horizontal)
@@ -140,6 +149,56 @@ struct OnboardingConditionsStep: View {
                 }
                 .padding(.horizontal)
                 .padding(.bottom, 20)
+            }
+        }
+        .sheet(isPresented: $showAddCustomSheet) {
+            CustomConditionSheet(
+                conditionName: $customCondition,
+                onAdd: {
+                    let trimmed = customCondition.trimmingCharacters(in: .whitespaces)
+                    if !trimmed.isEmpty {
+                        selectedConditions.insert(trimmed)
+                        customCondition = ""
+                        showAddCustomSheet = false
+                    }
+                },
+                onCancel: {
+                    customCondition = ""
+                    showAddCustomSheet = false
+                }
+            )
+            .presentationDetents([.height(250)])
+        }
+    }
+}
+
+// MARK: - Custom Condition Sheet
+
+struct CustomConditionSheet: View {
+    @Binding var conditionName: String
+    let onAdd: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section(header: Text("Condition Name"), footer: Text("Enter a health condition not listed above.")) {
+                    TextField("e.g., Fibromyalgia, PCOS, Lupus", text: $conditionName)
+                        .autocapitalization(.words)
+                }
+            }
+            .navigationTitle("Add Condition")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: onCancel)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        onAdd()
+                    }
+                    .disabled(conditionName.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
             }
         }
     }

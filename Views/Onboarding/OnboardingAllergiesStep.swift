@@ -9,6 +9,10 @@ struct OnboardingAllergiesStep: View {
 
     @State private var showSeverityPicker: CommonAllergy?
     @State private var tempSeverity: AllergySeverity = .moderate
+    @State private var showCustomAllergySheet = false
+    @State private var customAllergyName = ""
+    @State private var customAllergyType: AllergyType = .intolerance
+    @State private var customAllergySeverity: AllergySeverity = .moderate
 
     var body: some View {
         ScrollView {
@@ -64,6 +68,27 @@ struct OnboardingAllergiesStep: View {
                         onSelectAllergy: { allergy in
                             showSeverityPicker = allergy
                         }
+                    )
+                }
+                .padding(.horizontal)
+
+                // Add Custom Button
+                Button(action: {
+                    showCustomAllergySheet = true
+                }) {
+                    HStack {
+                        Image(systemName: "plus.circle.fill")
+                            .foregroundColor(.blue)
+                        Text("Add Other Allergy/Intolerance")
+                            .foregroundColor(.blue)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .foregroundColor(.gray)
+                    }
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.blue.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [5]))
                     )
                 }
                 .padding(.horizontal)
@@ -166,6 +191,35 @@ struct OnboardingAllergiesStep: View {
                 }
             )
             .presentationDetents([.height(300)])
+        }
+        .sheet(isPresented: $showCustomAllergySheet) {
+            CustomAllergySheet(
+                name: $customAllergyName,
+                type: $customAllergyType,
+                severity: $customAllergySeverity,
+                onAdd: {
+                    if !customAllergyName.trimmingCharacters(in: .whitespaces).isEmpty {
+                        let customAllergy = OnboardingAllergy(
+                            name: customAllergyName.trimmingCharacters(in: .whitespaces),
+                            type: customAllergyType,
+                            severity: customAllergySeverity,
+                            crossReactiveItems: []
+                        )
+                        selectedAllergies.append(customAllergy)
+                        customAllergyName = ""
+                        customAllergyType = .intolerance
+                        customAllergySeverity = .moderate
+                        showCustomAllergySheet = false
+                    }
+                },
+                onCancel: {
+                    customAllergyName = ""
+                    customAllergyType = .intolerance
+                    customAllergySeverity = .moderate
+                    showCustomAllergySheet = false
+                }
+            )
+            .presentationDetents([.height(450)])
         }
     }
 
@@ -309,6 +363,101 @@ struct SeverityPickerSheet: View {
                     Button("Cancel", action: onCancel)
                 }
             }
+        }
+    }
+
+    private func severityColor(_ severity: AllergySeverity) -> Color {
+        switch severity {
+        case .mild: return .green
+        case .moderate: return .yellow
+        case .severe: return .red
+        }
+    }
+}
+
+// MARK: - Custom Allergy Sheet
+
+struct CustomAllergySheet: View {
+    @Binding var name: String
+    @Binding var type: AllergyType
+    @Binding var severity: AllergySeverity
+    let onAdd: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section(header: Text("Allergy/Intolerance Name")) {
+                    TextField("e.g., Nightshades, Corn, Soy", text: $name)
+                        .autocapitalization(.words)
+                }
+
+                Section(header: Text("Type")) {
+                    Picker("Type", selection: $type) {
+                        Text("True Allergy").tag(AllergyType.trueAllergy)
+                        Text("Intolerance").tag(AllergyType.intolerance)
+                        Text("Sensitivity").tag(AllergyType.sensitivity)
+                        Text("Cross-Reactive").tag(AllergyType.crossReactive)
+                    }
+                    .pickerStyle(.segmented)
+
+                    Text(typeDescription)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Section(header: Text("Severity")) {
+                    ForEach(AllergySeverity.allCases, id: \.rawValue) { level in
+                        Button(action: {
+                            severity = level
+                        }) {
+                            HStack {
+                                Circle()
+                                    .fill(severityColor(level))
+                                    .frame(width: 12, height: 12)
+                                VStack(alignment: .leading) {
+                                    Text(level.rawValue)
+                                        .foregroundColor(.primary)
+                                    Text(level.description)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                if severity == level {
+                                    Image(systemName: "checkmark")
+                                        .foregroundColor(.blue)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Add Custom")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: onCancel)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        onAdd()
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+        }
+    }
+
+    private var typeDescription: String {
+        switch type {
+        case .trueAllergy:
+            return "Immune system reaction (IgE-mediated). Can be severe."
+        case .intolerance:
+            return "Digestive difficulty without immune involvement (e.g., lactose)."
+        case .sensitivity:
+            return "Non-specific reaction (e.g., caffeine sensitivity)."
+        case .crossReactive:
+            return "Reaction due to similar proteins (e.g., pollen → fruits)."
         }
     }
 

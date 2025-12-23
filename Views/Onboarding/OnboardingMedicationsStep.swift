@@ -9,7 +9,9 @@ struct OnboardingMedicationsStep: View {
     var onBack: () -> Void
 
     @State private var newMedication: String = ""
-    @State private var showAddMedication: Bool = false
+    @State private var showAddMedicationSheet: Bool = false
+    @State private var newSupplement: String = ""
+    @State private var showAddSupplementSheet: Bool = false
 
     let commonSupplements = [
         "Vitamin D",
@@ -28,6 +30,10 @@ struct OnboardingMedicationsStep: View {
         "CoQ10",
         "Collagen"
     ]
+
+    private var customSupplements: [String] {
+        supplements.filter { !commonSupplements.contains($0) }.sorted()
+    }
 
     var body: some View {
         ScrollView {
@@ -88,47 +94,22 @@ struct OnboardingMedicationsStep: View {
                         }
                     }
 
-                    // Add medication
-                    if showAddMedication {
+                    // Add medication button
+                    Button(action: { showAddMedicationSheet = true }) {
                         HStack {
-                            TextField("Medication name", text: $newMedication)
-                                .textFieldStyle(.roundedBorder)
-
-                            Button(action: {
-                                if !newMedication.isEmpty {
-                                    medications.append(newMedication)
-                                    newMedication = ""
-                                    showAddMedication = false
-                                }
-                            }) {
-                                Image(systemName: "plus.circle.fill")
-                                    .font(.title2)
-                                    .foregroundColor(.blue)
-                            }
-
-                            Button(action: {
-                                showAddMedication = false
-                                newMedication = ""
-                            }) {
-                                Image(systemName: "xmark.circle")
-                                    .foregroundColor(.gray)
-                            }
+                            Image(systemName: "plus.circle.fill")
+                                .foregroundColor(.red)
+                            Text("Add Medication")
+                                .foregroundColor(.red)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.gray)
                         }
-                    } else {
-                        Button(action: { showAddMedication = true }) {
-                            HStack {
-                                Image(systemName: "plus.circle")
-                                    .foregroundColor(.blue)
-                                Text("Add medication")
-                                    .foregroundColor(.blue)
-                                Spacer()
-                            }
-                            .padding()
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(Color.blue.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [5]))
-                            )
-                        }
+                        .padding()
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.red.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [5]))
+                        )
                     }
                 }
                 .padding(.horizontal)
@@ -158,6 +139,52 @@ struct OnboardingMedicationsStep: View {
                                 }
                             }
                         }
+                    }
+
+                    // Custom supplements
+                    if !customSupplements.isEmpty {
+                        FlowLayout(spacing: 8) {
+                            ForEach(customSupplements, id: \.self) { supplement in
+                                HStack(spacing: 4) {
+                                    Image(systemName: "checkmark")
+                                        .font(.caption2)
+                                    Text(supplement)
+                                        .font(.subheadline)
+                                    Button(action: {
+                                        supplements.remove(supplement)
+                                    }) {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .font(.caption)
+                                            .foregroundColor(.white.opacity(0.7))
+                                    }
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(
+                                    Capsule()
+                                        .fill(Color.green.opacity(0.3))
+                                )
+                                .foregroundColor(.green)
+                            }
+                        }
+                    }
+
+                    // Add custom supplement button
+                    Button(action: { showAddSupplementSheet = true }) {
+                        HStack {
+                            Image(systemName: "plus.circle.fill")
+                                .foregroundColor(.green)
+                            Text("Add Other Supplement")
+                                .foregroundColor(.green)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.gray)
+                        }
+                        .padding()
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.green.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [5]))
+                        )
                     }
                 }
                 .padding(.horizontal)
@@ -219,6 +246,106 @@ struct OnboardingMedicationsStep: View {
                 }
                 .padding(.horizontal)
                 .padding(.bottom, 20)
+            }
+        }
+        .sheet(isPresented: $showAddMedicationSheet) {
+            CustomMedicationSheet(
+                medicationName: $newMedication,
+                onAdd: {
+                    let trimmed = newMedication.trimmingCharacters(in: .whitespaces)
+                    if !trimmed.isEmpty && !medications.contains(trimmed) {
+                        medications.append(trimmed)
+                        newMedication = ""
+                        showAddMedicationSheet = false
+                    }
+                },
+                onCancel: {
+                    newMedication = ""
+                    showAddMedicationSheet = false
+                }
+            )
+            .presentationDetents([.height(250)])
+        }
+        .sheet(isPresented: $showAddSupplementSheet) {
+            CustomSupplementSheet(
+                supplementName: $newSupplement,
+                onAdd: {
+                    let trimmed = newSupplement.trimmingCharacters(in: .whitespaces)
+                    if !trimmed.isEmpty {
+                        supplements.insert(trimmed)
+                        newSupplement = ""
+                        showAddSupplementSheet = false
+                    }
+                },
+                onCancel: {
+                    newSupplement = ""
+                    showAddSupplementSheet = false
+                }
+            )
+            .presentationDetents([.height(250)])
+        }
+    }
+}
+
+// MARK: - Custom Medication Sheet
+
+struct CustomMedicationSheet: View {
+    @Binding var medicationName: String
+    let onAdd: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section(header: Text("Medication Name"), footer: Text("Enter the name of any prescription or over-the-counter medication you take regularly.")) {
+                    TextField("e.g., Metformin, Lisinopril, Advil", text: $medicationName)
+                        .autocapitalization(.words)
+                }
+            }
+            .navigationTitle("Add Medication")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: onCancel)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        onAdd()
+                    }
+                    .disabled(medicationName.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Custom Supplement Sheet
+
+struct CustomSupplementSheet: View {
+    @Binding var supplementName: String
+    let onAdd: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section(header: Text("Supplement Name"), footer: Text("Enter any supplement not listed in the common options above.")) {
+                    TextField("e.g., Ashwagandha, Biotin, NAC", text: $supplementName)
+                        .autocapitalization(.words)
+                }
+            }
+            .navigationTitle("Add Supplement")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: onCancel)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        onAdd()
+                    }
+                    .disabled(supplementName.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
             }
         }
     }

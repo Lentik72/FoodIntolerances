@@ -8,7 +8,7 @@ struct OnboardingSymptomsStep: View {
     var onBack: () -> Void
 
     @State private var customSymptom: String = ""
-    @State private var showAddCustom: Bool = false
+    @State private var showAddCustomSheet: Bool = false
 
     let commonSymptoms: [(category: String, symptoms: [String])] = [
         ("Head & Mind", ["Headaches/Migraines", "Brain Fog", "Dizziness", "Anxiety", "Depression"]),
@@ -18,6 +18,14 @@ struct OnboardingSymptomsStep: View {
         ("Skin", ["Rashes", "Acne", "Eczema", "Hives"]),
         ("Other", ["Allergic Reactions", "Sinus Issues", "Heart Palpitations"])
     ]
+
+    private var allCommonSymptomNames: Set<String> {
+        Set(commonSymptoms.flatMap { $0.symptoms })
+    }
+
+    private var customAddedSymptoms: [String] {
+        selectedSymptoms.filter { !allCommonSymptomNames.contains($0) }.sorted()
+    }
 
     var body: some View {
         ScrollView {
@@ -71,42 +79,60 @@ struct OnboardingSymptomsStep: View {
                 }
                 .padding(.horizontal)
 
-                // Add custom
-                if showAddCustom {
-                    HStack {
-                        TextField("Enter symptom", text: $customSymptom)
-                            .textFieldStyle(.roundedBorder)
+                // Custom added symptoms
+                if !customAddedSymptoms.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Custom")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.secondary)
 
-                        Button(action: {
-                            if !customSymptom.isEmpty {
-                                selectedSymptoms.insert(customSymptom)
-                                customSymptom = ""
-                                showAddCustom = false
+                        FlowLayout(spacing: 8) {
+                            ForEach(customAddedSymptoms, id: \.self) { symptom in
+                                HStack(spacing: 4) {
+                                    Image(systemName: "checkmark")
+                                        .font(.caption2)
+                                    Text(symptom)
+                                        .font(.subheadline)
+                                    Button(action: {
+                                        selectedSymptoms.remove(symptom)
+                                    }) {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .font(.caption)
+                                            .foregroundColor(.gray)
+                                    }
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(
+                                    Capsule()
+                                        .fill(Color.purple.opacity(0.2))
+                                )
+                                .foregroundColor(.purple)
                             }
-                        }) {
-                            Image(systemName: "plus.circle.fill")
-                                .font(.title2)
-                                .foregroundColor(.blue)
                         }
-                    }
-                    .padding(.horizontal)
-                } else {
-                    Button(action: { showAddCustom = true }) {
-                        HStack {
-                            Image(systemName: "plus.circle")
-                                .foregroundColor(.blue)
-                            Text("Add other symptom")
-                                .foregroundColor(.blue)
-                            Spacer()
-                        }
-                        .padding()
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(Color.blue.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [5]))
-                        )
                     }
                     .padding(.horizontal)
                 }
+
+                // Add custom button
+                Button(action: { showAddCustomSheet = true }) {
+                    HStack {
+                        Image(systemName: "plus.circle.fill")
+                            .foregroundColor(.purple)
+                        Text("Add Other Symptom")
+                            .foregroundColor(.purple)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .foregroundColor(.gray)
+                    }
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.purple.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [5]))
+                    )
+                }
+                .padding(.horizontal)
 
                 // Selected count
                 if !selectedSymptoms.isEmpty {
@@ -144,6 +170,56 @@ struct OnboardingSymptomsStep: View {
                 }
                 .padding(.horizontal)
                 .padding(.bottom, 20)
+            }
+        }
+        .sheet(isPresented: $showAddCustomSheet) {
+            CustomSymptomSheet(
+                symptomName: $customSymptom,
+                onAdd: {
+                    let trimmed = customSymptom.trimmingCharacters(in: .whitespaces)
+                    if !trimmed.isEmpty {
+                        selectedSymptoms.insert(trimmed)
+                        customSymptom = ""
+                        showAddCustomSheet = false
+                    }
+                },
+                onCancel: {
+                    customSymptom = ""
+                    showAddCustomSheet = false
+                }
+            )
+            .presentationDetents([.height(250)])
+        }
+    }
+}
+
+// MARK: - Custom Symptom Sheet
+
+struct CustomSymptomSheet: View {
+    @Binding var symptomName: String
+    let onAdd: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section(header: Text("Symptom Name"), footer: Text("Enter a symptom you want to track that's not listed above.")) {
+                    TextField("e.g., Tinnitus, Vertigo, Tremors", text: $symptomName)
+                        .autocapitalization(.words)
+                }
+            }
+            .navigationTitle("Add Symptom")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: onCancel)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        onAdd()
+                    }
+                    .disabled(symptomName.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
             }
         }
     }
