@@ -50,6 +50,23 @@ class AIMemory: Identifiable {
     @Attribute var createdDate: Date = Date()
     @Attribute var lastUpdated: Date = Date()
 
+    // MARK: - Schema Version (for future migrations)
+    /// Increment when confidence math or memory structure changes
+    @Attribute var schemaVersion: Int = 1
+
+    /// Current schema version for new memories
+    static let currentSchemaVersion: Int = 1
+
+    // MARK: - Suggestion Cooldown
+    @Attribute var lastShownDate: Date?           // When this suggestion was last displayed
+    @Attribute var consecutiveIgnores: Int = 0    // Times shown without positive feedback
+    @Attribute var cooldownUntil: Date?           // Suppress until this date
+
+    // MARK: - Cooldown Constants
+    private static let baseCooldownHours: Int = 24           // 1 day base cooldown
+    private static let maxCooldownDays: Int = 14             // Max 2 weeks cooldown
+    private static let ignoresBeforeCooldown: Int = 3        // Ignores before cooldown kicks in
+
     // MARK: - Initializer
     init(
         memoryType: MemoryType,
@@ -89,6 +106,11 @@ class AIMemory: Identifiable {
         Int(effectivenessScore * 100)
     }
 
+    // MARK: - Confidence Constants
+
+    /// Minimum confidence floor to prevent oscillation/thrashing
+    private static let minimumConfidenceFloor: Double = 0.15
+
     /// Time-decayed confidence that weighs recent data more heavily
     var decayedConfidence: Double {
         let daysSinceLastOccurrence = Calendar.current.dateComponents(
@@ -100,7 +122,10 @@ class AIMemory: Identifiable {
         // Apply decay: confidence drops by ~10% per month of inactivity
         // After 6 months, decay is ~50%; after 12 months, ~75%
         let decayFactor = exp(-Double(daysSinceLastOccurrence) / 180.0)
-        return confidence * decayFactor
+        let decayed = confidence * decayFactor
+
+        // Never decay below the floor to prevent thrashing
+        return max(decayed, Self.minimumConfidenceFloor)
     }
 
     /// Decayed confidence level considering time since last occurrence
@@ -133,6 +158,32 @@ class AIMemory: Identifiable {
             to: Date()
         ).day ?? 0
         return daysSinceLastOccurrence <= 90
+    }
+
+    // MARK: - Cooldown Computed Properties
+
+    /// Whether this suggestion is currently in cooldown (should not be shown)
+    var isInCooldown: Bool {
+        guard let cooldownEnd = cooldownUntil else { return false }
+        return Date() < cooldownEnd
+    }
+
+    /// Hours remaining in cooldown (nil if not in cooldown)
+    var cooldownHoursRemaining: Int? {
+        guard let cooldownEnd = cooldownUntil, isInCooldown else { return nil }
+        return Calendar.current.dateComponents([.hour], from: Date(), to: cooldownEnd).hour
+    }
+
+    /// Whether this suggestion was shown recently (within 4 hours)
+    var wasShownRecently: Bool {
+        guard let lastShown = lastShownDate else { return false }
+        let hoursSinceShown = Calendar.current.dateComponents([.hour], from: lastShown, to: Date()).hour ?? 0
+        return hoursSinceShown < 4
+    }
+
+    /// Whether this suggestion should be suppressed (cooldown OR recently shown)
+    var shouldSuppressSuggestion: Bool {
+        isInCooldown || wasShownRecently
     }
 
     // MARK: - Methods
@@ -182,6 +233,77 @@ class AIMemory: Identifiable {
         userDenied = true
         userConfirmed = false
         confidence = max(0.0, confidence - 0.2)
+        lastUpdated = Date()
+    }
+
+    /// Handle user feedback on a suggestion/observation
+    func applyFeedback(_ feedback: UserFeedback) {
+        lastUpdated = Date()
+
+        switch feedback {
+        case .helped:
+            recordSuccess()
+            userConfirmed = true
+            resetCooldown()  // Positive feedback resets cooldown
+        case .didntHelp:
+            recordFailure()
+            recordIgnored()  // Didn't help counts as ignored for cooldown
+        case .notSureYet:
+            // No action needed
+            break
+        case .notRelevant:
+            // Strongly suppress this memory
+            userDenied = true
+            confidence = max(0.0, confidence + feedback.confidenceAdjustment)
+            recordIgnored()  // Not relevant definitely counts as ignored
+            // Mark as suppressed if repeatedly marked not relevant
+            if confidence <= 0.2 {
+                isActive = false
+            }
+        }
+    }
+
+    // MARK: - Cooldown Management
+
+    /// Record that this suggestion was shown to the user
+    func recordShown() {
+        lastShownDate = Date()
+        lastUpdated = Date()
+    }
+
+    /// Record that this suggestion was ignored (no positive feedback)
+    func recordIgnored() {
+        consecutiveIgnores += 1
+        lastUpdated = Date()
+
+        // Apply cooldown if ignored too many times
+        if consecutiveIgnores >= Self.ignoresBeforeCooldown {
+            applyCooldown()
+        }
+    }
+
+    /// Apply cooldown period - exponentially increasing based on consecutive ignores
+    func applyCooldown() {
+        // Exponential backoff: 1 day, 2 days, 4 days, 7 days, 14 days (max)
+        let multiplier = min(consecutiveIgnores - Self.ignoresBeforeCooldown + 1, 4)
+        let cooldownHours = Self.baseCooldownHours * Int(pow(2.0, Double(multiplier - 1)))
+        let maxCooldownHours = Self.maxCooldownDays * 24
+
+        let actualCooldownHours = min(cooldownHours, maxCooldownHours)
+        cooldownUntil = Calendar.current.date(byAdding: .hour, value: actualCooldownHours, to: Date())
+        lastUpdated = Date()
+    }
+
+    /// Reset cooldown when user gives positive feedback
+    func resetCooldown() {
+        consecutiveIgnores = 0
+        cooldownUntil = nil
+        lastUpdated = Date()
+    }
+
+    /// Clear cooldown manually (for testing or user override)
+    func clearCooldown() {
+        cooldownUntil = nil
         lastUpdated = Date()
     }
 
@@ -289,12 +411,88 @@ struct AIResponse {
     var needsMoreData: NeedsMoreDataMessage?  // Shown when AI doesn't have enough info
     var timestamp: Date = Date()
 
+    // MARK: - Response Limits
+    private static let maxCharacters = 600
+    private static let maxObservations = 3
+    private static let maxSuggestions = 2
+    private static let maxQuestions = 2
+    private static let maxWarnings = 2
+
     var hasContent: Bool {
         !observations.isEmpty || !questions.isEmpty || !suggestions.isEmpty || !warnings.isEmpty || needsMoreData != nil
     }
 
     var hasOnlyNeedsMoreData: Bool {
         observations.isEmpty && questions.isEmpty && suggestions.isEmpty && warnings.isEmpty && needsMoreData != nil
+    }
+
+    /// Total character count of all text content
+    var totalCharacterCount: Int {
+        let obsChars = observations.reduce(0) { $0 + $1.text.count }
+        let sugChars = suggestions.reduce(0) { $0 + $1.text.count }
+        let qChars = questions.reduce(0) { $0 + $1.text.count }
+        let warnChars = warnings.reduce(0) { $0 + $1.text.count }
+        let needsDataChars = needsMoreData?.text.count ?? 0
+        return obsChars + sugChars + qChars + warnChars + needsDataChars
+    }
+
+    /// Whether response exceeds recommended length
+    var isOverLength: Bool {
+        totalCharacterCount > Self.maxCharacters
+    }
+
+    /// Get a trimmed version of the response that fits within limits
+    mutating func trimToFit() {
+        // Prioritize: warnings > observations > suggestions > questions
+        // Keep most important items, trim excess
+
+        // Limit each category
+        if warnings.count > Self.maxWarnings {
+            warnings = Array(warnings.prefix(Self.maxWarnings))
+        }
+
+        if observations.count > Self.maxObservations {
+            // Keep highest confidence observations
+            observations = Array(observations
+                .sorted { confidenceRank($0.confidence) > confidenceRank($1.confidence) }
+                .prefix(Self.maxObservations))
+        }
+
+        if suggestions.count > Self.maxSuggestions {
+            // Keep highest effectiveness suggestions
+            suggestions = Array(suggestions
+                .sorted { ($0.effectiveness ?? 0) > ($1.effectiveness ?? 0) }
+                .prefix(Self.maxSuggestions))
+        }
+
+        if questions.count > Self.maxQuestions {
+            questions = Array(questions.prefix(Self.maxQuestions))
+        }
+
+        // If still over length, remove low-confidence observations
+        if isOverLength && observations.count > 1 {
+            observations = observations.filter { $0.confidence != .low }
+        }
+
+        // If still over length, remove questions
+        if isOverLength && !questions.isEmpty {
+            questions = []
+        }
+    }
+
+    /// Get a pre-trimmed copy of the response
+    func trimmed() -> AIResponse {
+        var copy = self
+        copy.trimToFit()
+        return copy
+    }
+
+    private func confidenceRank(_ level: ConfidenceLevel) -> Int {
+        switch level {
+        case .high: return 3
+        case .medium: return 2
+        case .low: return 1
+        }
     }
 }
 
@@ -339,6 +537,51 @@ struct AIObservation {
         self.relatedMemory = relatedMemory
         self.icon = icon
     }
+
+    /// Human-readable evidence summary explaining why this observation was made
+    var evidenceSummary: String? {
+        guard let memory = relatedMemory else { return nil }
+
+        var parts: [String] = []
+
+        // Occurrence count
+        if memory.occurrenceCount > 1 {
+            parts.append("\(memory.occurrenceCount) occurrences")
+        }
+
+        // Time range
+        let daysSinceFirst = Calendar.current.dateComponents(
+            [.day],
+            from: memory.createdDate,
+            to: Date()
+        ).day ?? 0
+
+        if daysSinceFirst > 90 {
+            let months = daysSinceFirst / 30
+            parts.append("over \(months) months")
+        } else if daysSinceFirst > 30 {
+            parts.append("over \(daysSinceFirst / 7) weeks")
+        } else if daysSinceFirst > 7 {
+            parts.append("past \(daysSinceFirst) days")
+        }
+
+        // Effectiveness if available
+        if memory.effectivenessPercentage > 0 && memory.successCount + memory.failureCount >= 3 {
+            parts.append("\(memory.effectivenessPercentage)% effective")
+        }
+
+        guard !parts.isEmpty else { return nil }
+        return "Based on " + parts.joined(separator: ", ")
+    }
+
+    /// Short confidence description
+    var confidenceDescription: String {
+        switch confidence {
+        case .high: return "High confidence"
+        case .medium: return "Moderate confidence"
+        case .low: return "Early observation"
+        }
+    }
 }
 
 struct AIQuestion {
@@ -360,12 +603,43 @@ struct AISuggestion {
     let effectiveness: Int?  // Percentage if known
     let lastHelped: Date?
     let icon: String
+    let occurrenceCount: Int?  // How many times this was tried
 
-    init(text: String, effectiveness: Int? = nil, lastHelped: Date? = nil, icon: String = "star.fill") {
+    init(text: String, effectiveness: Int? = nil, lastHelped: Date? = nil, icon: String = "star.fill", occurrenceCount: Int? = nil) {
         self.text = text
         self.effectiveness = effectiveness
         self.lastHelped = lastHelped
         self.icon = icon
+        self.occurrenceCount = occurrenceCount
+    }
+
+    /// Human-readable evidence summary for this suggestion
+    var evidenceSummary: String? {
+        var parts: [String] = []
+
+        if let count = occurrenceCount, count > 1 {
+            parts.append("tried \(count) times")
+        }
+
+        if let eff = effectiveness, eff > 0 {
+            parts.append("\(eff)% success rate")
+        }
+
+        if let lastDate = lastHelped {
+            let daysAgo = Calendar.current.dateComponents([.day], from: lastDate, to: Date()).day ?? 0
+            if daysAgo == 0 {
+                parts.append("helped today")
+            } else if daysAgo == 1 {
+                parts.append("helped yesterday")
+            } else if daysAgo < 7 {
+                parts.append("helped \(daysAgo) days ago")
+            } else if daysAgo < 30 {
+                parts.append("helped \(daysAgo / 7) weeks ago")
+            }
+        }
+
+        guard !parts.isEmpty else { return nil }
+        return parts.joined(separator: ", ").capitalized
     }
 }
 
@@ -403,12 +677,281 @@ enum UserFeedback: String, CaseIterable {
     case helped = "Helped"
     case didntHelp = "Didn't Help"
     case notSureYet = "Not Sure Yet"
+    case notRelevant = "Not Relevant"  // Quickly dismiss irrelevant suggestions
 
     var icon: String {
         switch self {
         case .helped: return "hand.thumbsup.fill"
         case .didntHelp: return "hand.thumbsdown.fill"
         case .notSureYet: return "questionmark.circle.fill"
+        case .notRelevant: return "xmark.circle.fill"
         }
+    }
+
+    var description: String {
+        switch self {
+        case .helped: return "This was helpful"
+        case .didntHelp: return "This didn't help"
+        case .notSureYet: return "Not sure yet"
+        case .notRelevant: return "This doesn't apply to me"
+        }
+    }
+
+    /// How much to adjust confidence based on feedback
+    var confidenceAdjustment: Double {
+        switch self {
+        case .helped: return 0.1        // Boost confidence
+        case .didntHelp: return -0.15   // Reduce confidence
+        case .notSureYet: return 0.0    // No change
+        case .notRelevant: return -0.25 // Strongly reduce - prevents future resurfacing
+        }
+    }
+
+    /// Whether this feedback should suppress future suggestions
+    var shouldSuppress: Bool {
+        self == .notRelevant
+    }
+}
+
+// MARK: - Memory Health Check
+
+/// Utility for checking and fixing memory system health issues
+struct MemoryHealthCheck {
+
+    /// Issues that can be detected in memories
+    struct HealthIssue {
+        let memoryId: UUID
+        let issueType: IssueType
+        let description: String
+        let autoFixable: Bool
+
+        enum IssueType: String {
+            case invalidConfidence = "Invalid Confidence"
+            case stuckNeedsMoreData = "Stuck Learning"
+            case orphanedMemory = "Orphaned Memory"
+            case duplicateMemory = "Duplicate Memory"
+            case staleHighConfidence = "Stale High Confidence"
+        }
+    }
+
+    /// Run health check on all memories
+    static func checkHealth(memories: [AIMemory]) -> [HealthIssue] {
+        var issues: [HealthIssue] = []
+
+        for memory in memories {
+            // Check for NaN or invalid confidence
+            if memory.confidence.isNaN || memory.confidence < 0 || memory.confidence > 1 {
+                issues.append(HealthIssue(
+                    memoryId: memory.id,
+                    issueType: .invalidConfidence,
+                    description: "Memory has invalid confidence value: \(memory.confidence)",
+                    autoFixable: true
+                ))
+            }
+
+            // Check for stuck "needs more data" (>90 days with low occurrences)
+            let daysSinceCreation = Calendar.current.dateComponents(
+                [.day],
+                from: memory.createdDate,
+                to: Date()
+            ).day ?? 0
+
+            if daysSinceCreation > 90 && memory.occurrenceCount < 3 && memory.isActive {
+                issues.append(HealthIssue(
+                    memoryId: memory.id,
+                    issueType: .stuckNeedsMoreData,
+                    description: "Memory created \(daysSinceCreation) days ago with only \(memory.occurrenceCount) occurrences",
+                    autoFixable: true
+                ))
+            }
+
+            // Check for stale but high confidence (should have decayed)
+            if memory.isStale && memory.confidence > 0.8 {
+                issues.append(HealthIssue(
+                    memoryId: memory.id,
+                    issueType: .staleHighConfidence,
+                    description: "Memory is stale but still has high confidence (\(Int(memory.confidence * 100))%)",
+                    autoFixable: true
+                ))
+            }
+        }
+
+        // Check for duplicates
+        let groupedByKey = Dictionary(grouping: memories) { memory in
+            "\(memory.memoryType)-\(memory.symptom ?? "")-\(memory.trigger ?? "")-\(memory.resolution ?? "")"
+        }
+
+        for (_, group) in groupedByKey where group.count > 1 {
+            for duplicate in group.dropFirst() {
+                issues.append(HealthIssue(
+                    memoryId: duplicate.id,
+                    issueType: .duplicateMemory,
+                    description: "Duplicate memory found",
+                    autoFixable: true
+                ))
+            }
+        }
+
+        return issues
+    }
+
+    /// Auto-fix issues that can be fixed
+    static func autoFix(memory: AIMemory, issue: HealthIssue) {
+        switch issue.issueType {
+        case .invalidConfidence:
+            // Reset to reasonable default
+            memory.confidence = 0.5
+            memory.lastUpdated = Date()
+            Logger.info("Fixed invalid confidence for memory \(memory.id)", category: .data)
+
+        case .stuckNeedsMoreData:
+            // Deactivate stuck memories
+            memory.isActive = false
+            memory.lastUpdated = Date()
+            Logger.info("Deactivated stuck memory \(memory.id)", category: .data)
+
+        case .staleHighConfidence:
+            // Force confidence recalculation (decay will apply)
+            memory.confidence = memory.decayedConfidence
+            memory.lastUpdated = Date()
+            Logger.info("Applied decay to stale memory \(memory.id)", category: .data)
+
+        case .duplicateMemory:
+            // Deactivate duplicate
+            memory.isActive = false
+            memory.lastUpdated = Date()
+            Logger.info("Deactivated duplicate memory \(memory.id)", category: .data)
+
+        case .orphanedMemory:
+            // Can't auto-fix orphaned memories
+            break
+        }
+    }
+
+    /// Run health check and auto-fix issues
+    static func runMaintenanceCheck(memories: [AIMemory]) -> Int {
+        let issues = checkHealth(memories: memories)
+        var fixedCount = 0
+
+        for issue in issues where issue.autoFixable {
+            if let memory = memories.first(where: { $0.id == issue.memoryId }) {
+                autoFix(memory: memory, issue: issue)
+                fixedCount += 1
+            }
+        }
+
+        if fixedCount > 0 {
+            Logger.info("Memory health check: fixed \(fixedCount) issues", category: .data)
+        }
+
+        return fixedCount
+    }
+}
+
+// MARK: - AI System Status (Debug/Internal)
+
+/// Provides a quick health summary of the AI system for debugging
+struct AISystemStatus {
+
+    enum Status: String {
+        case healthy = "Healthy"
+        case degraded = "Degraded"
+        case needsAttention = "Needs Attention"
+
+        var icon: String {
+            switch self {
+            case .healthy: return "checkmark.circle.fill"
+            case .degraded: return "exclamationmark.circle.fill"
+            case .needsAttention: return "exclamationmark.triangle.fill"
+            }
+        }
+
+        var colorName: String {
+            switch self {
+            case .healthy: return "green"
+            case .degraded: return "yellow"
+            case .needsAttention: return "red"
+            }
+        }
+    }
+
+    let status: Status
+    let activeMemoryCount: Int
+    let totalMemoryCount: Int
+    let issueCount: Int
+    let oldestMemoryDate: Date?
+    let newestMemoryDate: Date?
+    let memoriesInCooldown: Int
+    let staleMemoryCount: Int
+    let schemaVersionIssues: Int
+
+    /// One-line status summary for debug display
+    var summary: String {
+        if issueCount == 0 {
+            return "AI System: \(status.rawValue) • \(activeMemoryCount) active memories • No issues detected"
+        } else {
+            return "AI System: \(status.rawValue) • \(activeMemoryCount) active memories • \(issueCount) issue\(issueCount == 1 ? "" : "s")"
+        }
+    }
+
+    /// Detailed status for debug view
+    var details: [String] {
+        var lines: [String] = []
+        lines.append("Status: \(status.rawValue)")
+        lines.append("Active memories: \(activeMemoryCount) of \(totalMemoryCount)")
+
+        if memoriesInCooldown > 0 {
+            lines.append("In cooldown: \(memoriesInCooldown)")
+        }
+
+        if staleMemoryCount > 0 {
+            lines.append("Stale: \(staleMemoryCount)")
+        }
+
+        if schemaVersionIssues > 0 {
+            lines.append("Schema migration needed: \(schemaVersionIssues)")
+        }
+
+        if let oldest = oldestMemoryDate {
+            let formatter = RelativeDateTimeFormatter()
+            formatter.unitsStyle = .abbreviated
+            lines.append("Oldest: \(formatter.localizedString(for: oldest, relativeTo: Date()))")
+        }
+
+        if issueCount > 0 {
+            lines.append("Issues: \(issueCount)")
+        }
+
+        return lines
+    }
+
+    /// Generate status from memories
+    static func generate(from memories: [AIMemory]) -> AISystemStatus {
+        let activeMemories = memories.filter { $0.isActive }
+        let issues = MemoryHealthCheck.checkHealth(memories: memories)
+        let cooldownCount = memories.filter { $0.isInCooldown }.count
+        let staleCount = memories.filter { $0.isStale && $0.isActive }.count
+        let schemaIssues = memories.filter { $0.schemaVersion != AIMemory.currentSchemaVersion }.count
+
+        let status: Status
+        if issues.isEmpty && schemaIssues == 0 {
+            status = .healthy
+        } else if issues.count <= 3 && schemaIssues == 0 {
+            status = .degraded
+        } else {
+            status = .needsAttention
+        }
+
+        return AISystemStatus(
+            status: status,
+            activeMemoryCount: activeMemories.count,
+            totalMemoryCount: memories.count,
+            issueCount: issues.count,
+            oldestMemoryDate: memories.map { $0.createdDate }.min(),
+            newestMemoryDate: memories.map { $0.createdDate }.max(),
+            memoriesInCooldown: cooldownCount,
+            staleMemoryCount: staleCount,
+            schemaVersionIssues: schemaIssues
+        )
     }
 }

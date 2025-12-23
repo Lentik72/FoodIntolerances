@@ -579,23 +579,8 @@ class UserMemoryService {
         for memory: AIMemory,
         context: ModelContext
     ) {
-        switch feedback {
-        case .helped:
-            memory.confirmByUser()
-            if memory.memoryTypeEnum == .whatWorked || memory.memoryTypeEnum == .whatDidntWork {
-                memory.recordSuccess()
-            }
-        case .didntHelp:
-            memory.denyByUser()
-            if memory.memoryTypeEnum == .whatWorked || memory.memoryTypeEnum == .whatDidntWork {
-                memory.recordFailure()
-            }
-        case .notSureYet:
-            // Just record the occurrence without changing confidence much
-            break
-        }
-
-        memory.lastUpdated = Date()
+        // Use the centralized feedback handler in AIMemory
+        memory.applyFeedback(feedback)
 
         Logger.debug("Processed \(feedback.rawValue) feedback for memory: \(memory.id)", category: .data)
     }

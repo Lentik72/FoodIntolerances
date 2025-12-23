@@ -311,6 +311,7 @@ struct AIFeedbackButtons: View {
         case .helped: return .green
         case .didntHelp: return .red
         case .notSureYet: return .gray
+        case .notRelevant: return .orange
         }
     }
 }

@@ -66,6 +66,50 @@ class UserProfile: Identifiable {
         AISuggestionLevel(rawValue: aiSuggestionLevel) ?? .standard
     }
 
+    // MARK: - AI Memory Control
+    @Attribute var allowMemoryLearning: Bool = true  // When OFF, AI responds but doesn't update memories
+    @Attribute var lastMemoryResetDate: Date?        // Track when memories were last reset
+    @Attribute var learningPausedDate: Date?         // Track when learning was paused
+
+    /// Pause AI learning temporarily (AI still responds, just doesn't learn new patterns)
+    func pauseLearning() {
+        allowMemoryLearning = false
+        learningPausedDate = Date()
+        lastUpdated = Date()
+    }
+
+    /// Resume AI learning
+    func resumeLearning() {
+        allowMemoryLearning = true
+        learningPausedDate = nil
+        lastUpdated = Date()
+    }
+
+    /// Days since learning was paused (nil if learning is active)
+    var daysSinceLearningPaused: Int? {
+        guard !allowMemoryLearning, let pausedDate = learningPausedDate else { return nil }
+        return Calendar.current.dateComponents([.day], from: pausedDate, to: Date()).day
+    }
+
+    /// Returns a hint message if learning has been paused for a while
+    var learningResumeHint: LearningResumeHint? {
+        guard let daysPaused = daysSinceLearningPaused else { return nil }
+
+        if daysPaused >= 14 {
+            return LearningResumeHint(
+                message: "AI learning has been paused for \(daysPaused) days. Resume to improve personalization.",
+                severity: .important
+            )
+        } else if daysPaused >= 7 {
+            return LearningResumeHint(
+                message: "AI learning is paused. Resume when ready to continue improving insights.",
+                severity: .gentle
+            )
+        }
+
+        return nil
+    }
+
     // MARK: - Cloud AI (Optional)
     @Attribute var useCloudAI: Bool = false
 
@@ -187,6 +231,24 @@ enum AISuggestionLevel: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    /// Status indicator text for display in UI headers
+    var statusIndicator: String {
+        switch self {
+        case .minimal: return "AI Mode: Minimal"
+        case .standard: return "AI Mode: Standard"
+        case .proactive: return "AI Mode: Proactive"
+        }
+    }
+
+    /// Short status for compact display
+    var shortStatus: String {
+        switch self {
+        case .minimal: return "Observations Only"
+        case .standard: return "Balanced"
+        case .proactive: return "Active"
+        }
+    }
+
     /// Minimum confidence threshold for showing observations
     var confidenceThreshold: Double {
         switch self {
@@ -220,6 +282,33 @@ enum AISuggestionLevel: String, Codable, CaseIterable, Identifiable {
         case .minimal: return false
         case .standard: return true
         case .proactive: return true
+        }
+    }
+}
+
+// MARK: - Learning Resume Hint
+
+/// Hint shown when AI learning has been paused for a while
+struct LearningResumeHint {
+    let message: String
+    let severity: Severity
+
+    enum Severity {
+        case gentle     // 7+ days paused
+        case important  // 14+ days paused
+
+        var icon: String {
+            switch self {
+            case .gentle: return "info.circle"
+            case .important: return "exclamationmark.circle"
+            }
+        }
+
+        var colorName: String {
+            switch self {
+            case .gentle: return "blue"
+            case .important: return "orange"
+            }
         }
     }
 }

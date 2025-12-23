@@ -168,7 +168,16 @@ class PersonalAIAssistant {
             confidenceValue(for: $0.confidence) >= confidenceThreshold
         })
 
-        // 9. Check if we should show "needs more data" message
+        // 9. Check for contradictions (when old advice no longer applies)
+        for symptom in log.symptoms {
+            if let contradiction = checkForContradictions(for: symptom, memories: memories) {
+                if confidenceValue(for: contradiction.confidence) >= confidenceThreshold {
+                    response.observations.append(contradiction)
+                }
+            }
+        }
+
+        // 10. Check if we should show "needs more data" message
         if suggestionLevel.showNeedsMoreData {
             response.needsMoreData = checkNeedsMoreData(
                 for: log,
@@ -177,6 +186,9 @@ class PersonalAIAssistant {
                 minimumOccurrences: minOccurrences
             )
         }
+
+        // 10. Trim response to fit within limits
+        response.trimToFit()
 
         return response
     }
@@ -230,6 +242,80 @@ class PersonalAIAssistant {
         case .medium: return 0.5
         case .low: return 0.3
         }
+    }
+
+    // MARK: - Contradiction Detection
+
+    /// Check if recent data contradicts older memories
+    func checkForContradictions(
+        for symptom: String,
+        memories: [AIMemory]
+    ) -> AIObservation? {
+        // Find "what worked" memories for this symptom
+        let whatWorkedMemories = memories.filter {
+            $0.memoryTypeEnum == .whatWorked &&
+            $0.symptom?.lowercased() == symptom.lowercased() &&
+            $0.isActive
+        }
+
+        for memory in whatWorkedMemories {
+            guard let resolution = memory.resolution else { continue }
+
+            // Check if this remedy used to work but recently hasn't
+            let totalAttempts = memory.successCount + memory.failureCount
+            guard totalAttempts >= 4 else { continue } // Need enough data
+
+            // Calculate recent effectiveness (last 90 days) vs overall
+            let overallEffectiveness = memory.effectivenessScore
+            let recentEffectiveness = memory.decayedConfidence
+
+            // If overall effectiveness was good (>60%) but decayed confidence is much lower
+            // This suggests recent failures
+            if overallEffectiveness >= 0.6 && recentEffectiveness < 0.4 {
+                return AIObservation(
+                    text: "\(resolution) used to help your \(symptom.lowercased()), but recent logs suggest it may be less effective now. Consider trying alternatives.",
+                    confidence: .medium,
+                    relatedMemory: memory,
+                    icon: "arrow.triangle.2.circlepath"
+                )
+            }
+
+            // Check for reversal: high failure rate recently
+            if memory.failureCount >= 3 && memory.successCount <= memory.failureCount {
+                let recentFailureRate = Double(memory.failureCount) / Double(totalAttempts)
+                if recentFailureRate >= 0.5 && overallEffectiveness < 0.5 {
+                    return AIObservation(
+                        text: "\(resolution) hasn't been helping your \(symptom.lowercased()) as much lately (\(Int(recentFailureRate * 100))% of recent attempts). Your body may be responding differently.",
+                        confidence: .medium,
+                        relatedMemory: memory,
+                        icon: "exclamationmark.arrow.triangle.2.circlepath"
+                    )
+                }
+            }
+        }
+
+        // Check trigger memories for contradictions
+        let triggerMemories = memories.filter {
+            $0.memoryTypeEnum == .trigger &&
+            $0.symptom?.lowercased() == symptom.lowercased() &&
+            $0.isActive
+        }
+
+        for memory in triggerMemories {
+            guard let trigger = memory.trigger else { continue }
+
+            // If a trigger was identified but recent data shows it's not triggering anymore
+            if memory.confidence >= 0.6 && memory.isStale && !memory.hasRecentData {
+                return AIObservation(
+                    text: "I previously identified \(trigger) as a trigger for your \(symptom.lowercased()), but haven't seen this pattern recently. It may no longer apply.",
+                    confidence: .low,
+                    relatedMemory: memory,
+                    icon: "questionmark.circle"
+                )
+            }
+        }
+
+        return nil
     }
 
     // MARK: - Environmental Factors
@@ -312,11 +398,15 @@ class PersonalAIAssistant {
         var suggestions: [AISuggestion] = []
 
         for symptom in symptoms {
-            // Get what worked for this symptom
+            // Get what worked for this symptom, filtering out those in cooldown
             let whatWorked = memoryService.getWhatWorked(for: symptom, from: memories)
+                .filter { !$0.shouldSuppressSuggestion }  // Respect cooldown
 
             for memory in whatWorked.prefix(2) {
                 guard let resolution = memory.resolution else { continue }
+
+                // Mark as shown for cooldown tracking
+                memory.recordShown()
 
                 let timeText = memory.resolutionTime ?? "usually"
                 let effectivenessText = memory.effectivenessPercentage > 0 ?
@@ -326,7 +416,8 @@ class PersonalAIAssistant {
                     text: "Last time you had \(symptom.lowercased()), \(resolution) helped \(timeText).\(effectivenessText)",
                     effectiveness: memory.effectivenessPercentage > 0 ? memory.effectivenessPercentage : nil,
                     lastHelped: memory.lastOccurrence,
-                    icon: "checkmark.circle.fill"
+                    icon: "checkmark.circle.fill",
+                    occurrenceCount: memory.successCount + memory.failureCount
                 ))
             }
         }
@@ -390,10 +481,14 @@ class PersonalAIAssistant {
                     $0.trigger?.lowercased() == food.lowercased() &&
                     $0.symptom == symptom &&
                     $0.decayedConfidence >= 0.4 && // Use decayed confidence
-                    !$0.isStale // Skip stale memories
+                    !$0.isStale && // Skip stale memories
+                    !$0.shouldSuppressSuggestion // Respect cooldown
                 }
 
                 if let memory = triggerMemories.first {
+                    // Mark as shown for cooldown tracking
+                    memory.recordShown()
+
                     observations.append(AIObservation(
                         text: "You had \(food) \(hoursAgo) hours ago - this is a known trigger for your \(symptom.lowercased()).",
                         confidence: memory.decayedConfidenceLevel,
