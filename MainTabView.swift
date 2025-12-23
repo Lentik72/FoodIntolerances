@@ -34,7 +34,7 @@ struct MainTabView: View {
             ZStack {
                 TabView(selection: $tabManager.selectedTab) {
                     DashboardView()
-                        .tabItem { Label("Dashboard", systemImage: "house.fill") }
+                        .tabItem { Label("Home", systemImage: "house.fill") }
                         .tag(TabManager.Tab.dashboard)
                     
                     TrendsAnalysisPage()

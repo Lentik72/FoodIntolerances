@@ -40,9 +40,8 @@ struct DashboardView: View {
     }
     
     var body: some View {
-        NavigationStack {
-            ZStack {
-                ScrollView {
+        ZStack {
+            ScrollView {
                     
                     if let locationManager = viewModel.locationManager,
                        locationManager.currentLocation == nil {
@@ -97,8 +96,8 @@ struct DashboardView: View {
                         .padding()
                     }
                     
-                    LazyVStack(alignment: .leading, spacing: 20) {
-                        DailySummaryCard(logs: allLogs, viewModel: viewModel)
+                    LazyVStack(alignment: .leading, spacing: 16) {
+                        // MARK: - Zone A: Today at a glance
                         AIInsightsSummaryCard(
                             logs: allLogs,
                             memories: aiMemories,
@@ -107,83 +106,31 @@ struct DashboardView: View {
                             screenings: healthScreenings,
                             environmentalPressure: viewModel.atmosphericPressureCategory
                         )
-                        PersonalizedInsightsCard(logs: allLogs)
+
+                        // MARK: - Zone B: Quick Actions
                         QuickSymptomLogger(viewModel: viewModel)
-                        EnvironmentalFactorsCard(viewModel: viewModel)
-                        QuickAccessSection()
-                        UnifiedChartView(
-                            logs: allLogs,
-                            chartType: .severityTrend,
-                            title: "Severity Over Time")
-                        UnifiedChartView(
-                            logs: allLogs,
-                            chartType: .symptomOccurrence,
-                            title: "Most Common Symptoms")
+
+                        // MARK: - Zone C: Recent Activity
                         EnhancedRecentLogsCard(logs: allLogs)
-                        UpcomingRemindersCard(protocols: activeProtocols, isRefreshing: $isRefreshing, showRefreshConfirmation: $showRefreshConfirmation)
-                        
-                        NavigationLink(destination: CorrelationAnalysisView()) {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text("Advanced Analysis")
-                                    .font(.headline)
-                                Text("Discover correlations between symptoms, foods, and environmental factors")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            .padding()
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(.systemGroupedBackground))
-                            .cornerRadius(10)
+
+                        // Upcoming reminders (only if any exist)
+                        if !activeProtocols.filter({ $0.enableReminder && $0.reminderTime != nil }).isEmpty {
+                            UpcomingRemindersCard(protocols: activeProtocols, isRefreshing: $isRefreshing, showRefreshConfirmation: $showRefreshConfirmation)
                         }
-                        .buttonStyle(PlainButtonStyle())
-                        
-                        NavigationLink(destination: ProtocolEffectivenessTracker()) {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text("Protocol Effectiveness")
-                                    .font(.headline)
-                                Text("Track how well protocols are working for your symptoms")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
+
+                        // Quick tools row (compact)
+                        HStack(spacing: 12) {
+                            QuickToolButton(icon: "questionmark.circle", label: "Can I Eat?", color: .purple) {
+                                // Navigate to FoodQueryView
                             }
-                            .padding()
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(.systemGroupedBackground))
-                            .cornerRadius(10)
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        
-                        NavigationLink(destination: GoalTrackingView()) {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text("Set & Track Goals")
-                                    .font(.headline)
-                                Text("Define health goals and track your progress")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            .padding()
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(.systemGroupedBackground))
-                            .cornerRadius(10)
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        
-                        Text("Utilities")
-                            .font(.title2)
-                            .fontWeight(.bold)
-                            .padding(.horizontal)
-                        
-                        HStack(spacing: 20) {
-                            UtilityIconButton(icon: "book.fill", label: "Protocols", color: .blue) {
-                                tabManager.selectedTab = .protocols
-                            }
-                            UtilityIconButton(icon: "hand.raised.fill", label: "Avoid List", color: .red) {
+                            QuickToolButton(icon: "hand.raised.fill", label: "Avoid List", color: .red) {
                                 activeSheet = .avoidList
                             }
-                            UtilityIconButton(icon: "briefcase.fill", label: "Cabinet", color: .orange) {
-                                tabManager.selectedTab = .cabinet
+                            QuickToolButton(icon: "bell.fill", label: "Reminders", color: .orange) {
+                                tabManager.selectedTab = .more
                             }
-                            UtilityIconButton(icon: "doc.text.fill", label: "Logs", color: .purple) {
-                                tabManager.selectedTab = .logs
+                            QuickToolButton(icon: "chart.bar.fill", label: "Trends", color: .blue) {
+                                tabManager.selectedTab = .trends
                             }
                         }
                         .padding(.horizontal)
@@ -221,34 +168,38 @@ struct DashboardView: View {
                     await refreshDashboard()
                 }
                 
-                // ✅ Confirmation Message Overlay
+                // Subtle refresh confirmation (bottom toast)
                 if showRefreshConfirmation {
                     VStack {
-                        Text("🔄 Dashboard Updated!")
-                            .font(.subheadline)
-                            .foregroundColor(.white)
-                            .padding()
-                            .background(Color.green)
-                            .cornerRadius(8)
-                            .shadow(radius: 5)
-                            .onAppear {
-                                if !hasInitializedEnvironmentalData {
-                                    Task {
-                                        await viewModel.fetchAllData()
-                                        hasInitializedEnvironmentalData = true
-                                    }
+                        Spacer()
+                        HStack {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                            Text("Updated")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(20)
+                        .onAppear {
+                            if !hasInitializedEnvironmentalData {
+                                Task {
+                                    await viewModel.fetchAllData()
+                                    hasInitializedEnvironmentalData = true
                                 }
                             }
-                            .transition(.opacity.combined(with: .move(edge: .top)))
-                            .animation(.easeInOut(duration: 0.5), value: showRefreshConfirmation)
-                            .allowsHitTesting(false)
-                        Spacer()
+                        }
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        .animation(.easeInOut(duration: 0.3), value: showRefreshConfirmation)
                     }
-                    .padding(.top, 50)
+                    .padding(.bottom, 100)
+                    .allowsHitTesting(false)
                 }
             }
-            .navigationTitle("Dashboard")
-            
+            .navigationTitle("Home")
+
             .onAppear {
                        // Activate location for dashboard
                        viewModel.locationManager?.setDashboardActive(true)
@@ -273,15 +224,6 @@ struct DashboardView: View {
                     tabManager.selectedTab = .dashboard // Ensure Dashboard is shown
                 }
             }
-            
-            if let lastUpdated = lastUpdated {
-                Text("⏱️ Last Updated: \(lastUpdated.formatted(date: .abbreviated, time: .shortened))")
-                    .font(.caption)
-                    .foregroundColor(.gray)
-                    .padding(.bottom, 5)
-                    .transition(.opacity)
-            }
-        }
     }
     
     private func fetchLogsManually() -> [LogEntry] {
@@ -1277,7 +1219,7 @@ class RefreshController {
     }
 }
 
-// MARK: - AI Insights Summary Card
+// MARK: - AI Insights Summary Card (Refactored with Primary/Secondary Hierarchy)
 
 struct AIInsightsSummaryCard: View {
     let logs: [LogEntry]
@@ -1287,39 +1229,24 @@ struct AIInsightsSummaryCard: View {
     let screenings: [HealthScreeningSchedule]
     let environmentalPressure: String
 
-    @State private var showAllInsights = false
-
     private var activeMemories: [AIMemory] {
         memories.filter { $0.isActive }
     }
 
-    private var highConfidenceMemories: [AIMemory] {
-        activeMemories.filter { $0.confidenceLevel == .high }.prefix(3).map { $0 }
-    }
-
     private var recentTriggers: [AIMemory] {
-        activeMemories.filter { $0.memoryTypeEnum == .trigger }.prefix(2).map { $0 }
+        activeMemories.filter { $0.memoryTypeEnum == .trigger && $0.confidenceLevel == .high }
     }
 
     private var whatWorkedMemories: [AIMemory] {
-        activeMemories.filter { $0.memoryTypeEnum == .whatWorked && $0.effectivenessScore > 0.6 }.prefix(2).map { $0 }
+        activeMemories.filter { $0.memoryTypeEnum == .whatWorked && $0.effectivenessScore > 0.6 }
     }
 
     private var overdueScreenings: [HealthScreeningSchedule] {
         screenings.filter { $0.isEnabled && $0.isOverdue }
     }
 
-    private var hasProactiveInsights: Bool {
-        !highConfidenceMemories.isEmpty ||
-        !recentTriggers.isEmpty ||
-        !whatWorkedMemories.isEmpty ||
-        !overdueScreenings.isEmpty ||
-        hasEnvironmentalWarning
-    }
-
     private var hasEnvironmentalWarning: Bool {
         guard environmentalPressure.lowercased() == "low" else { return false }
-        // Check if user has pressure-sensitive symptoms
         return activeMemories.contains { memory in
             memory.memoryTypeEnum == .trigger &&
             (memory.trigger?.lowercased().contains("pressure") == true ||
@@ -1328,123 +1255,270 @@ struct AIInsightsSummaryCard: View {
         }
     }
 
+    // MARK: - Insight Priority System
+    // Priority: 1. Screening overdue, 2. Environmental risk, 3. Known trigger, 4. What works
+
+    private var primaryInsight: InsightData? {
+        // Screening overdue is highest priority (clinical importance)
+        if let screening = overdueScreenings.first {
+            return InsightData(
+                icon: "heart.text.square",
+                iconColor: .red,
+                title: "Screening Due",
+                subtitle: "You may want to schedule your \(screening.screeningName)",
+                badge: "Health",
+                isPrimary: true
+            )
+        }
+
+        // Environmental warning for today
+        if hasEnvironmentalWarning {
+            return InsightData(
+                icon: "cloud.fill",
+                iconColor: .blue,
+                title: "Low Pressure Today",
+                subtitle: "This may trigger symptoms based on your history",
+                badge: "Today",
+                isPrimary: true
+            )
+        }
+
+        // High-confidence trigger
+        if let trigger = recentTriggers.first {
+            return InsightData(
+                icon: "exclamationmark.triangle",
+                iconColor: .orange,
+                title: "Known Trigger",
+                subtitle: "\(trigger.trigger ?? "Unknown") often precedes \(trigger.symptom ?? "symptoms") (\(trigger.occurrenceCount) times)",
+                badge: "High",
+                isPrimary: true
+            )
+        }
+
+        // What works (only if no risks)
+        if let remedy = whatWorkedMemories.first {
+            return InsightData(
+                icon: "checkmark.circle",
+                iconColor: .green,
+                title: "What Works",
+                subtitle: "\(remedy.resolution ?? "Remedy") helps with \(remedy.symptom ?? "symptoms") (\(remedy.effectivenessPercentage)%)",
+                badge: "\(remedy.occurrenceCount)×",
+                isPrimary: true
+            )
+        }
+
+        return nil
+    }
+
+    private var secondaryInsights: [InsightData] {
+        var insights: [InsightData] = []
+        var usedTypes: Set<String> = []
+
+        // Mark primary insight type as used
+        if let primary = primaryInsight {
+            usedTypes.insert(primary.title)
+        }
+
+        // Add remaining insights (max 2)
+        if !usedTypes.contains("Screening Due"), let screening = overdueScreenings.first {
+            insights.append(InsightData(
+                icon: "heart.text.square",
+                iconColor: .red,
+                title: "Screening Due",
+                subtitle: "\(screening.screeningName)",
+                badge: nil,
+                isPrimary: false
+            ))
+            usedTypes.insert("Screening Due")
+        }
+
+        if insights.count < 2, !usedTypes.contains("Low Pressure Today"), hasEnvironmentalWarning {
+            insights.append(InsightData(
+                icon: "cloud.fill",
+                iconColor: .blue,
+                title: "Low Pressure",
+                subtitle: "May trigger symptoms",
+                badge: nil,
+                isPrimary: false
+            ))
+            usedTypes.insert("Low Pressure Today")
+        }
+
+        if insights.count < 2, !usedTypes.contains("Known Trigger"), let trigger = recentTriggers.first {
+            insights.append(InsightData(
+                icon: "exclamationmark.triangle",
+                iconColor: .orange,
+                title: "Trigger",
+                subtitle: "\(trigger.trigger ?? "Unknown") → \(trigger.symptom ?? "symptoms")",
+                badge: nil,
+                isPrimary: false
+            ))
+        }
+
+        if insights.count < 2, !usedTypes.contains("What Works"), let remedy = whatWorkedMemories.first {
+            insights.append(InsightData(
+                icon: "checkmark.circle",
+                iconColor: .green.opacity(0.8),
+                title: "Helpful",
+                subtitle: "\(remedy.resolution ?? "Remedy")",
+                badge: nil,
+                isPrimary: false
+            ))
+        }
+
+        return Array(insights.prefix(2))
+    }
+
+    private var aiModeLabel: String {
+        profile?.aiSuggestionLevelEnum.displayName ?? "Standard"
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Header
-            HStack {
+        VStack(alignment: .leading, spacing: 14) {
+            // Header with AI mode indicator
+            HStack(alignment: .center) {
                 Image(systemName: "brain.head.profile")
-                    .foregroundColor(.purple)
-                    .font(.title2)
-                Text("AI Health Assistant")
-                    .font(.headline)
+                    .foregroundColor(.secondary)
+                    .font(.title3)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("AI Health Assistant")
+                        .font(.headline)
+                    Text(aiModeLabel)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
                 Spacer()
-                if hasProactiveInsights {
+                if primaryInsight != nil {
                     NavigationLink(destination: AIInsightsView()) {
                         Text("View All")
                             .font(.caption)
-                            .foregroundColor(.blue)
+                            .foregroundColor(.accentColor)
                     }
                 }
             }
 
-            if !hasProactiveInsights {
-                // Empty state
-                VStack(spacing: 8) {
+            if let primary = primaryInsight {
+                // Primary insight (larger, more prominent)
+                PrimaryInsightRow(insight: primary)
+
+                // Secondary insights (smaller, muted)
+                if !secondaryInsights.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(secondaryInsights, id: \.title) { insight in
+                            SecondaryInsightRow(insight: insight)
+                        }
+                    }
+                }
+            } else {
+                // Empty state with reassurance
+                VStack(spacing: 10) {
                     Image(systemName: "sparkles")
-                        .font(.title)
+                        .font(.title2)
                         .foregroundColor(.secondary)
-                    Text("Keep logging to help me learn your patterns")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
+                    VStack(spacing: 4) {
+                        Text("Nothing concerning detected")
+                            .font(.subheadline)
+                            .foregroundColor(.primary)
+                        Text("Keep logging and I'll learn what matters to you")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-            } else {
-                VStack(alignment: .leading, spacing: 10) {
-                    // Environmental warning
-                    if hasEnvironmentalWarning {
-                        AIInsightRow(
-                            icon: "cloud.fill",
-                            iconColor: .blue,
-                            title: "Low Pressure Alert",
-                            subtitle: "Based on your history, low pressure days may trigger symptoms",
-                            badgeText: "Today"
-                        )
-                    }
-
-                    // Overdue screenings
-                    if let firstOverdue = overdueScreenings.first {
-                        AIInsightRow(
-                            icon: "heart.text.square",
-                            iconColor: .red,
-                            title: "Screening Overdue",
-                            subtitle: "\(firstOverdue.screeningName) is overdue by \(abs(firstOverdue.daysUntilDue ?? 0)) days",
-                            badgeText: "Health"
-                        )
-                    }
-
-                    // Top triggers
-                    if let trigger = recentTriggers.first {
-                        AIInsightRow(
-                            icon: "exclamationmark.triangle",
-                            iconColor: .orange,
-                            title: "Known Trigger",
-                            subtitle: "\(trigger.trigger ?? "Unknown") → \(trigger.symptom ?? "symptoms") (\(trigger.occurrenceCount)x)",
-                            badgeText: trigger.confidenceLevel.rawValue
-                        )
-                    }
-
-                    // What works
-                    if let remedy = whatWorkedMemories.first {
-                        AIInsightRow(
-                            icon: "checkmark.circle",
-                            iconColor: .green,
-                            title: "What Works for You",
-                            subtitle: "\(remedy.resolution ?? "Remedy") helps with \(remedy.symptom ?? "symptoms") (\(remedy.effectivenessPercentage)%)",
-                            badgeText: "\(remedy.occurrenceCount)x"
-                        )
-                    }
-                }
+                .padding(.vertical, 20)
             }
-
-            // Quick action buttons
-            HStack(spacing: 12) {
-                NavigationLink(destination: FoodQueryView()) {
-                    HStack {
-                        Image(systemName: "questionmark.circle")
-                        Text("Can I Eat?")
-                    }
-                    .font(.caption)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color.purple)
-                    .cornerRadius(20)
-                }
-
-                NavigationLink(destination: HealthDashboardView()) {
-                    HStack {
-                        Image(systemName: "heart.text.square")
-                        Text("Health")
-                    }
-                    .font(.caption)
-                    .foregroundColor(.purple)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color.purple.opacity(0.1))
-                    .cornerRadius(20)
-                }
-
-                Spacer()
-            }
-            .padding(.top, 4)
         }
-        .padding()
+        .padding(16)
         .background(Color(.secondarySystemBackground))
-        .cornerRadius(15)
-        .shadow(radius: 3)
+        .cornerRadius(16)
         .padding(.horizontal)
+    }
+}
+
+// MARK: - Insight Data Model
+
+private struct InsightData {
+    let icon: String
+    let iconColor: Color
+    let title: String
+    let subtitle: String
+    let badge: String?
+    let isPrimary: Bool
+}
+
+// MARK: - Primary Insight Row (Larger, prominent)
+
+private struct PrimaryInsightRow: View {
+    let insight: InsightData
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: insight.icon)
+                .foregroundColor(insight.iconColor)
+                .font(.title2)
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(insight.title)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+
+                    if let badge = insight.badge {
+                        Text(badge)
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(insight.iconColor.opacity(0.8))
+                            .cornerRadius(10)
+                    }
+                }
+
+                Text(insight.subtitle)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer()
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .background(Color(.tertiarySystemBackground))
+        .cornerRadius(12)
+    }
+}
+
+// MARK: - Secondary Insight Row (Smaller, muted)
+
+private struct SecondaryInsightRow: View {
+    let insight: InsightData
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: insight.icon)
+                .foregroundColor(insight.iconColor.opacity(0.7))
+                .font(.caption)
+                .frame(width: 16)
+
+            Text(insight.title)
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            Text("·")
+                .foregroundColor(.secondary)
+
+            Text(insight.subtitle)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+
+            Spacer()
+        }
     }
 }
 
@@ -1488,5 +1562,34 @@ struct AIInsightRow: View {
             Spacer()
         }
         .padding(.vertical, 4)
+    }
+}
+
+// MARK: - Quick Tool Button (Compact)
+
+struct QuickToolButton: View {
+    let icon: String
+    let label: String
+    let color: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 20))
+                    .foregroundColor(color)
+                Text(label)
+                    .font(.caption2)
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(Color(.tertiarySystemBackground))
+            .cornerRadius(12)
+        }
+        .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel(label)
     }
 }
