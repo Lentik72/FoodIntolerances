@@ -7,11 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		19CD0E700CD741748152862B /* SaveHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD14E6C2FE0047789EC1D2BE /* SaveHelper.swift */; };
 		8524CC422DFB4B4794C4BF58 /* Constants.swift in Sources */ = {isa = PBXBuildFile; fileRef = 008814905F8E428B987804A4 /* Constants.swift */; };
-		LOGGER00000000000000001 /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = LOGGER00000000000000002 /* Logger.swift */; };
-		ENVCONST0000000000001 /* EnvironmentalConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = ENVCONST0000000000002 /* EnvironmentalConstants.swift */; };
-		A5923076F198E69EB484A490 /* SymptomCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 978C8DB3A9BA2046DA439783 /* SymptomCatalog.swift */; };
 		933F8510E2BB567218295FEE /* CategoryData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CB985202170624F0331DEF3 /* CategoryData.swift */; };
+		A2D34A9DC31F49F3B8E6AD8E /* APIConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6D7BDB2F8D54151AB86FC87 /* APIConfig.swift */; };
+		A5923076F198E69EB484A490 /* SymptomCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 978C8DB3A9BA2046DA439783 /* SymptomCatalog.swift */; };
 		B30BBDC62D32D1BA00B26967 /* BodyMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30BBDC52D32D1BA00B26967 /* BodyMapView.swift */; };
 		B30D8CD22D92233900ACE9BC /* ProtocolFetchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30D8CD12D92233900ACE9BC /* ProtocolFetchService.swift */; };
 		B30D8CD42D92238A00ACE9BC /* ProtocolPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30D8CD32D92238A00ACE9BC /* ProtocolPreviewView.swift */; };
@@ -95,8 +95,8 @@
 		B3FEA0932D349517000727AD /* PrimaryButtonStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3FEA0922D349517000727AD /* PrimaryButtonStyle.swift */; };
 		B3FEA0952D349537000727AD /* SearchBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3FEA0942D349537000727AD /* SearchBar.swift */; };
 		B3FEA0972D349559000727AD /* SymptomToggleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3FEA0962D349559000727AD /* SymptomToggleView.swift */; };
-		A2D34A9DC31F49F3B8E6AD8E /* APIConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6D7BDB2F8D54151AB86FC87 /* APIConfig.swift */; };
-		19CD0E700CD741748152862B /* SaveHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD14E6C2FE0047789EC1D2BE /* SaveHelper.swift */; };
+		ENVCONST0000000000001 /* EnvironmentalConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = ENVCONST0000000000002 /* EnvironmentalConstants.swift */; };
+		LOGGER00000000000000001 /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = LOGGER00000000000000002 /* Logger.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -132,10 +132,9 @@
 
 /* Begin PBXFileReference section */
 		008814905F8E428B987804A4 /* Constants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Constants.swift; sourceTree = "<group>"; };
-		LOGGER00000000000000002 /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
-		ENVCONST0000000000002 /* EnvironmentalConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvironmentalConstants.swift; sourceTree = "<group>"; };
-		978C8DB3A9BA2046DA439783 /* SymptomCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SymptomCatalog.swift; sourceTree = "<group>"; };
 		5CB985202170624F0331DEF3 /* CategoryData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoryData.swift; sourceTree = "<group>"; };
+		978C8DB3A9BA2046DA439783 /* SymptomCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SymptomCatalog.swift; sourceTree = "<group>"; };
+		A6D7BDB2F8D54151AB86FC87 /* APIConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIConfig.swift; sourceTree = "<group>"; };
 		B30BBDC52D32D1BA00B26967 /* BodyMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BodyMapView.swift; sourceTree = "<group>"; };
 		B30D8CD12D92233900ACE9BC /* ProtocolFetchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtocolFetchService.swift; sourceTree = "<group>"; };
 		B30D8CD32D92238A00ACE9BC /* ProtocolPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtocolPreviewView.swift; sourceTree = "<group>"; };
@@ -220,8 +219,9 @@
 		B3FEA0922D349517000727AD /* PrimaryButtonStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrimaryButtonStyle.swift; sourceTree = "<group>"; };
 		B3FEA0942D349537000727AD /* SearchBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchBar.swift; sourceTree = "<group>"; };
 		B3FEA0962D349559000727AD /* SymptomToggleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SymptomToggleView.swift; sourceTree = "<group>"; };
-		A6D7BDB2F8D54151AB86FC87 /* APIConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIConfig.swift; sourceTree = "<group>"; };
 		BD14E6C2FE0047789EC1D2BE /* SaveHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SaveHelper.swift; sourceTree = "<group>"; };
+		ENVCONST0000000000002 /* EnvironmentalConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvironmentalConstants.swift; sourceTree = "<group>"; };
+		LOGGER00000000000000002 /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -702,6 +702,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Food Intolerances/Info.plist";
 				INFOPLIST_KEY_LSApplicationCategoryType = "";
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Camera access is needed to take photos of symptoms";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app requires access to your Health data to track sleep patterns and improve symptom analysis.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app uses your Health data to analyze trends related to sleep and symptoms.";
@@ -742,6 +743,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Food Intolerances/Info.plist";
 				INFOPLIST_KEY_LSApplicationCategoryType = "";
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Camera access is needed to take photos of symptoms";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app requires access to your Health data to track sleep patterns and improve symptom analysis.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app uses your Health data to analyze trends related to sleep and symptoms.";

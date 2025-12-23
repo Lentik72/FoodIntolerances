@@ -15,9 +15,19 @@ struct NotificationSettingsView: View {
     @State private var defaultReminderTime: Date = Date()
     @State private var dailySummaryTime: Date = Date()
     @State private var reminderAdvanceNotice: Int = 30
-    
+
+    // AI Proactive alert settings
+    @State private var enableEnvironmentalAlerts: Bool = true
+    @State private var enableScreeningReminders: Bool = true
+    @State private var enableSupplementReminders: Bool = true
+    @State private var enablePatternAlerts: Bool = true
+    @State private var enableDoctorRecommendations: Bool = true
+    @State private var morningWellnessTime: Date = Calendar.current.date(bySettingHour: 8, minute: 0, second: 0, of: Date()) ?? Date()
+
     // Advance notice options
     let advanceNoticeOptions = [0, 15, 30, 60, 120]
+
+    private let proactiveAlertService = ProactiveAlertService.shared
     
     var body: some View {
         Form {
@@ -79,7 +89,7 @@ struct NotificationSettingsView: View {
                         .onChange(of: enableDailySummary) { _, newValue in
                             notificationManager.updateDailySummarySettings(enabled: newValue)
                         }
-                    
+
                     if enableDailySummary {
                         DatePicker("Summary Time", selection: $dailySummaryTime, displayedComponents: .hourAndMinute)
                             .onChange(of: dailySummaryTime) { _, newValue in
@@ -87,7 +97,41 @@ struct NotificationSettingsView: View {
                             }
                     }
                 }
-                
+
+                Section(header: Text("AI Health Assistant Alerts"), footer: Text("Get proactive alerts based on your health patterns and environmental conditions.")) {
+                    Toggle("Environmental Alerts", isOn: $enableEnvironmentalAlerts)
+                        .onChange(of: enableEnvironmentalAlerts) { _, newValue in
+                            proactiveAlertService.enableEnvironmentalAlerts = newValue
+                        }
+
+                    Toggle("Health Screening Reminders", isOn: $enableScreeningReminders)
+                        .onChange(of: enableScreeningReminders) { _, newValue in
+                            proactiveAlertService.enableScreeningReminders = newValue
+                        }
+
+                    Toggle("Supplement Reminders", isOn: $enableSupplementReminders)
+                        .onChange(of: enableSupplementReminders) { _, newValue in
+                            proactiveAlertService.enableSupplementReminders = newValue
+                        }
+
+                    Toggle("Pattern Alerts", isOn: $enablePatternAlerts)
+                        .onChange(of: enablePatternAlerts) { _, newValue in
+                            proactiveAlertService.enablePatternAlerts = newValue
+                        }
+
+                    Toggle("Doctor Recommendations", isOn: $enableDoctorRecommendations)
+                        .onChange(of: enableDoctorRecommendations) { _, newValue in
+                            proactiveAlertService.enableDoctorRecommendations = newValue
+                        }
+
+                    DatePicker("Morning Wellness Check", selection: $morningWellnessTime, displayedComponents: .hourAndMinute)
+                        .onChange(of: morningWellnessTime) { _, newValue in
+                            let components = Calendar.current.dateComponents([.hour, .minute], from: newValue)
+                            proactiveAlertService.morningWellnessCheckHour = components.hour ?? 8
+                            proactiveAlertService.morningWellnessCheckMinute = components.minute ?? 0
+                        }
+                }
+
                 Section(header: Text("Test Notifications")) {
                     Button("Send Test Notification") {
                         sendTestNotification()
@@ -110,16 +154,31 @@ struct NotificationSettingsView: View {
         enableSymptomReminders = UserDefaults.standard.bool(forKey: "enableSymptomReminders")
         enableRefillReminders = UserDefaults.standard.bool(forKey: "enableRefillReminders")
         enableDailySummary = UserDefaults.standard.bool(forKey: "dailySummaryEnabled")
-        
+
         if let time = UserDefaults.standard.object(forKey: "defaultReminderTimeRaw") as? Double {
             defaultReminderTime = Date(timeIntervalSince1970: time)
         }
-        
+
         if let time = UserDefaults.standard.object(forKey: "dailySummaryTimeRaw") as? Double {
             dailySummaryTime = Date(timeIntervalSince1970: time)
         }
-        
+
         reminderAdvanceNotice = UserDefaults.standard.integer(forKey: "reminderAdvanceNoticeMinutes")
+
+        // Load proactive alert settings
+        enableEnvironmentalAlerts = proactiveAlertService.enableEnvironmentalAlerts
+        enableScreeningReminders = proactiveAlertService.enableScreeningReminders
+        enableSupplementReminders = proactiveAlertService.enableSupplementReminders
+        enablePatternAlerts = proactiveAlertService.enablePatternAlerts
+        enableDoctorRecommendations = proactiveAlertService.enableDoctorRecommendations
+
+        // Load morning wellness time
+        var components = DateComponents()
+        components.hour = proactiveAlertService.morningWellnessCheckHour
+        components.minute = proactiveAlertService.morningWellnessCheckMinute
+        if let time = Calendar.current.date(from: components) {
+            morningWellnessTime = time
+        }
     }
     
     private func checkNotificationStatus() {

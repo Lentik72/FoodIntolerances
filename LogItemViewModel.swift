@@ -812,7 +812,8 @@ class LogItemViewModel: ObservableObject {
     /// - Parameters:
     ///   - context: The ModelContext for data persistence
     ///   - linkedTrackedItemID: Optional UUID of a linked tracked item
-    func saveLog(using context: ModelContext, linkedTrackedItemID: UUID? = nil) {
+    @discardableResult
+    func saveLog(using context: ModelContext, linkedTrackedItemID: UUID? = nil) -> LogEntry? {
         Logger.debug("Saving log with \(selectedSymptoms.count) symptoms: \(selectedSymptoms)", category: .data)
 
         let validation = validateInput()
@@ -820,7 +821,7 @@ class LogItemViewModel: ObservableObject {
             self.alertMessage = validation.message
             self.showAlert = true
             Logger.warning("Validation failed: \(validation.message)", category: .data)
-            return
+            return nil
         }
         
         // Map CauseType to ItemType
@@ -909,16 +910,53 @@ class LogItemViewModel: ObservableObject {
         do {
             try context.save()
             Logger.info("Successfully saved log", category: .data)
-            self.showSavedMessage = true
             for symptom in selectedSymptoms {
                 storeRecentSymptom(symptom)
             }
+
+            // Update AI memories with this new log
+            updateAIMemories(with: newLog, context: context)
+            return newLog
         } catch {
             Logger.error(error, message: "Error saving log", category: .data)
             self.alertMessage = "Failed to save log. Please try again."
             self.showAlert = true
             self.alertType = .error
+            return nil
         }
+    }
+
+    /// Updates AI memories based on the new log entry
+    private func updateAIMemories(with newLog: LogEntry, context: ModelContext) {
+        // Fetch existing memories
+        let memoriesDescriptor = FetchDescriptor<AIMemory>()
+        guard let existingMemories = try? context.fetch(memoriesDescriptor) else {
+            Logger.warning("Could not fetch existing memories", category: .data)
+            return
+        }
+
+        // Fetch recent logs for context
+        let logsDescriptor = FetchDescriptor<LogEntry>(
+            sortBy: [SortDescriptor(\.date, order: .reverse)]
+        )
+        let recentLogs = (try? context.fetch(logsDescriptor))?.prefix(50) ?? []
+
+        // Fetch user profile for memory level preference
+        let profileDescriptor = FetchDescriptor<UserProfile>()
+        let memoryLevel = (try? context.fetch(profileDescriptor).first)
+            .flatMap { AIMemoryLevel(rawValue: $0.memoryLevel) } ?? .patterns
+
+        // Update memories
+        let memoryService = UserMemoryService()
+        memoryService.updateMemories(
+            with: newLog,
+            existingMemories: existingMemories,
+            recentLogs: Array(recentLogs),
+            context: context,
+            memoryLevel: memoryLevel
+        )
+
+        Logger.debug("AI memories updated with new log", category: .data)
     }
 
         

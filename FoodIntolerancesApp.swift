@@ -20,9 +20,13 @@ struct FoodIntolerancesApp: App {
         // Ensure transformers are registered before any other code runs
         _ = FoodIntolerancesApp.registerTransformers
         Logger.info("StringArrayTransformer registered", category: .app)
-        
+
         NotificationManager.shared.requestNotificationPermission()
-            setupGlobalErrorHandling()
+
+        // Initialize proactive alert settings
+        ProactiveAlertService.shared.initializeDefaultSettings()
+
+        setupGlobalErrorHandling()
     }
     
     var sharedModelContainer: ModelContainer = {
@@ -40,7 +44,13 @@ struct FoodIntolerancesApp: App {
             OngoingSymptom.self,
             SymptomCheckIn.self,
             MoodEntry.self,
-            ProtocolRequirement.self
+            ProtocolRequirement.self,
+            // AI Assistant Models
+            UserProfile.self,
+            UserAllergy.self,
+            AIMemory.self,
+            HealthTestResult.self,
+            HealthScreeningSchedule.self
         ])
         
         let modelConfiguration = ModelConfiguration(
@@ -83,7 +93,13 @@ struct FoodIntolerancesApp: App {
                     OngoingSymptom.self,
                     SymptomCheckIn.self,
                     MoodEntry.self,
-                    ProtocolRequirement.self
+                    ProtocolRequirement.self,
+                    // AI Assistant Models
+                    UserProfile.self,
+                    UserAllergy.self,
+                    AIMemory.self,
+                    HealthTestResult.self,
+                    HealthScreeningSchedule.self
                 ])
                 .resetSwiftDataCache()
                 .onAppear {

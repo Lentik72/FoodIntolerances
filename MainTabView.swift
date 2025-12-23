@@ -1,12 +1,17 @@
 import SwiftUI
+import SwiftData
 
 extension Notification.Name {
     static let filterBySymptom = Notification.Name("filterBySymptom")
 }
 
 struct MainTabView: View {
+    @Environment(\.modelContext) private var modelContext
     @EnvironmentObject var viewModel: LogItemViewModel
     @EnvironmentObject var tabManager: TabManager
+
+    // Query for user profile to check onboarding status
+    @Query private var userProfiles: [UserProfile]
 
     @State private var showFABMenu = false
     @State private var showLogSymptomView = false
@@ -16,6 +21,13 @@ struct MainTabView: View {
     @State private var showNotificationSettings = false
     @State private var showAvoidList = false
     @State private var showProtocolTags = false
+    @State private var showOnboarding = false
+
+    // Check if onboarding is needed
+    private var needsOnboarding: Bool {
+        guard let profile = userProfiles.first else { return true }
+        return !profile.hasCompletedOnboarding
+    }
 
     var body: some View {
         NavigationStack {
@@ -95,6 +107,18 @@ struct MainTabView: View {
         }
         .sheet(isPresented: $showProtocolTags) {
             ProtocolTagsView()
+        }
+        .fullScreenCover(isPresented: $showOnboarding) {
+            OnboardingContainerView {
+                showOnboarding = false
+                Logger.info("Onboarding completed", category: .app)
+            }
+        }
+        .onAppear {
+            // Check if onboarding is needed on first launch
+            if needsOnboarding {
+                showOnboarding = true
+            }
         }
     }
 }

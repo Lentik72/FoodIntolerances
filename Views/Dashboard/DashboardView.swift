@@ -19,6 +19,12 @@ struct DashboardView: View {
 
     @Query(filter: #Predicate<TherapyProtocol> { $0.isActive }, sort: [SortDescriptor(\TherapyProtocol.dateAdded, order: .reverse)])
     private var activeProtocols: [TherapyProtocol]
+
+    // AI-related queries
+    @Query(sort: \AIMemory.confidence, order: .reverse) private var aiMemories: [AIMemory]
+    @Query private var userProfiles: [UserProfile]
+    @Query private var userAllergies: [UserAllergy]
+    @Query private var healthScreenings: [HealthScreeningSchedule]
     
     @State private var isRefreshing = false
     @State private var showRefreshConfirmation = false
@@ -93,6 +99,14 @@ struct DashboardView: View {
                     
                     LazyVStack(alignment: .leading, spacing: 20) {
                         DailySummaryCard(logs: allLogs, viewModel: viewModel)
+                        AIInsightsSummaryCard(
+                            logs: allLogs,
+                            memories: aiMemories,
+                            userAllergies: userAllergies,
+                            profile: userProfiles.first,
+                            screenings: healthScreenings,
+                            environmentalPressure: viewModel.atmosphericPressureCategory
+                        )
                         PersonalizedInsightsCard(logs: allLogs)
                         QuickSymptomLogger(viewModel: viewModel)
                         EnvironmentalFactorsCard(viewModel: viewModel)
@@ -238,11 +252,19 @@ struct DashboardView: View {
             .onAppear {
                        // Activate location for dashboard
                        viewModel.locationManager?.setDashboardActive(true)
-                       // Other onAppear code...
+
+                       // Check proactive alerts on dashboard appear
+                       checkProactiveAlerts()
                    }
                    .onDisappear {
                        // Suspend location updates when dashboard not visible
                        viewModel.locationManager?.setDashboardActive(false)
+                   }
+                   .onChange(of: viewModel.atmosphericPressureCategory) { oldValue, newValue in
+                       // Check environmental alerts when pressure changes
+                       if oldValue != newValue && !newValue.contains("Loading") {
+                           checkEnvironmentalAlerts(pressure: newValue)
+                       }
                    }
             
             // ✅ **Listen for Navigation Event from LogSymptomView**
@@ -272,6 +294,54 @@ struct DashboardView: View {
         }
     }
       
+    // MARK: - Proactive Alerts
+
+    private func checkProactiveAlerts() {
+        let alertService = ProactiveAlertService.shared
+
+        // Schedule screening reminders
+        if alertService.enableScreeningReminders {
+            alertService.scheduleScreeningReminders(screenings: healthScreenings)
+        }
+
+        // Check clinical escalations
+        if alertService.enableDoctorRecommendations {
+            alertService.checkClinicalEscalations(logs: allLogs)
+        }
+
+        // Schedule morning wellness check
+        alertService.scheduleMorningWellnessCheck(
+            memories: aiMemories,
+            screenings: healthScreenings,
+            environmentalPressure: viewModel.atmosphericPressureCategory,
+            hour: alertService.morningWellnessCheckHour,
+            minute: alertService.morningWellnessCheckMinute
+        )
+
+        // Check supplement reminders based on recent patterns
+        if alertService.enableSupplementReminders {
+            alertService.scheduleSupplementReminders(
+                memories: aiMemories,
+                recentLogs: allLogs
+            )
+        }
+    }
+
+    private func checkEnvironmentalAlerts(pressure: String) {
+        let alertService = ProactiveAlertService.shared
+
+        guard alertService.enableEnvironmentalAlerts else { return }
+
+        alertService.checkEnvironmentalConditions(
+            pressure: pressure,
+            memories: aiMemories
+        ) { alertSent in
+            if alertSent {
+                Logger.info("Environmental alert sent for pressure: \(pressure)", category: .notification)
+            }
+        }
+    }
+
     // ✅ Optimized Refresh Function
     private func refreshDashboard() async {
 
@@ -1191,11 +1261,11 @@ class RefreshController {
     func debouncedRefresh(isRefreshing: Bool, refreshAction: @escaping () async -> Void) {
         // Cancel existing debouncer
         refreshDebouncer?.cancel()
-        
+
         if isRefreshing {
             return
         }
-        
+
         // Create new debounce timer
         refreshDebouncer = Just(())
             .delay(for: .seconds(refreshDebounceInterval), scheduler: RunLoop.main)
@@ -1204,5 +1274,219 @@ class RefreshController {
                     await refreshAction()
                 }
             }
+    }
+}
+
+// MARK: - AI Insights Summary Card
+
+struct AIInsightsSummaryCard: View {
+    let logs: [LogEntry]
+    let memories: [AIMemory]
+    let userAllergies: [UserAllergy]
+    let profile: UserProfile?
+    let screenings: [HealthScreeningSchedule]
+    let environmentalPressure: String
+
+    @State private var showAllInsights = false
+
+    private var activeMemories: [AIMemory] {
+        memories.filter { $0.isActive }
+    }
+
+    private var highConfidenceMemories: [AIMemory] {
+        activeMemories.filter { $0.confidenceLevel == .high }.prefix(3).map { $0 }
+    }
+
+    private var recentTriggers: [AIMemory] {
+        activeMemories.filter { $0.memoryTypeEnum == .trigger }.prefix(2).map { $0 }
+    }
+
+    private var whatWorkedMemories: [AIMemory] {
+        activeMemories.filter { $0.memoryTypeEnum == .whatWorked && $0.effectivenessScore > 0.6 }.prefix(2).map { $0 }
+    }
+
+    private var overdueScreenings: [HealthScreeningSchedule] {
+        screenings.filter { $0.isEnabled && $0.isOverdue }
+    }
+
+    private var hasProactiveInsights: Bool {
+        !highConfidenceMemories.isEmpty ||
+        !recentTriggers.isEmpty ||
+        !whatWorkedMemories.isEmpty ||
+        !overdueScreenings.isEmpty ||
+        hasEnvironmentalWarning
+    }
+
+    private var hasEnvironmentalWarning: Bool {
+        guard environmentalPressure.lowercased() == "low" else { return false }
+        // Check if user has pressure-sensitive symptoms
+        return activeMemories.contains { memory in
+            memory.memoryTypeEnum == .trigger &&
+            (memory.trigger?.lowercased().contains("pressure") == true ||
+             memory.symptom?.lowercased().contains("headache") == true ||
+             memory.symptom?.lowercased().contains("migraine") == true)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Header
+            HStack {
+                Image(systemName: "brain.head.profile")
+                    .foregroundColor(.purple)
+                    .font(.title2)
+                Text("AI Health Assistant")
+                    .font(.headline)
+                Spacer()
+                if hasProactiveInsights {
+                    NavigationLink(destination: AIInsightsView()) {
+                        Text("View All")
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                    }
+                }
+            }
+
+            if !hasProactiveInsights {
+                // Empty state
+                VStack(spacing: 8) {
+                    Image(systemName: "sparkles")
+                        .font(.title)
+                        .foregroundColor(.secondary)
+                    Text("Keep logging to help me learn your patterns")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    // Environmental warning
+                    if hasEnvironmentalWarning {
+                        AIInsightRow(
+                            icon: "cloud.fill",
+                            iconColor: .blue,
+                            title: "Low Pressure Alert",
+                            subtitle: "Based on your history, low pressure days may trigger symptoms",
+                            badgeText: "Today"
+                        )
+                    }
+
+                    // Overdue screenings
+                    if let firstOverdue = overdueScreenings.first {
+                        AIInsightRow(
+                            icon: "heart.text.square",
+                            iconColor: .red,
+                            title: "Screening Overdue",
+                            subtitle: "\(firstOverdue.screeningName) is overdue by \(abs(firstOverdue.daysUntilDue ?? 0)) days",
+                            badgeText: "Health"
+                        )
+                    }
+
+                    // Top triggers
+                    if let trigger = recentTriggers.first {
+                        AIInsightRow(
+                            icon: "exclamationmark.triangle",
+                            iconColor: .orange,
+                            title: "Known Trigger",
+                            subtitle: "\(trigger.trigger ?? "Unknown") → \(trigger.symptom ?? "symptoms") (\(trigger.occurrenceCount)x)",
+                            badgeText: trigger.confidenceLevel.rawValue
+                        )
+                    }
+
+                    // What works
+                    if let remedy = whatWorkedMemories.first {
+                        AIInsightRow(
+                            icon: "checkmark.circle",
+                            iconColor: .green,
+                            title: "What Works for You",
+                            subtitle: "\(remedy.resolution ?? "Remedy") helps with \(remedy.symptom ?? "symptoms") (\(remedy.effectivenessPercentage)%)",
+                            badgeText: "\(remedy.occurrenceCount)x"
+                        )
+                    }
+                }
+            }
+
+            // Quick action buttons
+            HStack(spacing: 12) {
+                NavigationLink(destination: FoodQueryView()) {
+                    HStack {
+                        Image(systemName: "questionmark.circle")
+                        Text("Can I Eat?")
+                    }
+                    .font(.caption)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.purple)
+                    .cornerRadius(20)
+                }
+
+                NavigationLink(destination: HealthDashboardView()) {
+                    HStack {
+                        Image(systemName: "heart.text.square")
+                        Text("Health")
+                    }
+                    .font(.caption)
+                    .foregroundColor(.purple)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.purple.opacity(0.1))
+                    .cornerRadius(20)
+                }
+
+                Spacer()
+            }
+            .padding(.top, 4)
+        }
+        .padding()
+        .background(Color(.secondarySystemBackground))
+        .cornerRadius(15)
+        .shadow(radius: 3)
+        .padding(.horizontal)
+    }
+}
+
+struct AIInsightRow: View {
+    let icon: String
+    let iconColor: Color
+    let title: String
+    let subtitle: String
+    let badgeText: String?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .foregroundColor(iconColor)
+                .font(.title3)
+                .frame(width: 24)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    Text(title)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+
+                    if let badge = badgeText {
+                        Text(badge)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.gray.opacity(0.2))
+                            .cornerRadius(8)
+                    }
+                }
+
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer()
+        }
+        .padding(.vertical, 4)
     }
 }

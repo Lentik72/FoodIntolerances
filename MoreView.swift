@@ -7,23 +7,53 @@ struct MoreView: View {
     @State private var showNotificationSettings = false
     @State private var showAvoidList = false
     @State private var showProtocolTags = false
-    
+    @State private var showFoodQuery = false
+
     var body: some View {
         NavigationStack {
             List {
+                // AI Assistant Section
+                Section(header: Text("AI Assistant")) {
+                    Button {
+                        showFoodQuery = true
+                    } label: {
+                        Label("Can I Eat This?", systemImage: "questionmark.circle.fill")
+                    }
+
+                    NavigationLink(destination: AIInsightsView()) {
+                        Label("AI Insights & Patterns", systemImage: "brain.head.profile")
+                    }
+
+                    NavigationLink(destination: UserProfileView()) {
+                        Label("My Profile", systemImage: "person.crop.circle.fill")
+                    }
+
+                    NavigationLink(destination: AllergyManagementView()) {
+                        Label("Allergies & Sensitivities", systemImage: "allergens")
+                    }
+
+                    NavigationLink(destination: HealthDashboardView()) {
+                        Label("Health & Screenings", systemImage: "heart.text.square")
+                    }
+                }
+
                 Section(header: Text("Settings")) {
                     Button {
                         showNotificationSettings = true
                     } label: {
                         Label("Notification Settings", systemImage: "bell.badge")
                     }
-                    
+
+                    NavigationLink(destination: AISettingsView()) {
+                        Label("AI Settings", systemImage: "cpu")
+                    }
+
                     Button {
                         showAvoidList = true
                     } label: {
                         Label("Avoid List", systemImage: "hand.raised.fill")
                     }
-                    
+
                     Button {
                         showProtocolTags = true
                     } label: {
@@ -67,6 +97,9 @@ struct MoreView: View {
         }
         .sheet(isPresented: $showProtocolTags) {
             ProtocolTagsView()
+        }
+        .sheet(isPresented: $showFoodQuery) {
+            FoodQueryView()
         }
     }
 }
