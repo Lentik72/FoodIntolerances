@@ -8,6 +8,7 @@ struct MoreView: View {
     @State private var showAvoidList = false
     @State private var showProtocolTags = false
     @State private var showFoodQuery = false
+    @State private var showAIDebugInspector = false
 
     var body: some View {
         NavigationStack {
@@ -86,6 +87,16 @@ struct MoreView: View {
                         Label("Import/Export Data", systemImage: "arrow.up.arrow.down")
                     }
                 }
+
+                #if DEBUG
+                Section(header: Text("Developer")) {
+                    Button {
+                        showAIDebugInspector = true
+                    } label: {
+                        Label("AI Debug Inspector", systemImage: "ant.fill")
+                    }
+                }
+                #endif
             }
             .navigationTitle("More Options")
         }
@@ -100,6 +111,9 @@ struct MoreView: View {
         }
         .sheet(isPresented: $showFoodQuery) {
             FoodQueryView()
+        }
+        .sheet(isPresented: $showAIDebugInspector) {
+            AIDebugInspectorView()
         }
     }
 }
