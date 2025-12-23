@@ -89,6 +89,52 @@ class AIMemory: Identifiable {
         Int(effectivenessScore * 100)
     }
 
+    /// Time-decayed confidence that weighs recent data more heavily
+    var decayedConfidence: Double {
+        let daysSinceLastOccurrence = Calendar.current.dateComponents(
+            [.day],
+            from: lastOccurrence,
+            to: Date()
+        ).day ?? 0
+
+        // Apply decay: confidence drops by ~10% per month of inactivity
+        // After 6 months, decay is ~50%; after 12 months, ~75%
+        let decayFactor = exp(-Double(daysSinceLastOccurrence) / 180.0)
+        return confidence * decayFactor
+    }
+
+    /// Decayed confidence level considering time since last occurrence
+    var decayedConfidenceLevel: ConfidenceLevel {
+        ConfidenceLevel.from(confidence: decayedConfidence, occurrences: recentOccurrenceCount)
+    }
+
+    /// Count of occurrences in the last 90 days (more relevant than total)
+    var recentOccurrenceCount: Int {
+        let cutoffDate = Calendar.current.date(byAdding: .day, value: -90, to: Date()) ?? Date()
+        let recentDates = specificDates.filter { $0 >= cutoffDate }
+        return max(recentDates.count, min(occurrenceCount, 3)) // At least show 3 if we have them
+    }
+
+    /// Whether this memory is stale and should be deprioritized
+    var isStale: Bool {
+        let daysSinceLastOccurrence = Calendar.current.dateComponents(
+            [.day],
+            from: lastOccurrence,
+            to: Date()
+        ).day ?? 0
+        return daysSinceLastOccurrence > 180 // Stale after 6 months
+    }
+
+    /// Whether this memory has enough recent data to be reliable
+    var hasRecentData: Bool {
+        let daysSinceLastOccurrence = Calendar.current.dateComponents(
+            [.day],
+            from: lastOccurrence,
+            to: Date()
+        ).day ?? 0
+        return daysSinceLastOccurrence <= 90
+    }
+
     // MARK: - Methods
 
     /// Record that this memory was observed again
@@ -240,10 +286,44 @@ struct AIResponse {
     var questions: [AIQuestion] = []
     var suggestions: [AISuggestion] = []
     var warnings: [AIWarning] = []
+    var needsMoreData: NeedsMoreDataMessage?  // Shown when AI doesn't have enough info
     var timestamp: Date = Date()
 
     var hasContent: Bool {
-        !observations.isEmpty || !questions.isEmpty || !suggestions.isEmpty || !warnings.isEmpty
+        !observations.isEmpty || !questions.isEmpty || !suggestions.isEmpty || !warnings.isEmpty || needsMoreData != nil
+    }
+
+    var hasOnlyNeedsMoreData: Bool {
+        observations.isEmpty && questions.isEmpty && suggestions.isEmpty && warnings.isEmpty && needsMoreData != nil
+    }
+}
+
+/// Message shown when AI doesn't have enough data to provide insights
+struct NeedsMoreDataMessage {
+    let text: String
+    let dataNeeded: [String]     // What data would help
+    let currentProgress: String? // e.g., "2 of 5 logs needed"
+
+    static let defaultMessage = NeedsMoreDataMessage(
+        text: "I'm still learning your patterns. Keep logging and I'll start spotting trends soon!",
+        dataNeeded: ["More symptom logs", "Food/trigger tracking", "Time to observe patterns"],
+        currentProgress: nil
+    )
+
+    static func forSymptom(_ symptom: String, occurrences: Int, minimumNeeded: Int) -> NeedsMoreDataMessage {
+        NeedsMoreDataMessage(
+            text: "I don't have enough data about your \(symptom.lowercased()) yet to identify patterns. I'll keep tracking as you log.",
+            dataNeeded: ["More \(symptom.lowercased()) logs", "Potential trigger info", "What helped or didn't"],
+            currentProgress: occurrences > 0 ? "\(occurrences) of ~\(minimumNeeded) logs for reliable patterns" : nil
+        )
+    }
+
+    static func generalLowConfidence() -> NeedsMoreDataMessage {
+        NeedsMoreDataMessage(
+            text: "I have some early observations, but need more data to be confident. I'll keep learning as you log more.",
+            dataNeeded: ["Continue logging symptoms", "Note what you eat and do", "Track what helps"],
+            currentProgress: nil
+        )
     }
 }
 

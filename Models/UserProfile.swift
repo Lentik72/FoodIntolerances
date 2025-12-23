@@ -59,6 +59,13 @@ class UserProfile: Identifiable {
     @Attribute var enableSupplementReminders: Bool = true
     @Attribute var enableWeatherAlerts: Bool = true
 
+    // MARK: - AI Suggestion Level
+    @Attribute var aiSuggestionLevel: String = "standard"  // "minimal", "standard", "proactive"
+
+    var aiSuggestionLevelEnum: AISuggestionLevel {
+        AISuggestionLevel(rawValue: aiSuggestionLevel) ?? .standard
+    }
+
     // MARK: - Cloud AI (Optional)
     @Attribute var useCloudAI: Bool = false
 
@@ -143,6 +150,78 @@ enum DietType: String, Codable, CaseIterable {
     case keto = "Keto"
     case paleo = "Paleo"
     case other = "Other"
+}
+
+/// Controls how proactive the AI is with suggestions
+enum AISuggestionLevel: String, Codable, CaseIterable, Identifiable {
+    case minimal = "minimal"       // Only show high-confidence insights
+    case standard = "standard"     // Show balanced suggestions
+    case proactive = "proactive"   // Show more predictions and suggestions
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .minimal: return "Minimal"
+        case .standard: return "Standard"
+        case .proactive: return "Proactive"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .minimal:
+            return "Only high-confidence insights, fewer questions"
+        case .standard:
+            return "Balanced suggestions and observations"
+        case .proactive:
+            return "More predictions, reminders, and check-ins"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .minimal: return "minus.circle"
+        case .standard: return "circle.circle"
+        case .proactive: return "plus.circle"
+        }
+    }
+
+    /// Minimum confidence threshold for showing observations
+    var confidenceThreshold: Double {
+        switch self {
+        case .minimal: return 0.7    // Only high confidence
+        case .standard: return 0.5   // Medium and high
+        case .proactive: return 0.3  // Show more, including low confidence
+        }
+    }
+
+    /// Minimum occurrences before showing a pattern
+    var minimumOccurrences: Int {
+        switch self {
+        case .minimal: return 5
+        case .standard: return 3
+        case .proactive: return 2
+        }
+    }
+
+    /// Maximum number of questions to ask
+    var maxQuestions: Int {
+        switch self {
+        case .minimal: return 1
+        case .standard: return 2
+        case .proactive: return 3
+        }
+    }
+
+    /// Whether to show "needs more data" messages
+    var showNeedsMoreData: Bool {
+        switch self {
+        case .minimal: return false
+        case .standard: return true
+        case .proactive: return true
+        }
+    }
 }
 
 // MARK: - Common Health Conditions

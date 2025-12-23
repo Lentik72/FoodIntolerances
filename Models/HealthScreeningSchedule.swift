@@ -412,7 +412,7 @@ struct ClinicalEscalationRule {
             threshold: 8,
             timeWindowDays: 30,
             minimumSeverity: 3,
-            message: "You've logged frequent headaches this month. Consider discussing with a healthcare provider.",
+            message: "You've logged 8+ headaches this month. This doesn't necessarily mean something is wrong, but frequent headaches are often worth discussing with a doctor who can help identify causes and solutions.",
             urgency: .recommended
         ),
 
@@ -422,7 +422,7 @@ struct ClinicalEscalationRule {
             threshold: 3,
             timeWindowDays: 14,
             minimumSeverity: 5,
-            message: "You've logged extreme symptoms multiple times. This pattern warrants medical evaluation.",
+            message: "You've experienced several intense symptoms recently. While there may be simple explanations, patterns like this are usually worth running by a healthcare provider to rule out underlying causes.",
             urgency: .important
         ),
 
@@ -432,7 +432,7 @@ struct ClinicalEscalationRule {
             threshold: 14,
             timeWindowDays: 21,
             minimumSeverity: 2,
-            message: "This symptom has persisted for over 2 weeks. Consider consulting a healthcare provider.",
+            message: "This symptom has persisted for over 2 weeks. Persistent symptoms can have many causes - a quick check-in with your doctor could help identify what's going on and find relief faster.",
             urgency: .recommended
         ),
 
@@ -442,7 +442,7 @@ struct ClinicalEscalationRule {
             threshold: 1,
             timeWindowDays: 7,
             minimumSeverity: 3,
-            message: "Chest pain should be evaluated by a healthcare provider promptly.",
+            message: "Chest pain has many causes (muscle strain, acid reflux, anxiety), but it's one symptom that's always worth getting checked promptly. Please consider contacting a healthcare provider.",
             urgency: .urgent
         ),
 
@@ -452,7 +452,7 @@ struct ClinicalEscalationRule {
             threshold: 2,
             timeWindowDays: 7,
             minimumSeverity: 3,
-            message: "Breathing difficulties should be discussed with your doctor.",
+            message: "Breathing difficulties can stem from many things including allergies, anxiety, or deconditioning. Since you've logged this a few times, it may be helpful to discuss with your doctor.",
             urgency: .important
         ),
 
@@ -462,7 +462,7 @@ struct ClinicalEscalationRule {
             threshold: 10,
             timeWindowDays: 30,
             minimumSeverity: 2,
-            message: "Frequent digestive issues may benefit from medical evaluation.",
+            message: "Frequent digestive issues are very common and often manageable, but ongoing symptoms could benefit from evaluation. A doctor or dietitian can help identify triggers and solutions.",
             urgency: .recommended
         ),
 
@@ -472,7 +472,7 @@ struct ClinicalEscalationRule {
             threshold: 14,
             timeWindowDays: 21,
             minimumSeverity: 3,
-            message: "Persistent sleep problems can impact health. Consider discussing with a doctor.",
+            message: "Sleep difficulties over time can affect overall wellbeing. If lifestyle changes haven't helped, a healthcare provider can offer additional strategies or check for underlying causes.",
             urgency: .recommended
         ),
 
@@ -482,7 +482,7 @@ struct ClinicalEscalationRule {
             threshold: 7,
             timeWindowDays: 14,
             minimumSeverity: 3,
-            message: "Your mood logs suggest you may benefit from speaking with a mental health professional.",
+            message: "Your recent logs suggest you've been going through a difficult stretch. Talking to someone - whether a counselor, therapist, or your doctor - can provide support and helpful perspectives.",
             urgency: .recommended
         )
     ]

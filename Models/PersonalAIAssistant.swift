@@ -11,6 +11,71 @@ class PersonalAIAssistant {
     private let healthService = HealthMonitoringService()
     private let cloudAI = CloudAIService.shared
 
+    // MARK: - Adaptive Context Windows
+
+    /// Get the appropriate lookback window (in hours) for a symptom category
+    private func contextWindowHours(for symptom: String) -> Int {
+        let symptomLower = symptom.lowercased()
+
+        // GI symptoms: faster onset (6-24 hours)
+        if symptomLower.contains("bloating") ||
+           symptomLower.contains("nausea") ||
+           symptomLower.contains("stomach") ||
+           symptomLower.contains("diarrhea") ||
+           symptomLower.contains("constipation") ||
+           symptomLower.contains("ibs") ||
+           symptomLower.contains("reflux") ||
+           symptomLower.contains("digestive") {
+            return 24
+        }
+
+        // Headaches/Migraines: moderate onset (12-48 hours)
+        if symptomLower.contains("headache") ||
+           symptomLower.contains("migraine") {
+            return 48
+        }
+
+        // Skin reactions: slower onset (24-72 hours)
+        if symptomLower.contains("rash") ||
+           symptomLower.contains("hives") ||
+           symptomLower.contains("eczema") ||
+           symptomLower.contains("acne") ||
+           symptomLower.contains("skin") {
+            return 72
+        }
+
+        // Joint/muscle pain: moderate to slow (24-48 hours)
+        if symptomLower.contains("joint") ||
+           symptomLower.contains("muscle") ||
+           symptomLower.contains("pain") ||
+           symptomLower.contains("arthritis") {
+            return 48
+        }
+
+        // Fatigue/Energy: can be cumulative (24-48 hours)
+        if symptomLower.contains("fatigue") ||
+           symptomLower.contains("tired") ||
+           symptomLower.contains("energy") {
+            return 48
+        }
+
+        // Mental symptoms: variable (12-36 hours)
+        if symptomLower.contains("anxiety") ||
+           symptomLower.contains("brain fog") ||
+           symptomLower.contains("mood") ||
+           symptomLower.contains("depression") {
+            return 36
+        }
+
+        // Default: 24 hours
+        return 24
+    }
+
+    /// Get the maximum context window across multiple symptoms
+    private func maxContextWindow(for symptoms: [String]) -> Int {
+        symptoms.map { contextWindowHours(for: $0) }.max() ?? 24
+    }
+
     // MARK: - Main Response Generation
 
     /// Generate a personalized AI response for a logged symptom/entry
@@ -25,13 +90,21 @@ class PersonalAIAssistant {
     ) -> AIResponse {
         var response = AIResponse()
 
+        // Get user's AI suggestion level preferences
+        let suggestionLevel = profile?.aiSuggestionLevelEnum ?? .standard
+        let confidenceThreshold = suggestionLevel.confidenceThreshold
+        let minOccurrences = suggestionLevel.minimumOccurrences
+
         // 1. Check environmental factors
         let environmentalObservations = checkEnvironmentalFactors(
             log: log,
             memories: memories,
             currentPressure: environmentalPressure
         )
-        response.observations.append(contentsOf: environmentalObservations)
+        // Filter by confidence threshold
+        response.observations.append(contentsOf: environmentalObservations.filter {
+            confidenceValue(for: $0.confidence) >= confidenceThreshold
+        })
 
         // 2. Find what worked before for these symptoms
         let suggestions = findWhatWorked(
@@ -46,9 +119,12 @@ class PersonalAIAssistant {
             memories: memories,
             recentLogs: recentLogs
         )
-        response.observations.append(contentsOf: triggerObservations)
+        // Filter by confidence threshold
+        response.observations.append(contentsOf: triggerObservations.filter {
+            confidenceValue(for: $0.confidence) >= confidenceThreshold
+        })
 
-        // 4. Check food safety if food was logged
+        // 4. Check food safety if food was logged (always show - safety critical)
         if let foodItem = log.foodDrinkItem, !foodItem.isEmpty {
             let foodWarnings = checkFoodSafety(
                 food: foodItem,
@@ -58,15 +134,15 @@ class PersonalAIAssistant {
             response.warnings.append(contentsOf: foodWarnings)
         }
 
-        // 5. Generate relevant questions
+        // 5. Generate relevant questions (limited by suggestion level)
         let questions = generateQuestions(
             for: log,
             memories: memories,
             profile: profile
         )
-        response.questions.append(contentsOf: questions)
+        response.questions.append(contentsOf: Array(questions.prefix(suggestionLevel.maxQuestions)))
 
-        // 6. Check for clinical escalation
+        // 6. Check for clinical escalation (always show - health critical)
         let escalationWarnings = checkClinicalEscalation(
             log: log,
             recentLogs: recentLogs
@@ -74,20 +150,86 @@ class PersonalAIAssistant {
         response.warnings.append(contentsOf: escalationWarnings)
 
         // 7. Check overdue screenings (opportunistic reminder)
-        let screeningReminders = checkScreeningReminders(
-            screenings: screenings,
-            symptoms: log.symptoms
-        )
-        response.observations.append(contentsOf: screeningReminders)
+        if suggestionLevel != .minimal {
+            let screeningReminders = checkScreeningReminders(
+                screenings: screenings,
+                symptoms: log.symptoms
+            )
+            response.observations.append(contentsOf: screeningReminders)
+        }
 
         // 8. Add pattern observations
         let patternObservations = findPatterns(
             for: log,
             memories: memories
         )
-        response.observations.append(contentsOf: patternObservations)
+        // Filter by confidence threshold
+        response.observations.append(contentsOf: patternObservations.filter {
+            confidenceValue(for: $0.confidence) >= confidenceThreshold
+        })
+
+        // 9. Check if we should show "needs more data" message
+        if suggestionLevel.showNeedsMoreData {
+            response.needsMoreData = checkNeedsMoreData(
+                for: log,
+                memories: memories,
+                currentResponse: response,
+                minimumOccurrences: minOccurrences
+            )
+        }
 
         return response
+    }
+
+    // MARK: - Needs More Data Check
+
+    /// Check if we should show a "needs more data" message
+    private func checkNeedsMoreData(
+        for log: LogEntry,
+        memories: [AIMemory],
+        currentResponse: AIResponse,
+        minimumOccurrences: Int
+    ) -> NeedsMoreDataMessage? {
+        // If we have meaningful content, don't show needs more data
+        if !currentResponse.observations.isEmpty || !currentResponse.suggestions.isEmpty {
+            return nil
+        }
+
+        // Check how much data we have for these symptoms
+        for symptom in log.symptoms {
+            let symptomMemories = memories.filter {
+                $0.symptom?.lowercased() == symptom.lowercased() &&
+                $0.isActive &&
+                !$0.isStale
+            }
+
+            let totalOccurrences = symptomMemories.reduce(0) { $0 + $1.occurrenceCount }
+
+            // If we have very little data for this symptom
+            if totalOccurrences < minimumOccurrences {
+                return .forSymptom(symptom, occurrences: totalOccurrences, minimumNeeded: minimumOccurrences)
+            }
+        }
+
+        // If we have data but all observations were filtered out due to low confidence
+        let allMemoriesLowConfidence = memories.filter {
+            log.symptoms.contains($0.symptom ?? "") && $0.isActive
+        }.allSatisfy { $0.decayedConfidence < 0.5 }
+
+        if allMemoriesLowConfidence && !memories.isEmpty {
+            return .generalLowConfidence()
+        }
+
+        return nil
+    }
+
+    /// Convert confidence level to numeric value for threshold comparison
+    private func confidenceValue(for level: ConfidenceLevel) -> Double {
+        switch level {
+        case .high: return 0.8
+        case .medium: return 0.5
+        case .low: return 0.3
+        }
     }
 
     // MARK: - Environmental Factors
@@ -224,30 +366,37 @@ class PersonalAIAssistant {
             }
         }
 
-        // Check recent food logs for potential triggers
+        // Check recent food logs for potential triggers using adaptive context windows
+        let contextWindow = maxContextWindow(for: log.symptoms)
         let recentFoodLogs = recentLogs.filter {
             $0.foodDrinkItem != nil &&
             !$0.foodDrinkItem!.isEmpty &&
             $0.date < log.date &&
-            Calendar.current.dateComponents([.hour], from: $0.date, to: log.date).hour ?? 25 <= 24
+            Calendar.current.dateComponents([.hour], from: $0.date, to: log.date).hour ?? (contextWindow + 1) <= contextWindow
         }
 
         for foodLog in recentFoodLogs.prefix(3) {
             guard let food = foodLog.foodDrinkItem else { continue }
 
             for symptom in log.symptoms {
+                // Use symptom-specific context window for more precise detection
+                let symptomWindow = contextWindowHours(for: symptom)
+                let hoursAgo = Calendar.current.dateComponents([.hour], from: foodLog.date, to: log.date).hour ?? 0
+
+                guard hoursAgo <= symptomWindow else { continue }
+
                 let triggerMemories = memories.filter {
                     $0.memoryTypeEnum == .trigger &&
                     $0.trigger?.lowercased() == food.lowercased() &&
                     $0.symptom == symptom &&
-                    $0.confidence >= 0.5
+                    $0.decayedConfidence >= 0.4 && // Use decayed confidence
+                    !$0.isStale // Skip stale memories
                 }
 
                 if let memory = triggerMemories.first {
-                    let hoursAgo = Calendar.current.dateComponents([.hour], from: foodLog.date, to: log.date).hour ?? 0
                     observations.append(AIObservation(
                         text: "You had \(food) \(hoursAgo) hours ago - this is a known trigger for your \(symptom.lowercased()).",
-                        confidence: memory.confidenceLevel,
+                        confidence: memory.decayedConfidenceLevel,
                         relatedMemory: memory,
                         icon: "fork.knife"
                     ))
