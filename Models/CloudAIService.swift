@@ -7,6 +7,16 @@ class CloudAIService {
 
     static let shared = CloudAIService()
 
+    // MARK: - Private Session (ephemeral for privacy)
+
+    /// Ephemeral session - no cookies, caches, or credentials persisted
+    private lazy var urlSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        config.urlCache = nil
+        return URLSession(configuration: config)
+    }()
+
     // MARK: - Configuration
 
     enum AIProvider: String, CaseIterable, Identifiable {
@@ -49,6 +59,10 @@ class CloudAIService {
 
     @UserDefault(key: "cloudAIModel", defaultValue: "")
     var customModel: String
+
+    /// Privacy setting: whether to include user notes in cloud AI requests (default OFF)
+    @UserDefault(key: "cloudAIIncludeNotes", defaultValue: false)
+    var includeNotesInRequests: Bool
 
     var activeModel: String {
         customModel.isEmpty ? provider.defaultModel : customModel
@@ -240,8 +254,12 @@ class CloudAIService {
             prompt += "- Recent patterns observed: \(recentPatterns.joined(separator: "; "))\n"
         }
 
-        if !userContext.isEmpty {
-            prompt += "- Additional context: \(userContext)\n"
+        // Only include user notes if privacy setting allows AND notes don't contain obvious PII
+        if !userContext.isEmpty && includeNotesInRequests {
+            let sanitizedContext = sanitizeForPrivacy(userContext)
+            if !sanitizedContext.isEmpty {
+                prompt += "- Additional context: \(sanitizedContext)\n"
+            }
         }
 
         prompt += """
@@ -316,6 +334,45 @@ class CloudAIService {
         """
     }
 
+    // MARK: - Privacy Helpers
+
+    /// Basic PII redaction - removes obvious personal identifiers
+    private func sanitizeForPrivacy(_ text: String) -> String {
+        var sanitized = text
+
+        // Remove email patterns
+        let emailPattern = "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"
+        if let emailRegex = try? NSRegularExpression(pattern: emailPattern) {
+            sanitized = emailRegex.stringByReplacingMatches(
+                in: sanitized,
+                range: NSRange(sanitized.startIndex..., in: sanitized),
+                withTemplate: "[email]"
+            )
+        }
+
+        // Remove phone patterns (various formats)
+        let phonePattern = "\\b\\d{3}[-.]?\\d{3}[-.]?\\d{4}\\b|\\(\\d{3}\\)\\s*\\d{3}[-.]?\\d{4}"
+        if let phoneRegex = try? NSRegularExpression(pattern: phonePattern) {
+            sanitized = phoneRegex.stringByReplacingMatches(
+                in: sanitized,
+                range: NSRange(sanitized.startIndex..., in: sanitized),
+                withTemplate: "[phone]"
+            )
+        }
+
+        // Remove SSN patterns
+        let ssnPattern = "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+        if let ssnRegex = try? NSRegularExpression(pattern: ssnPattern) {
+            sanitized = ssnRegex.stringByReplacingMatches(
+                in: sanitized,
+                range: NSRange(sanitized.startIndex..., in: sanitized),
+                withTemplate: "[redacted]"
+            )
+        }
+
+        return sanitized
+    }
+
     private func makeAPIRequest(
         prompt: String,
         apiKey: String,
@@ -330,40 +387,60 @@ class CloudAIService {
         request.httpMethod = "POST"
         request.timeoutInterval = 30
 
-        // Set headers based on provider
+        // Privacy headers - prevent caching
+        request.setValue("no-store, no-cache", forHTTPHeaderField: "Cache-Control")
+        request.setValue("no-cache", forHTTPHeaderField: "Pragma")
+
+        let systemPrompt = """
+            You are a helpful health assistant providing personalized insights. \
+            Keep responses concise (2-3 sentences) and supportive. \
+            Never diagnose conditions or recommend stopping medications. \
+            Always suggest consulting a healthcare provider for serious concerns.
+            """
+
+        // Build request body based on provider
+        let body: [String: Any]
         switch provider {
         case .openai:
             request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-            let body: [String: Any] = [
+            body = [
                 "model": activeModel,
                 "messages": [
-                    ["role": "system", "content": "You are a helpful health assistant. Keep responses concise and supportive."],
+                    ["role": "system", "content": systemPrompt],
                     ["role": "user", "content": prompt]
                 ],
                 "max_tokens": 300,
                 "temperature": 0.7
             ]
-            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         case .anthropic:
             request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
             request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-            let body: [String: Any] = [
+            body = [
                 "model": activeModel,
                 "max_tokens": 300,
                 "messages": [
                     ["role": "user", "content": prompt]
                 ],
-                "system": "You are a helpful health assistant. Keep responses concise and supportive."
+                "system": systemPrompt
             ]
-            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         }
 
-        URLSession.shared.dataTask(with: request) { data, response, error in
+        // Handle JSON encoding errors explicitly (not silently)
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        } catch {
+            Logger.error(error, message: "Failed to encode API request body", category: .network)
+            completion(.failure(.parseError(error)))
+            return
+        }
+
+        // Use ephemeral session for privacy
+        urlSession.dataTask(with: request) { data, response, error in
             DispatchQueue.main.async {
                 if let error = error {
                     Logger.error(error, message: "Cloud AI request failed", category: .network)

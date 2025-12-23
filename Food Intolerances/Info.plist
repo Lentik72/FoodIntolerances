@@ -17,15 +17,45 @@
 	</array>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSAllowsArbitraryLoads</key>
-		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>api.openweathermap.org</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<false/>
+				<key>NSExceptionRequiresForwardSecrecy</key>
+				<true/>
+			</dict>
+			<key>api.openai.com</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<false/>
+				<key>NSExceptionRequiresForwardSecrecy</key>
+				<true/>
+			</dict>
+			<key>api.anthropic.com</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<false/>
+				<key>NSExceptionRequiresForwardSecrecy</key>
+				<true/>
+			</dict>
+		</dict>
 	</dict>
-	<key>OPENWEATHER_API_KEY</key>
-	<string>816e786b3842e5b9ee47464ead16193c</string>
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>remote-notification</string>
-	</array>
+	<key>NSHealthShareUsageDescription</key>
+	<string>This app reads your sleep data to help identify patterns between sleep quality and your symptoms.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>This app can log health-related data to help you track symptoms and wellness patterns.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>This app uses your location to provide local weather and atmospheric pressure data, which can help identify environmental triggers for your symptoms.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>This app uses the microphone for voice input when logging symptoms hands-free.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>This app uses speech recognition to convert your voice notes into text for easier symptom logging.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>This app accesses your photo library to let you attach images to symptom logs, such as photos of skin conditions or food labels.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>This app uses the camera to let you take photos to attach to symptom logs, such as photos of skin conditions or food labels.</string>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>
