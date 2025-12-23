@@ -1231,6 +1231,20 @@ struct AIInsightsSummaryCard: View {
     let screenings: [HealthScreeningSchedule]
     let environmentalPressure: String
 
+    // One-time dismissible hint
+    @AppStorage("hasSeenAIExplanation") private var hasSeenAIExplanation = false
+
+    private var isNewUser: Bool {
+        logs.count < 3
+    }
+
+    private var totalInsightCount: Int {
+        var count = 0
+        if primaryInsight != nil { count += 1 }
+        count += secondaryInsights.count
+        return count
+    }
+
     private var activeMemories: [AIMemory] {
         memories.filter { $0.isActive }
     }
@@ -1390,7 +1404,8 @@ struct AIInsightsSummaryCard: View {
                         .foregroundColor(.secondary)
                 }
                 Spacer()
-                if primaryInsight != nil {
+                // Only show "View All" if there are 3+ insights to avoid empty detail screens
+                if totalInsightCount >= 3 {
                     NavigationLink(destination: AIInsightsView()) {
                         Text("View All")
                             .font(.caption)
@@ -1421,14 +1436,48 @@ struct AIInsightsSummaryCard: View {
                         Text("Nothing concerning detected")
                             .font(.subheadline)
                             .foregroundColor(.primary)
-                        Text("Keep logging and I'll learn what matters to you")
+                        Text("Log how you're feeling and I'll learn what matters to you")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
                     .multilineTextAlignment(.center)
+
+                    // CTA hint for new users
+                    if isNewUser {
+                        Text("Tap + to log how you feel")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .padding(.top, 4)
+                    }
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 20)
+            }
+
+            // One-time "What I Do" hint (dismissible)
+            if !hasSeenAIExplanation {
+                HStack(spacing: 8) {
+                    Image(systemName: "info.circle")
+                        .foregroundColor(.secondary)
+                        .font(.caption)
+                    Text("I look for patterns in your logs and flag things that may matter — nothing diagnostic.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Button {
+                        withAnimation {
+                            hasSeenAIExplanation = true
+                        }
+                    } label: {
+                        Image(systemName: "xmark")
+                            .foregroundColor(.secondary)
+                            .font(.caption)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+                .padding(10)
+                .background(Color(.tertiarySystemBackground))
+                .cornerRadius(8)
             }
         }
         .padding(16)
