@@ -61,6 +61,18 @@ class LogEntry: Identifiable {
     @Attribute var notes: String = ""
     @Attribute var timeOfDay: Date? = nil
     @Attribute var additionalContext: String = ""
+
+    // MARK: - Contributing Factors (cause context)
+    @Attribute var contributingFactorsData: Data = Data()
+    var contributingFactors: [String] {
+        get {
+            guard !contributingFactorsData.isEmpty else { return [] }
+            return (try? JSONDecoder().decode([String].self, from: contributingFactorsData)) ?? []
+        }
+        set {
+            contributingFactorsData = (try? JSONEncoder().encode(newValue)) ?? Data()
+        }
+    }
     
     @Attribute var usedProtocolID: UUID?
     @Attribute var isOngoing: Bool? = nil

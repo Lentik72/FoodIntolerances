@@ -5,7 +5,14 @@ import Combine
 
 enum ActiveSheet: Identifiable {
     case avoidList
-    var id: Int { hashValue }
+    case contextLog(ContextChipType)
+
+    var id: String {
+        switch self {
+        case .avoidList: return "avoidList"
+        case .contextLog(let type): return "contextLog-\(type.rawValue)"
+        }
+    }
 }
 
 struct DashboardView: View {
@@ -97,14 +104,17 @@ struct DashboardView: View {
                     }
                     
                     LazyVStack(alignment: .leading, spacing: 16) {
-                        // MARK: - Zone A: Today at a glance
+                        // MARK: - Zone A: AI Assistant Card
                         AIInsightsSummaryCard(
                             logs: allLogs,
                             memories: aiMemories,
                             userAllergies: userAllergies,
                             profile: userProfiles.first,
                             screenings: healthScreenings,
-                            environmentalPressure: viewModel.atmosphericPressureCategory
+                            environmentalPressure: viewModel.atmosphericPressureCategory,
+                            onContextChipTapped: { chipType in
+                                activeSheet = .contextLog(chipType)
+                            }
                         )
 
                         // MARK: - Zone B: Quick Actions
@@ -224,6 +234,15 @@ struct DashboardView: View {
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("NavigateToDashboard"))) { _ in
                 DispatchQueue.main.async {
                     tabManager.selectedTab = .dashboard // Ensure Dashboard is shown
+                }
+            }
+            .sheet(item: $activeSheet) { sheet in
+                switch sheet {
+                case .avoidList:
+                    AvoidListView()
+                case .contextLog(let chipType):
+                    ContextLogSheet(chipType: chipType)
+                        .environmentObject(viewModel)
                 }
             }
     }
@@ -1221,6 +1240,30 @@ class RefreshController {
     }
 }
 
+// MARK: - Context Chip Type
+
+enum ContextChipType: String, CaseIterable {
+    case poorSleep = "Poor sleep"
+    case stressfulDay = "Stressful day"
+    case feltOkay = "Felt okay"
+
+    var icon: String {
+        switch self {
+        case .poorSleep: return "moon.zzz.fill"
+        case .stressfulDay: return "bolt.heart.fill"
+        case .feltOkay: return "hand.thumbsup.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .poorSleep: return .indigo
+        case .stressfulDay: return .orange
+        case .feltOkay: return .green
+        }
+    }
+}
+
 // MARK: - AI Insights Summary Card (Refactored with Primary/Secondary Hierarchy)
 
 struct AIInsightsSummaryCard: View {
@@ -1231,6 +1274,9 @@ struct AIInsightsSummaryCard: View {
     let screenings: [HealthScreeningSchedule]
     let environmentalPressure: String
 
+    // Callbacks for context chip taps
+    var onContextChipTapped: ((ContextChipType) -> Void)?
+
     // One-time dismissible hint
     @AppStorage("hasSeenAIExplanation") private var hasSeenAIExplanation = false
 
@@ -1238,11 +1284,42 @@ struct AIInsightsSummaryCard: View {
         logs.count < 3
     }
 
+    private var hasLoggedToday: Bool {
+        logs.contains { Calendar.current.isDateInToday($0.date) }
+    }
+
     private var totalInsightCount: Int {
         var count = 0
         if primaryInsight != nil { count += 1 }
         count += secondaryInsights.count
         return count
+    }
+
+    // MARK: - Time-of-day conversational prompt
+    private var conversationalPrompt: String {
+        let hour = Calendar.current.component(.hour, from: Date())
+
+        // If logged today, show contextual follow-up
+        if hasLoggedToday {
+            if let recentLog = logs.first, Calendar.current.isDateInToday(recentLog.date) {
+                if recentLog.severity >= 3 {
+                    return "How are you feeling now?"
+                }
+            }
+            return "Anything else on your mind?"
+        }
+
+        // Time-based greeting
+        switch hour {
+        case 5..<12:
+            return "How did you sleep?"
+        case 12..<17:
+            return "How's your day going?"
+        case 17..<22:
+            return "How was today?"
+        default:
+            return "How are you feeling?"
+        }
     }
 
     private var activeMemories: [AIMemory] {
@@ -1390,68 +1467,52 @@ struct AIInsightsSummaryCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            // Header with AI mode indicator
-            HStack(alignment: .center) {
-                Image(systemName: "brain.head.profile")
-                    .foregroundColor(.secondary)
-                    .font(.title3)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("AI Health Assistant")
-                        .font(.headline)
-                    Text("Today at a glance")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-                // Only show "View All" if there are 3+ insights to avoid empty detail screens
-                if totalInsightCount >= 3 {
-                    NavigationLink(destination: AIInsightsView()) {
-                        Text("View All")
-                            .font(.caption)
-                            .foregroundColor(.accentColor)
+        VStack(alignment: .leading, spacing: 16) {
+            // MARK: - Conversational Prompt
+            Text(conversationalPrompt)
+                .font(.title3)
+                .fontWeight(.medium)
+                .foregroundColor(.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            // MARK: - Quick Context Chips
+            HStack(spacing: 10) {
+                ForEach(ContextChipType.allCases, id: \.self) { chip in
+                    ContextChipButton(chip: chip) {
+                        onContextChipTapped?(chip)
                     }
                 }
             }
 
+            // MARK: - Insights Section (if any)
             if let primary = primaryInsight {
+                Divider()
+                    .padding(.vertical, 4)
+
                 // Primary insight (larger, more prominent)
                 PrimaryInsightRow(insight: primary)
 
                 // Secondary insights (smaller, muted)
                 if !secondaryInsights.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 6) {
                         ForEach(secondaryInsights, id: \.title) { insight in
                             SecondaryInsightRow(insight: insight)
                         }
                     }
                 }
-            } else {
-                // Empty state with reassurance
-                VStack(spacing: 10) {
-                    Image(systemName: "sparkles")
-                        .font(.title2)
-                        .foregroundColor(.secondary)
-                    VStack(spacing: 4) {
-                        Text("Nothing concerning detected")
-                            .font(.subheadline)
-                            .foregroundColor(.primary)
-                        Text("Log how you're feeling and I'll learn what matters to you")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .multilineTextAlignment(.center)
 
-                    // CTA hint for new users
-                    if isNewUser {
-                        Text("Tap + to log how you feel")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .padding(.top, 4)
+                // View All link
+                if totalInsightCount >= 3 {
+                    HStack {
+                        Spacer()
+                        NavigationLink(destination: AIInsightsView()) {
+                            Text("View all insights")
+                                .font(.caption)
+                                .foregroundColor(.accentColor)
+                        }
                     }
+                    .padding(.top, 4)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 20)
             }
 
             // One-time "What I Do" hint (dismissible)
@@ -1463,7 +1524,8 @@ struct AIInsightsSummaryCard: View {
                     Text("I look for patterns in your logs and flag things that may matter — nothing diagnostic.")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    Spacer()
+                        .lineLimit(2)
+                    Spacer(minLength: 4)
                     Button {
                         withAnimation {
                             hasSeenAIExplanation = true
@@ -1481,10 +1543,34 @@ struct AIInsightsSummaryCard: View {
             }
         }
         .padding(16)
-        .frame(minHeight: 160) // Lock minimum height to prevent jitter
         .background(Color(.secondarySystemBackground))
         .cornerRadius(16)
         .padding(.horizontal)
+    }
+}
+
+// MARK: - Context Chip Button
+
+private struct ContextChipButton: View {
+    let chip: ContextChipType
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: chip.icon)
+                    .font(.caption)
+                Text(chip.rawValue)
+                    .font(.caption)
+                    .fontWeight(.medium)
+            }
+            .foregroundColor(chip.color)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(chip.color.opacity(0.12))
+            .cornerRadius(20)
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 }
 
@@ -1646,3 +1732,179 @@ struct QuickToolButton: View {
         .accessibilityLabel(label)
     }
 }
+
+// MARK: - Context Log Sheet (Quick Context Logging with Cause Picker)
+
+struct ContextLogSheet: View {
+    let chipType: ContextChipType
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var viewModel: LogItemViewModel
+
+    @State private var selectedFactors: Set<String> = []
+    @State private var notes: String = ""
+    @State private var severity: Int = 2
+
+    private var empathyMessage: String {
+        switch chipType {
+        case .poorSleep:
+            return "That sounds rough. Let's note what might have affected your sleep."
+        case .stressfulDay:
+            return "Stressful days can take a toll. Let's track what's going on."
+        case .feltOkay:
+            return "Good to hear! Logging good days helps me understand what works."
+        }
+    }
+
+    private var availableFactors: [String] {
+        switch chipType {
+        case .poorSleep:
+            return ["Late night", "Stress/anxiety", "Caffeine", "Screen time", "Couldn't fall asleep", "Woke up often", "Work/deadlines"]
+        case .stressfulDay:
+            return ["Work/deadlines", "Family", "Health concerns", "Financial", "Relationship", "Travel", "Too much to do"]
+        case .feltOkay:
+            return ["Good sleep", "Relaxed", "Exercise", "Ate well", "Time outdoors", "Social connection", "Completed tasks"]
+        }
+    }
+
+    private var logItemName: String {
+        switch chipType {
+        case .poorSleep: return "Poor Sleep"
+        case .stressfulDay: return "Stressful Day"
+        case .feltOkay: return "Feeling Good"
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    // Empathetic opener
+                    HStack(spacing: 12) {
+                        Image(systemName: chipType.icon)
+                            .font(.title2)
+                            .foregroundColor(chipType.color)
+                        Text(empathyMessage)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(chipType.color.opacity(0.1))
+                    .cornerRadius(12)
+
+                    // Cause picker
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("What do you think affected this?")
+                            .font(.headline)
+
+                        FlowLayout(spacing: 8) {
+                            ForEach(availableFactors, id: \.self) { factor in
+                                FactorChip(
+                                    label: factor,
+                                    isSelected: selectedFactors.contains(factor)
+                                ) {
+                                    if selectedFactors.contains(factor) {
+                                        selectedFactors.remove(factor)
+                                    } else {
+                                        selectedFactors.insert(factor)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Severity (for non-positive context)
+                    if chipType != .feltOkay {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("How much did it affect you?")
+                                    .font(.headline)
+                                Spacer()
+                                Text("\(severity)/5")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                            Slider(value: Binding(
+                                get: { Double(severity) },
+                                set: { severity = Int($0) }
+                            ), in: 1...5, step: 1)
+                            .tint(chipType.color)
+                        }
+                    }
+
+                    // Notes
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Anything else? (optional)")
+                            .font(.headline)
+                        TextField("Add notes...", text: $notes, axis: .vertical)
+                            .textFieldStyle(.roundedBorder)
+                            .lineLimit(3...5)
+                    }
+
+                    Spacer(minLength: 20)
+                }
+                .padding()
+            }
+            .navigationTitle(chipType.rawValue)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        saveLog()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+        }
+    }
+
+    private func saveLog() {
+        let log = LogEntry()
+        log.itemName = logItemName
+        log.itemType = .symptom
+        log.category = chipType == .feltOkay ? "Wellness" : "General"
+        log.severity = chipType == .feltOkay ? 1 : severity
+        log.date = Date()
+        log.notes = notes
+        log.contributingFactors = Array(selectedFactors)
+        log.atmosphericPressure = viewModel.atmosphericPressureCategory
+
+        modelContext.insert(log)
+
+        do {
+            try modelContext.save()
+            Logger.info("Context log saved: \(logItemName)", category: .data)
+            dismiss()
+        } catch {
+            Logger.error(error, message: "Failed to save context log", category: .data)
+        }
+    }
+}
+
+// MARK: - Factor Chip
+
+private struct FactorChip: View {
+    let label: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.subheadline)
+                .foregroundColor(isSelected ? .white : .primary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(isSelected ? Color.accentColor : Color(.tertiarySystemBackground))
+                .cornerRadius(20)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
