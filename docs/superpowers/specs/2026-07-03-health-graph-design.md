@@ -292,6 +292,10 @@ evidence.
    evidence counts, lab trend tables, experiment and clinic-protocol outcome summaries.
    Boring, clinical layout — that's a feature. This closes the clinic loop with zero
    backend: the patient taps "Share report with Dr. X."
+   Every report embeds a **versioned, signed, machine-readable JSON payload** alongside
+   the human-readable PDF, so a clinic can aggregate outcomes across patients today by
+   importing report files locally, and a future practitioner portal can ingest the same
+   files unchanged (§12).
 
 ## 11. Launch readiness (Phase 6)
 
@@ -304,22 +308,61 @@ evidence.
   nutrition labels (on-device storage, opt-in cloud AI, no tracking), TestFlight with the
   clinic's patients as the first cohort, then App Store.
 
-## 12. Explicitly deferred (Phase 7+, post-revenue)
+## 12. Platform strategy & practitioner access
 
-- Practitioner web dashboard (per-patient/month pricing; requires backend + HIPAA/BAA
-  legal review — the first moment the developer touches patient data server-side).
+Decision (2026-07-04): **the phone stays the hub.** Apple Health has no web API —
+sensor data (Apple Watch, Oura-via-HealthKit, sleep, cycle) is readable only by an app
+on the device, so the iOS app is the mandatory gateway regardless of where viewing
+happens. Analysis stays on-device, where the data is.
+
+**Audiences and how each is served:**
+
+| Audience | v1 | Later |
+|---|---|---|
+| iPhone users | Full app | — |
+| Older users / big-screen readers (Apple devices) | Doctor Report PDF (print, email), Dynamic Type support | iPad + Mac apps via SwiftUI multiplatform; the encrypted CloudKit backup upgrades to sync (fast-follow after launch) |
+| Windows-desktop users | PDF reports + CSV/JSON export | Read-only web viewer, post-revenue, riding the practitioner-portal backend |
+| Android users | Not served in v1 | Android app as a client of the practitioner-portal backend; Health Connect as its sensor gateway; EvidenceEngine port validated by the synthetic-data harness used as a cross-platform conformance suite |
+| Practitioners | Level 1 below | Levels 2–3 below |
+
+Action item: ask the design-partner clinic for their patients' iOS/Android split before
+fixing Phase 7+ ordering — a large Android share pulls the backend forward.
+
+Note on capture for older users: voice logging on the phone ("had eggs at 8, headache
+at 11") is lower-friction than desktop typing. Desktop matters mostly for *reading*,
+which PDF and iPad/Mac cover.
+
+**Practitioner access — three levels, consent-first at every level:**
+
+1. **Level 1 (Phases 4–5, no backend).** Patient-initiated sharing of outcome reports:
+   PDF for humans + the embedded signed JSON for machines (§10). The clinic aggregates
+   across patients by importing report files locally. The developer never touches
+   patient data — no HIPAA exposure.
+2. **Level 2 (optional bridge).** End-to-end-encrypted share links / report inbox for
+   derived reports only, retention-limited. First point of compliance exposure; build
+   only if the clinic finds file-sharing too clunky during the pilot.
+3. **Level 3 (Phase 7+, the paid clinic product).** Practitioner web dashboard: patient
+   roster, longitudinal views, cross-patient protocol outcomes ("peptide X: 12 patients,
+   8 logged improvement"). Web is the right platform here — clinic staff live in
+   browsers. Requires backend, BAA + HIPAA security review, audit logs, and consent
+   revocation.
+
+Consent principles at all levels: sharing is patient-initiated, explicitly scoped
+(date range + categories), visible in the report itself, and logged on device.
+
+## 13. Explicitly deferred (Phase 7+, post-revenue)
+
+- Practitioner portal Levels 2–3 and the backend that carries them (§12).
+- Android app and read-only web viewer (§12).
 - Community aggregates ("340 users tried this protocol; 62% logged improvement") —
   needs backend, accounts, moderation, k-anonymity thresholds. The clinic is the
   near-term community.
 - Prediction engine (historical phrasing only, built on a mature Phase 2 engine).
 - Oura/Whoop direct APIs, CGM, air quality, FHIR import — each is just a new
   `EventSource` adapter; no schema change.
-- Android/web. No pre-building; clean Core module boundaries + full export keep the
-  door open. Cross-platform requires server-side sync — decide only if the venture path
-  is chosen.
 - Apple Watch app (App Intents already cover quick capture in Phase 1).
 
-## 13. Business model
+## 14. Business model
 
 - **Free forever:** all capture, timeline, medicine cabinet, reminders.
 - **Pro (~$7.99/mo or ~$59.99/yr):** Evidence Engine insights, experiments, "what worked
@@ -334,7 +377,7 @@ evidence.
 - **Success gates:** median time-to-first-insight <7 days (backfill makes this
   possible); day-30 logging retention; one clinic pilot that renews.
 
-## 14. Module layout
+## 15. Module layout
 
 ```
 Core/
@@ -351,7 +394,7 @@ Features/
 Shared/UI/
 ```
 
-## 15. Phase summary & sequencing
+## 16. Phase summary & sequencing
 
 | Phase | Deliverable | Est. |
 |---|---|---|
@@ -362,6 +405,9 @@ Shared/UI/
 | 4 | Experiments + clinic protocol codes + lab import | 3–4 wks |
 | 5 | "What worked before?" + Doctor Report PDF | 2–3 wks |
 | 6 | Encrypted backup, export, rebrand, TestFlight → App Store | 2–3 wks |
+
+Post-launch fast-follow: iPad + Mac big-screen apps riding the CloudKit sync upgrade
+(§12) — before any backend work.
 
 Each phase ships something usable and is scoped to hand to a coding agent as a
 self-contained work order (guiding decisions + schema + the phase section). Per phase,
