@@ -94,7 +94,7 @@ struct HealthEvent {
     var value: Double?               // severity 1–10, dose, duration min, lab value…
     var unit: String?
     var source: EventSource          // manual, photo, voice, healthKit, healthExportFile,
-                                     // labImport, weatherAPI, appIntent
+                                     // labImport, weatherAPI, appIntent, legacyImport
     var confidence: Double           // 0–1 parse quality (not evidence confidence)
     var metadata: Data?              // JSON for category-specific fields
     var attachmentPath: String?
@@ -106,8 +106,8 @@ struct HealthEvent {
 struct HealthObject {
     var id: UUID
     var kind: ObjectKind             // medication, supplement, peptide, food, allergen,
-                                     // doctor, labTest, condition, protocol, experiment,
-                                     // location, device
+                                     // doctor, labTest, condition, activity, protocol
+                                     // (Swift case: careProtocol), experiment, location, device
     var name: String
     var normalizedName: String       // lowercased, brand-stripped, for dedup
     var metadata: Data?              // dose forms, ingredients, reference ranges,
@@ -138,7 +138,8 @@ struct Relationship {
 ```
 
 Changes from the original plan's schema: added `timezoneID`; added `peptide`, `cycle`,
-and `illness` categories; added `healthExportFile` and `appIntent` sources.
+and `illness` categories; added `healthExportFile`, `appIntent`, and `legacyImport`
+(migrated rows) sources; added `activity` object kind (avoided activities).
 
 Supporting tables (created in the phase that needs them): `insights`, `experiments`,
 `data_quality_snapshots`.
