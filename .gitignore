@@ -25,3 +25,4 @@ Secrets.xcconfig
 # Temporary files
 *.tmp
 *.temp
+.superpowers/

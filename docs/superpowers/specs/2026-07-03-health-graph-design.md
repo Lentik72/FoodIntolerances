@@ -4,6 +4,7 @@
 **Status:** Approved direction, pre-implementation
 **Supersedes:** `/Users/leo/Downloads/health-graph-execution-plan.md` (incorporated and revised here)
 **Relates to:** `V1_SCOPE.md` (the pre-pivot v1 scope; still authoritative for safety/language rules)
+**UI design:** `2026-07-04-ui-design.md` (navigation, capture sheet, home, insight cards, onboarding, visual direction)
 
 ---
 
@@ -233,8 +234,11 @@ sleep <6h, high stress, weather pressure drops, cycle phase, …}, Y ∈ {sympto
    reachable only via experiment/rechallenge confirmation (Phase 4) — observational
    evidence alone plateaus below it.
 
-**Insights UI:** card per active relationship — plain-language claim, confidence %,
-evidence count, avg effect, last seen, and a non-negotiable **Evidence drill-down**
+**Insights UI:** card per active relationship — plain-language claim, a word-scale
+strength badge (Early signal / Moderate / Strong) plus **one dot per exposure**
+(filled = outcome followed, hollow = it didn't, each dot tappable to that day); the
+raw confidence % lives in the drill-down and reports, not on the card (see UI design
+doc §4). Cards also show avg effect and last seen, and a non-negotiable **Evidence drill-down**
 listing the actual event pairs, each tappable. Actions: "Dismiss," "Not convinced —
 suggest an experiment." The LLM's only role: turning computed stats into one friendly
 paragraph. Numbers come from the engine, never the model.
