@@ -409,6 +409,37 @@ Shared/UI/
 Post-launch fast-follow: iPad + Mac big-screen apps riding the CloudKit sync upgrade
 (§12) — before any backend work.
 
+## 17. Non-functional requirements & open items
+
+**Binding NFRs:**
+
+- **Positioning boundary:** the app is a *navigator*, not an *advisor*. It describes
+  patterns, reports what historically worked for this user, proposes experiments, and
+  prepares doctor-visit material. It never diagnoses, recommends treatments, or suggests
+  doses (§2.5). All "advisory"-flavored features must pass this test.
+- **Accessibility:** Dynamic Type throughout, VoiceOver labels on all interactive
+  elements, generous tap targets — older users are a core audience, not an edge case.
+- **Performance budgets:** 1-year HealthKit backfill completes in ~2 min on a mid-range
+  device with visible progress; nightly mining < 30 s; cold launch < 1.5 s; DB remains
+  responsive at 100k+ events.
+- **Notification hygiene:** per-category toggles, quiet hours, adaptive frequency (no
+  prompts while the user is actively logging), privacy-mode lock-screen text (exists
+  today — keep).
+- **Data hygiene:** user-facing duplicate-object merge tool (normalizedName dedup won't
+  catch everything), full edit of history, soft delete only.
+- **Units & locale:** metric/imperial per user setting; English-only v1.
+
+**Open decisions (resolve before the phase that needs them):**
+
+| Decision | Recommendation | Needed by |
+|---|---|---|
+| Telemetry vs. "no analytics" promise | Privacy-safe crash reporting only; no usage analytics | TestFlight (Phase 6) |
+| Cloud LLM funding model | On-device parsing free for all; developer-funded meal-photo vision as Pro perk with monthly quota + no-retention API terms | Phase 5–6 |
+| Caregiver/household logging (family logs for an older user) | Out of v1; ask the clinic whether their patients need it | Post-launch |
+| App name + visual identity | Naming exercise alongside the UI design pass | Phase 6 listing |
+| Legal docs (privacy policy, terms, disclaimer copy, hosting site) | Draft during Phase 5 | TestFlight (Phase 6) |
+| Clinic patients' iOS/Android split (§12) | Ask the practice now | Phase 7 ordering |
+
 Each phase ships something usable and is scoped to hand to a coding agent as a
 self-contained work order (guiding decisions + schema + the phase section). Per phase,
 require: compiling code, unit tests for all EvidenceEngine math, schema changes only via
