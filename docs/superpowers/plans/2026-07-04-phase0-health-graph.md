@@ -19,6 +19,7 @@
 - Approved spec deltas locked in by this plan: `EventSource` gains `legacyImport` (migrated rows need a source); `ObjectKind` gains `activity` (for avoided activities) and spells `protocol` as `careProtocol = "protocol"` (Swift keyword).
 - Package tests: `cd /Users/leo/Desktop/FoodIntolerances/HealthGraphCore && swift test`. App build: `xcodebuild -project "Food Intolerances.xcodeproj" -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 16' build` (if the scheme name differs, check `xcodebuild -list`).
 - Verification commands pipe through `| tail` for brevity. On ANY failure, rerun the command without `| tail` — the interesting compiler line is often above the cut.
+- The first `swift test` in Task 1 fetches GRDB from GitHub — it needs network access. If running sandboxed/offline, resolve dependencies first in a network-enabled step (`swift package resolve`).
 - Migration idempotence rule: every event the migrator creates gets a **deterministic UUID** (v5 of the legacy row id); re-running the migration must never change row counts.
 - Commit after every task with the message given in its final step.
 
@@ -66,7 +67,10 @@ let package = Package(
         ),
         .testTarget(
             name: "HealthGraphCoreTests",
-            dependencies: ["HealthGraphCore"],
+            dependencies: [
+                "HealthGraphCore",
+                .product(name: "GRDB", package: "GRDB.swift")
+            ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         )
     ]
@@ -99,6 +103,9 @@ struct AppDatabaseTests {
             let relCols = try d.columns(in: "relationships").map(\.name)
             #expect(relCols.contains("contradictionCount"))
             #expect(relCols.contains("lagHours"))
+            let eventIndexes = try d.indexes(on: "health_events").map(\.name)
+            #expect(eventIndexes.contains("idx_events_category_timestamp"))
+            #expect(eventIndexes.contains("idx_events_object_timestamp"))
         }
     }
 
@@ -392,10 +399,14 @@ import GRDB
 struct RecordRoundtripTests {
     @Test func healthEventRoundtrips() throws {
         let db = try AppDatabase.inMemory()
+        // createdAt is explicit integer seconds: GRDB stores Date as text with
+        // millisecond precision, so a sub-millisecond Date() default would
+        // break whole-struct equality after the roundtrip.
         let event = HealthEvent(
             timestamp: Date(timeIntervalSince1970: 1_750_000_000),
             category: .symptom, subtype: "headache",
-            value: 6, source: .manual
+            value: 6, source: .manual,
+            createdAt: Date(timeIntervalSince1970: 1_750_000_000)
         )
         try db.dbWriter.write { try event.insert($0) }
         let fetched = try db.dbWriter.read { try HealthEvent.fetchOne($0, key: event.id) }
@@ -406,7 +417,8 @@ struct RecordRoundtripTests {
 
     @Test func healthObjectComputesNormalizedName() throws {
         let db = try AppDatabase.inMemory()
-        let object = HealthObject(kind: .supplement, name: "Magnesium Glycinate 400mg")
+        let object = HealthObject(kind: .supplement, name: "Magnesium Glycinate 400mg",
+                                  createdAt: Date(timeIntervalSince1970: 1_750_000_000))
         #expect(object.normalizedName == "magnesium glycinate")
         try db.dbWriter.write { try object.insert($0) }
         let fetched = try db.dbWriter.read { try HealthObject.fetchOne($0, key: object.id) }
@@ -861,6 +873,7 @@ public struct GRDBObjectStore: ObjectStore { public init(database: AppDatabase) 
 ```swift
 import Testing
 import Foundation
+import GRDB
 @testable import HealthGraphCore
 
 struct ObjectStoreTests {
@@ -1531,15 +1544,15 @@ enum HealthGraphProvider {
 }
 ```
 
-- [ ] **Step 3: Verify the app builds**
+- [ ] **Step 3: Verify BOTH targets build (app + tests)**
 
 Run:
 ```bash
 cd /Users/leo/Desktop/FoodIntolerances
 xcodebuild -project "Food Intolerances.xcodeproj" -scheme "Food Intolerances" \
-  -destination 'platform=iOS Simulator,name=iPhone 16' build 2>&1 | tail -5
+  -destination 'platform=iOS Simulator,name=iPhone 16' build-for-testing 2>&1 | tail -5
 ```
-Expected: `** BUILD SUCCEEDED **`. (If the scheme or simulator name differs, list them with `xcodebuild -list` / `xcrun simctl list devices available`.)
+Expected: `** TEST BUILD SUCCEEDED **`. `build-for-testing` compiles the test target too — it catches the easy-to-miss case where the package was linked to the app target but not the test target (which would otherwise surface confusingly in Task 9). If the scheme or simulator name differs, list them with `xcodebuild -list` / `xcrun simctl list devices available`.
 
 - [ ] **Step 4: Commit**
 
@@ -1769,9 +1782,9 @@ struct SwiftDataMigratorTests {
         #expect(legacyCount == 1)
         // the completed flag short-circuits non-forced runs
         UserDefaults.standard.set(true, forKey: SwiftDataMigrator.completedFlagKey)
+        defer { UserDefaults.standard.removeObject(forKey: SwiftDataMigrator.completedFlagKey) }
         let skipped = try await SwiftDataMigrator.run(context: context, database: db, force: false)
         #expect(skipped == SwiftDataMigrator.Report())
-        UserDefaults.standard.removeObject(forKey: SwiftDataMigrator.completedFlagKey)
     }
 
     @Test func savesAttachmentFileToDisk() async throws {
@@ -1794,8 +1807,8 @@ struct SwiftDataMigratorTests {
         #expect(report.attachmentFailures == 0)
         let file = try HealthGraphProvider.attachmentsDirectory()
             .appendingPathComponent("\(entry.id.uuidString).jpg")
+        defer { try? FileManager.default.removeItem(at: file) }
         #expect(FileManager.default.fileExists(atPath: file.path))
-        try? FileManager.default.removeItem(at: file)
     }
 }
 ```
@@ -1893,7 +1906,9 @@ struct SwiftDataMigrator {
                         report.attachmentFailures += 1
                     }
                 }
-                let names = entry.symptoms.isEmpty ? [entry.itemName] : entry.symptoms
+                var seenNames = Set<String>()
+                let names = (entry.symptoms.isEmpty ? [entry.itemName] : entry.symptoms)
+                    .filter { seenNames.insert($0).inserted } // dup names share a v5 id; skip to keep counts honest
                 for name in names {
                     var m = meta
                     if !entry.affectedAreas.isEmpty {
@@ -2174,6 +2189,7 @@ git commit -m "feat(app): one-time SwiftData -> Health Graph migrator behind fla
 #if DEBUG
 import SwiftUI
 import SwiftData
+import GRDB
 import HealthGraphCore
 
 /// DEBUG-only inspector for the Health Graph database. Phase 0's only UI.
