@@ -18,6 +18,8 @@
 - No user-facing causal language anywhere (N/A for Phase 0 code, applies to debug copy too).
 - Approved spec deltas locked in by this plan: `EventSource` gains `legacyImport` (migrated rows need a source); `ObjectKind` gains `activity` (for avoided activities) and spells `protocol` as `careProtocol = "protocol"` (Swift keyword).
 - Package tests: `cd /Users/leo/Desktop/FoodIntolerances/HealthGraphCore && swift test`. App build: `xcodebuild -project "Food Intolerances.xcodeproj" -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 16' build` (if the scheme name differs, check `xcodebuild -list`).
+- Verification commands pipe through `| tail` for brevity. On ANY failure, rerun the command without `| tail` — the interesting compiler line is often above the cut.
+- Migration idempotence rule: every event the migrator creates gets a **deterministic UUID** (v5 of the legacy row id); re-running the migration must never change row counts.
 - Commit after every task with the message given in its final step.
 
 ---
@@ -33,7 +35,13 @@
 - Consumes: nothing (first task).
 - Produces: `AppDatabase` — `init(_ dbWriter: any DatabaseWriter) throws`, `static func open(at url: URL) throws -> AppDatabase`, `static func inMemory() throws -> AppDatabase`, property `dbWriter: any DatabaseWriter`. Tables `health_objects`, `health_events`, `relationships` with the exact columns below. Every later task builds on this.
 
-- [ ] **Step 1: Create the package manifest**
+- [ ] **Step 1: Create the package folders and manifest**
+
+Run:
+```bash
+mkdir -p /Users/leo/Desktop/FoodIntolerances/HealthGraphCore/Sources/HealthGraphCore/{Database,Models,Support,Synthetic}
+mkdir -p /Users/leo/Desktop/FoodIntolerances/HealthGraphCore/Tests/HealthGraphCoreTests
+```
 
 `HealthGraphCore/Package.swift`:
 
@@ -146,6 +154,12 @@ public struct AppDatabase {
     static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
         #if DEBUG
+        // GRDB does not checksum migration bodies: without this flag, editing
+        // migration v1 during development leaves SILENT schema drift on
+        // existing databases — worse than erasure. This is safe only while
+        // the graph is fully reconstructible (legacy SwiftData store intact,
+        // synthetic data reloadable). REMOVE this flag before Phase 1 live
+        // capture ships, when the graph becomes the source of truth.
         migrator.eraseDatabaseOnSchemaChange = true
         #endif
 
@@ -158,9 +172,10 @@ public struct AppDatabase {
                 t.column("metadata", .blob)
                 t.column("isArchived", .boolean).notNull().defaults(to: false)
                 t.column("createdAt", .datetime).notNull()
+                // DB-level dedup guarantee; the implicit index also serves
+                // normalized-name lookups.
+                t.uniqueKey(["normalizedName", "kind"])
             }
-            try db.create(index: "idx_objects_normalized",
-                          on: "health_objects", columns: ["normalizedName", "kind"])
 
             try db.create(table: "health_events") { t in
                 t.primaryKey("id", .blob)
@@ -204,6 +219,11 @@ public struct AppDatabase {
                 t.column("lastRecomputed", .datetime).notNull()
                 t.column("status", .text).notNull()
                 t.column("aiExplanation", .text)
+                // An edge must have at least one endpoint on each side.
+                // (Semantic edge identity/uniqueness is defined by the Phase 2
+                // engine — deliberately not constrained here.)
+                t.check(sql: "fromObjectID IS NOT NULL OR fromCategory IS NOT NULL")
+                t.check(sql: "toObjectID IS NOT NULL OR toCategory IS NOT NULL")
             }
             try db.create(index: "idx_rel_from", on: "relationships", columns: ["fromObjectID"])
             try db.create(index: "idx_rel_to", on: "relationships", columns: ["toObjectID"])
@@ -883,6 +903,18 @@ struct ObjectStoreTests {
         let all = try await store.objects(kind: nil, includeArchived: false)
         #expect(all.count == 2)
     }
+
+    @Test func databaseEnforcesUniqueNormalizedNamePerKind() throws {
+        // The uniqueKey constraint backs up findOrCreate at the DB layer:
+        // even a direct insert cannot create a duplicate.
+        let db = try AppDatabase.inMemory()
+        let a = HealthObject(kind: .supplement, name: "Zinc 25mg")
+        let b = HealthObject(kind: .supplement, name: "zinc")
+        try db.dbWriter.write { try a.insert($0) }
+        #expect(throws: (any Error).self) {
+            try db.dbWriter.write { try b.insert($0) }
+        }
+    }
 }
 ```
 
@@ -966,7 +998,7 @@ public struct GRDBObjectStore: ObjectStore {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cd /Users/leo/Desktop/FoodIntolerances/HealthGraphCore && swift test`
-Expected: all pass (19 total).
+Expected: all pass (20 total).
 
 - [ ] **Step 5: Commit**
 
@@ -1129,7 +1161,7 @@ public struct GRDBRelationshipStore: RelationshipStore {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cd /Users/leo/Desktop/FoodIntolerances/HealthGraphCore && swift test`
-Expected: all pass (22 total).
+Expected: all pass (23 total).
 
 - [ ] **Step 5: Commit**
 
@@ -1436,7 +1468,7 @@ public enum SyntheticDataGenerator {
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `cd /Users/leo/Desktop/FoodIntolerances/HealthGraphCore && swift test`
-Expected: all pass (25 total). If `plantedPatternIsStatisticallyPresent` fails on the bounds, the generator logic is wrong (400 days at these probabilities sits comfortably inside the tolerances) — fix the generator, do not widen the bounds.
+Expected: all pass (26 total). If `plantedPatternIsStatisticallyPresent` fails on the bounds, the generator logic is wrong (400 days at these probabilities sits comfortably inside the tolerances) — fix the generator, do not widen the bounds.
 
 - [ ] **Step 6: Commit**
 
@@ -1529,21 +1561,22 @@ git commit -m "feat(app): link HealthGraphCore package and add database provider
 - Consumes: app SwiftData models (`LogEntry`, `TrackedItem`, `AvoidedItem`, `CabinetItem`, `OngoingSymptom`, `SymptomCheckIn`, `TherapyProtocol` — all existing), `AppDatabase`, `GRDBEventStore`, `GRDBObjectStore`, enums (`.legacyImport`, `.careProtocol`, `.activity`).
 - Produces: `SwiftDataMigrator.run(context:database:force:) async throws -> Report` (`@MainActor`), `SwiftDataMigrator.isCompleted: Bool`, `SwiftDataMigrator.Report` (Codable struct of counters). Task 10's debug screen calls these.
 
-**Mapping rules (source of truth for the code below):**
+**Field audit (source of truth for the code below).** Every legacy field is either captured or listed as *dropped with a reason*. Every migrated event id is a **deterministic UUIDv5** derived from the legacy row id (+ ordinal), so re-running the migration upserts the same rows — row counts never grow on re-run.
 
-| Source | Destination |
-|---|---|
-| `LogEntry` (`itemType == .symptom`) | one `symptom` event per name in `symptoms` (fallback `[itemName]`); `value` = `Double(severity)` (legacy scale preserved as-is); `endTimestamp` = `endDate`; metadata: notes, affectedAreas, symptomTriggers, contributingFactors, category + legacy environment (moonPhase, atmosphericPressure, suddenChange, season, isMercuryRetrograde); `symptomPhotoData` saved to attachments dir; `isActive == false` → `deletedAt` set |
-| `LogEntry.treatments` | one `medication`/`supplement` event each (kind from `type` containing "supp") + `findOrCreate` object |
-| `LogEntry` (`itemType == .foodDrink`) | one `food` event, object = `findOrCreate(foodDrinkItem ?? itemName, .food)` |
-| `TrackedItem` | object only: kind from type (supplement/medication/food); metadata brand+notes; `!isActive` → archived |
-| `AvoidedItem` | object only: food/drink→`.food`, supplement→`.supplement`, activity→`.activity`; metadata avoided="true", reason, isRecommended |
-| `CabinetItem` | object only: category containing "med"→`.medication`, "device"→`.device`, else `.supplement`; metadata dosage, ingredients, quantity, stock fields |
-| `OngoingSymptom` | one `symptom` event with `endTimestamp`; metadata episodeID, isOpen, usedProtocolID |
-| `SymptomCheckIn` | one `symptom` event; `subtype` = parent symptom's name (fallback "check-in"); metadata episodeID |
-| `TherapyProtocol` | object only: `.careProtocol`; metadata instructions, frequency, duration, status, effectiveness, symptoms, tags. (`protocolMarker` adherence events are NOT reconstructable from legacy data — deliberately skipped.) |
+| Source | Destination & captured fields | Dropped (reason) |
+|---|---|---|
+| `LogEntry` (`.symptom`) | one `symptom` event per name in `symptoms` (fallback `[itemName]`), id = v5(`"logEntry:{id}:symptom:{name}"`); `value`=severity (legacy 1–5 scale as-is); `endTimestamp`=endDate; timestamp = date + timeOfDay; `isActive==false`→`deletedAt`; photo → attachment file; metadata: legacyID, notes, legacyCategory, subcategories, moonPhase, atmosphericPressure, suddenChange, season, isMercuryRetrograde, additionalContext, affectedAreas, symptomTriggers, contributingFactors, protocolID, protocolEffectiveness, protocolNotes, usedProtocolID, linkedTrackedItemID, resolutionFactor, isOngoing, legacyStartDate, recommendedProtocolID | raw `*Data` blobs (their decoded values are captured) |
+| `LogEntry.treatments[i]` | `medication`/`supplement` event (kind: `type` contains "supp"), id = v5(`"logEntry:{id}:treatment:{i}"`), + `findOrCreate` object; metadata: dosage, effectiveness, notes, fromLogEntry | — |
+| `LogEntry` (`.foodDrink`) | one `food` event, id = v5(`"logEntry:{id}:food"`), object = `findOrCreate(foodDrinkItem ?? itemName, .food)`; same metadata base as symptom | — |
+| `TrackedItem` | object: kind from type; metadata brand, notes, legacyStartDate; `!isActive`→archived | — |
+| `AvoidedItem` | object: food/drink→`.food`, supplement→`.supplement`, activity→`.activity`; metadata avoided, reason, isRecommended, dateAdded | — |
+| `CabinetItem` | object: category contains "med"→`.medication`, "device"→`.device`, else `.supplement`; metadata dosage, ingredients, quantity, notes, usageNotes, currentStock, refillThreshold, refillNotificationEnabled, usageCount, lastUsed | — |
+| `OngoingSymptom` | `symptom` event with `endTimestamp`, id = v5(`"ongoing:{id}"`); metadata episodeID, isOpen, notes, usedProtocolID, protocolNotes, protocolEffectiveness, protocolLastUpdated | — |
+| `SymptomCheckIn` | `symptom` event, id = v5(`"checkIn:{id}"`), subtype = parent name (fallback "check-in"); metadata episodeID, notes, protocolUsed, usedProtocolID, protocolEffectiveness, protocolNotes | — |
+| `TherapyProtocol` (+ its `items`) | object `.careProtocol`; metadata instructions, category, frequency, timeOfDay, duration, status, startDate, endDate, dateAdded, notes, isActive, isWishlist, enableReminder, reminderTime, completionDate, effectiveness, symptoms, tags, items (JSON array of {name, dosage, usageNotes, isCompleted, cabinetItemID}) | `associatedLogs` (inverse relationship — reconstructable via LogEntry's recommendedProtocolID); `createdDate` (duplicate of dateAdded); adherence history as `protocolMarker` events (no per-day records exist in legacy data) |
+| AI models (`UserProfile`, `AIMemory`, `MoodEntry`, …) | not migrated | AIMemory superseded by the Phase 2 engine; profile/mood migration deferred to Phase 1 when their graph representation is designed |
 
-Timestamps: `combine(day: entry.date, time: entry.timeOfDay)` merges the clock time when present. All migrated events: `source: .legacyImport`, `timezoneID = TimeZone.current.identifier`, `confidence: 1.0`.
+Timestamps: `combine(day: entry.date, time: entry.timeOfDay)` merges the clock time when present. All migrated events: `source: .legacyImport`, `timezoneID = TimeZone.current.identifier`, `confidence: 1.0`. Dates inside metadata are ISO-8601 strings. Attachment save failures do NOT abort the migration — they increment `Report.attachmentFailures` (a lost photo shouldn't lose the day's events; the legacy store still holds the photo).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1594,6 +1627,11 @@ struct SwiftDataMigratorTests {
         #expect(all.first?.subtype == "Headache")
         #expect(all.first?.value == 4)
         #expect(all.first?.source == .legacyImport)
+        let meta = try JSONDecoder().decode(
+            [String: String].self, from: all.first?.metadata ?? Data())
+        #expect(meta["legacyID"] == entry.id.uuidString)
+        #expect(meta["moonPhase"] == "Full Moon")
+        #expect(meta["notes"] == "after lunch")
     }
 
     @Test func migratesTrackedItemsWithDedup() async throws {
@@ -1639,6 +1677,126 @@ struct SwiftDataMigratorTests {
         #expect(all.allSatisfy { $0.category == .symptom })
         #expect(all.contains { $0.subtype == "Back pain" && $0.value == 5 }) // check-in inherits name
     }
+
+    @Test func forcedMigrationIsIdempotent() async throws {
+        let context = try makeContext()
+        context.insert(OngoingSymptom(
+            name: "Back pain", startDate: Date(timeIntervalSince1970: 1_740_000_000)))
+        try context.save()
+        let db = try AppDatabase.inMemory()
+        _ = try await SwiftDataMigrator.run(context: context, database: db, force: true)
+        _ = try await SwiftDataMigrator.run(context: context, database: db, force: true)
+        let eventCount = try await GRDBEventStore(database: db).count()
+        #expect(eventCount == 1) // deterministic ids: second run upserts, never duplicates
+    }
+
+    @Test func migratesFoodEntryAndTreatments() async throws {
+        let context = try makeContext()
+        let food = LogEntry(
+            itemName: "Lunch", itemType: .foodDrink, category: "Food",
+            symptoms: [], severity: 1, notes: "",
+            date: Date(timeIntervalSince1970: 1_740_000_000),
+            moonPhase: "", atmosphericPressure: "Normal",
+            suddenChange: false, isMercuryRetrograde: false, season: "Winter",
+            foodDrinkItem: "Cheese sandwich"
+        )
+        let symptom = LogEntry(
+            itemName: "Headache", itemType: .symptom, category: "Neurological",
+            symptoms: ["Headache"], severity: 5, notes: "",
+            date: Date(timeIntervalSince1970: 1_740_010_000),
+            moonPhase: "", atmosphericPressure: "Normal",
+            suddenChange: false, isMercuryRetrograde: false, season: "Winter",
+            treatments: [Treatment(
+                type: "Medication", name: "Ibuprofen",
+                startDate: Date(timeIntervalSince1970: 1_740_012_000),
+                endDate: nil, dosage: "400mg", effectiveness: 4, notes: nil)]
+        )
+        context.insert(food)
+        context.insert(symptom)
+        try context.save()
+
+        let db = try AppDatabase.inMemory()
+        let report = try await SwiftDataMigrator.run(context: context, database: db, force: true)
+
+        #expect(report.eventsCreated == 3) // food + symptom + treatment
+        let all = try await GRDBEventStore(database: db).recentEvents(limit: 10)
+        #expect(all.contains { $0.category == .food && $0.subtype == "Cheese sandwich" })
+        #expect(all.contains { $0.category == .medication && $0.subtype == "Ibuprofen" })
+        let objectCount = try await GRDBObjectStore(database: db).count()
+        #expect(objectCount == 2) // cheese sandwich + ibuprofen
+    }
+
+    @Test func migratesObjectsFromAvoidedCabinetAndProtocols() async throws {
+        let context = try makeContext()
+        context.insert(AvoidedItem(name: "Gluten", type: .food, reason: "bloating"))
+        context.insert(CabinetItem(name: "Ibuprofen", category: "Medications", currentStock: 12))
+        let proto = TherapyProtocol(
+            title: "Migraine protocol", category: "Pain Management",
+            instructions: "Dark room + magnesium", frequency: "As needed",
+            timeOfDay: "Evening", duration: "1 week", symptoms: ["Headache"],
+            startDate: Date(timeIntervalSince1970: 1_740_000_000)
+        )
+        context.insert(proto)
+        let item = TherapyProtocolItem(itemName: "Magnesium", parentProtocol: proto,
+                                       dosageOrQuantity: "400mg")
+        context.insert(item)
+        proto.items.append(item)
+        try context.save()
+
+        let db = try AppDatabase.inMemory()
+        let report = try await SwiftDataMigrator.run(context: context, database: db, force: true)
+
+        #expect(report.avoidedItemsMigrated == 1)
+        #expect(report.cabinetItemsMigrated == 1)
+        #expect(report.protocolsMigrated == 1)
+        let protocols = try await GRDBObjectStore(database: db)
+            .objects(kind: .careProtocol, includeArchived: true)
+        #expect(protocols.count == 1)
+        let meta = try JSONDecoder().decode(
+            [String: String].self, from: protocols.first?.metadata ?? Data())
+        #expect(meta["items"]?.contains("Magnesium") == true)
+        #expect(meta["category"] == "Pain Management")
+    }
+
+    @Test func sourceStoreUntouchedAndFlagRespected() async throws {
+        let context = try makeContext()
+        context.insert(TrackedItem(name: "Zinc", type: .supplement))
+        try context.save()
+        let db = try AppDatabase.inMemory()
+        _ = try await SwiftDataMigrator.run(context: context, database: db, force: true)
+        // legacy store is unchanged (read-only source)
+        let legacyCount = try context.fetchCount(FetchDescriptor<TrackedItem>())
+        #expect(legacyCount == 1)
+        // the completed flag short-circuits non-forced runs
+        UserDefaults.standard.set(true, forKey: SwiftDataMigrator.completedFlagKey)
+        let skipped = try await SwiftDataMigrator.run(context: context, database: db, force: false)
+        #expect(skipped == SwiftDataMigrator.Report())
+        UserDefaults.standard.removeObject(forKey: SwiftDataMigrator.completedFlagKey)
+    }
+
+    @Test func savesAttachmentFileToDisk() async throws {
+        let context = try makeContext()
+        let entry = LogEntry(
+            itemName: "Rash", itemType: .symptom, category: "Skin",
+            symptoms: ["Rash"], severity: 3, notes: "",
+            date: Date(timeIntervalSince1970: 1_740_000_000),
+            moonPhase: "", atmosphericPressure: "Normal",
+            suddenChange: false, isMercuryRetrograde: false, season: "Winter",
+            symptomPhotoData: Data([0xFF, 0xD8, 0xFF, 0xE0])
+        )
+        context.insert(entry)
+        try context.save()
+
+        let db = try AppDatabase.inMemory()
+        let report = try await SwiftDataMigrator.run(context: context, database: db, force: true)
+
+        #expect(report.attachmentsSaved == 1)
+        #expect(report.attachmentFailures == 0)
+        let file = try HealthGraphProvider.attachmentsDirectory()
+            .appendingPathComponent("\(entry.id.uuidString).jpg")
+        #expect(FileManager.default.fileExists(atPath: file.path))
+        try? FileManager.default.removeItem(at: file)
+    }
 }
 ```
 
@@ -1660,10 +1818,13 @@ Expected: compile FAILURE — `cannot find 'SwiftDataMigrator' in scope`
 ```swift
 import Foundation
 import SwiftData
+import CryptoKit
 import HealthGraphCore
 
 /// One-time SwiftData -> Health Graph migration. Reads the legacy store,
 /// never writes to it. Runs behind a completion flag; DEBUG screen can force.
+/// Every created event id is deterministic (UUIDv5 of the legacy row id),
+/// so re-runs upsert the same rows instead of duplicating them.
 struct SwiftDataMigrator {
 
     struct Report: Codable, Equatable {
@@ -1677,6 +1838,7 @@ struct SwiftDataMigrator {
         var eventsCreated = 0
         var objectsCreated = 0
         var attachmentsSaved = 0
+        var attachmentFailures = 0
     }
 
     static let completedFlagKey = "hg.migration.v1.completed"
@@ -1694,27 +1856,42 @@ struct SwiftDataMigrator {
         let objects = GRDBObjectStore(database: database)
         var report = Report()
         let tz = TimeZone.current.identifier
+        let iso = ISO8601DateFormatter()
 
         // --- LogEntry -> events ---
         for entry in try context.fetch(FetchDescriptor<LogEntry>()) {
             let ts = combine(day: entry.date, time: entry.timeOfDay)
             let deletedAt: Date? = entry.isActive ? nil : Date()
-            var meta: [String: String] = [:]
+            var meta: [String: String] = ["legacyID": entry.id.uuidString]
             if !entry.notes.isEmpty { meta["notes"] = entry.notes }
             if !entry.category.isEmpty { meta["legacyCategory"] = entry.category }
+            if !entry.subcategories.isEmpty { meta["subcategories"] = entry.subcategories.joined(separator: "|") }
             if !entry.moonPhase.isEmpty { meta["moonPhase"] = entry.moonPhase }
             meta["atmosphericPressure"] = entry.atmosphericPressure
             meta["suddenChange"] = String(entry.suddenChange)
             if !entry.season.isEmpty { meta["season"] = entry.season }
             meta["isMercuryRetrograde"] = String(entry.isMercuryRetrograde)
             if !entry.additionalContext.isEmpty { meta["additionalContext"] = entry.additionalContext }
+            if let v = entry.protocolID { meta["protocolID"] = v.uuidString }
+            if let v = entry.protocolEffectiveness { meta["protocolEffectiveness"] = String(v) }
+            if let v = entry.protocolNotes, !v.isEmpty { meta["protocolNotes"] = v }
+            if let v = entry.usedProtocolID { meta["usedProtocolID"] = v.uuidString }
+            if let v = entry.linkedTrackedItemID { meta["linkedTrackedItemID"] = v.uuidString }
+            if let v = entry.resolutionFactor { meta["resolutionFactor"] = v.rawValue }
+            if let v = entry.isOngoing { meta["isOngoing"] = String(v) }
+            if let v = entry.startDate { meta["legacyStartDate"] = iso.string(from: v) }
+            if let v = entry.recommendedProtocol { meta["recommendedProtocolID"] = v.id.uuidString }
 
             switch entry.itemType {
             case .symptom:
                 var attachmentPath: String?
                 if let photo = entry.symptomPhotoData {
-                    attachmentPath = try? saveAttachment(photo, id: entry.id)
-                    if attachmentPath != nil { report.attachmentsSaved += 1 }
+                    do {
+                        attachmentPath = try saveAttachment(photo, id: entry.id)
+                        report.attachmentsSaved += 1
+                    } catch {
+                        report.attachmentFailures += 1
+                    }
                 }
                 let names = entry.symptoms.isEmpty ? [entry.itemName] : entry.symptoms
                 for name in names {
@@ -1729,6 +1906,7 @@ struct SwiftDataMigrator {
                         m["contributingFactors"] = entry.contributingFactors.joined(separator: "|")
                     }
                     try await events.save(HealthEvent(
+                        id: .deterministic("logEntry:\(entry.id.uuidString):symptom:\(name)"),
                         timestamp: ts, timezoneID: tz, endTimestamp: entry.endDate,
                         category: .symptom, subtype: name,
                         value: Double(entry.severity), source: .legacyImport,
@@ -1737,7 +1915,7 @@ struct SwiftDataMigrator {
                     ))
                     report.eventsCreated += 1
                 }
-                for treatment in entry.treatments {
+                for (index, treatment) in entry.treatments.enumerated() {
                     let isSupplement = treatment.type.lowercased().contains("supp")
                     let kind: ObjectKind = isSupplement ? .supplement : .medication
                     let object = try await objects.findOrCreate(
@@ -1745,7 +1923,9 @@ struct SwiftDataMigrator {
                     var m: [String: String] = ["fromLogEntry": entry.id.uuidString]
                     if let dosage = treatment.dosage { m["dosage"] = dosage }
                     if let eff = treatment.effectiveness { m["effectiveness"] = String(eff) }
+                    if let notes = treatment.notes, !notes.isEmpty { m["notes"] = notes }
                     try await events.save(HealthEvent(
+                        id: .deterministic("logEntry:\(entry.id.uuidString):treatment:\(index)"),
                         timestamp: treatment.startDate, timezoneID: tz,
                         endTimestamp: treatment.endDate,
                         category: isSupplement ? .supplement : .medication,
@@ -1759,6 +1939,7 @@ struct SwiftDataMigrator {
                 let object = try await objects.findOrCreate(
                     name: foodName, kind: .food, metadata: nil)
                 try await events.save(HealthEvent(
+                    id: .deterministic("logEntry:\(entry.id.uuidString):food"),
                     timestamp: ts, timezoneID: tz, category: .food,
                     subtype: foodName, objectID: object.id,
                     source: .legacyImport, metadata: encode(meta),
@@ -1777,7 +1958,7 @@ struct SwiftDataMigrator {
             case .medication: kind = .medication
             case .food: kind = .food
             }
-            var m: [String: String] = [:]
+            var m: [String: String] = ["legacyStartDate": iso.string(from: item.startDate)]
             if let brand = item.brand { m["brand"] = brand }
             if !item.notes.isEmpty { m["notes"] = item.notes }
             let object = try await objects.findOrCreate(
@@ -1797,7 +1978,8 @@ struct SwiftDataMigrator {
             case .activity: kind = .activity
             }
             var m: [String: String] = ["avoided": "true",
-                                       "isRecommended": String(item.isRecommended)]
+                                       "isRecommended": String(item.isRecommended),
+                                       "dateAdded": iso.string(from: item.dateAdded)]
             if let reason = item.reason { m["reason"] = reason }
             _ = try await objects.findOrCreate(name: item.name, kind: kind, metadata: encode(m))
             report.avoidedItemsMigrated += 1
@@ -1812,9 +1994,11 @@ struct SwiftDataMigrator {
             if let v = item.dosage { m["dosage"] = v }
             if let v = item.ingredients { m["ingredients"] = v }
             if let v = item.quantity { m["quantity"] = v }
+            if let v = item.notes { m["notes"] = v }
             if let v = item.usageNotes { m["usageNotes"] = v }
             if let v = item.currentStock { m["currentStock"] = String(v) }
             if let v = item.refillThreshold { m["refillThreshold"] = String(v) }
+            if let v = item.lastUsed { m["lastUsed"] = iso.string(from: v) }
             m["refillNotificationEnabled"] = String(item.refillNotificationEnabled)
             m["usageCount"] = String(item.usageCount)
             _ = try await objects.findOrCreate(name: item.name, kind: kind, metadata: encode(m))
@@ -1828,8 +2012,12 @@ struct SwiftDataMigrator {
             var m: [String: String] = ["episodeID": symptom.id.uuidString,
                                        "isOpen": String(symptom.isOpen)]
             if !symptom.notes.isEmpty { m["notes"] = symptom.notes }
-            if let pid = symptom.usedProtocolID { m["usedProtocolID"] = pid.uuidString }
+            if let v = symptom.usedProtocolID { m["usedProtocolID"] = v.uuidString }
+            if let v = symptom.protocolNotes, !v.isEmpty { m["protocolNotes"] = v }
+            if let v = symptom.protocolEffectiveness { m["protocolEffectiveness"] = String(v) }
+            if let v = symptom.protocolLastUpdated { m["protocolLastUpdated"] = iso.string(from: v) }
             try await events.save(HealthEvent(
+                id: .deterministic("ongoing:\(symptom.id.uuidString)"),
                 timestamp: symptom.startDate, timezoneID: tz,
                 endTimestamp: symptom.endDate, category: .symptom,
                 subtype: symptom.name, source: .legacyImport, metadata: encode(m)
@@ -1841,7 +2029,11 @@ struct SwiftDataMigrator {
             var m: [String: String] = ["episodeID": checkIn.parentSymptomID.uuidString]
             if !checkIn.notes.isEmpty { m["notes"] = checkIn.notes }
             if !checkIn.protocolUsed.isEmpty { m["protocolUsed"] = checkIn.protocolUsed }
+            if let v = checkIn.usedProtocolID { m["usedProtocolID"] = v.uuidString }
+            if let v = checkIn.protocolEffectiveness { m["protocolEffectiveness"] = String(v) }
+            if let v = checkIn.protocolNotes, !v.isEmpty { m["protocolNotes"] = v }
             try await events.save(HealthEvent(
+                id: .deterministic("checkIn:\(checkIn.id.uuidString)"),
                 timestamp: checkIn.date, timezoneID: tz, category: .symptom,
                 subtype: episodeNames[checkIn.parentSymptomID] ?? "check-in",
                 value: Double(checkIn.severity), source: .legacyImport,
@@ -1851,20 +2043,41 @@ struct SwiftDataMigrator {
             report.checkInsMigrated += 1
         }
 
-        // --- TherapyProtocol -> objects ---
+        // --- TherapyProtocol (+ items) -> objects ---
         for proto in try context.fetch(FetchDescriptor<TherapyProtocol>()) {
             var m: [String: String] = [
                 "instructions": proto.instructions,
+                "category": proto.category,
                 "frequency": proto.frequency,
+                "timeOfDay": proto.timeOfDay,
                 "duration": proto.duration,
-                "status": proto.status
+                "status": proto.status,
+                "startDate": iso.string(from: proto.startDate),
+                "dateAdded": iso.string(from: proto.dateAdded),
+                "isActive": String(proto.isActive),
+                "isWishlist": String(proto.isWishlist),
+                "enableReminder": String(proto.enableReminder)
             ]
-            if let eff = proto.protocolEffectiveness { m["effectiveness"] = String(eff) }
+            if let v = proto.endDate { m["endDate"] = iso.string(from: v) }
+            if let v = proto.notes, !v.isEmpty { m["notes"] = v }
+            if let v = proto.reminderTime { m["reminderTime"] = iso.string(from: v) }
+            if let v = proto.completionDate { m["completionDate"] = iso.string(from: v) }
+            if let v = proto.protocolEffectiveness { m["effectiveness"] = String(v) }
             if let symptoms = proto.symptoms, !symptoms.isEmpty {
                 m["symptoms"] = symptoms.joined(separator: "|")
             }
             if let tags = proto.tags, !tags.isEmpty {
                 m["tags"] = tags.joined(separator: "|")
+            }
+            let items = proto.items.map { item -> [String: String] in
+                ["name": item.itemName,
+                 "dosage": item.dosageOrQuantity ?? "",
+                 "usageNotes": item.usageNotes ?? "",
+                 "isCompleted": String(item.isCompleted),
+                 "cabinetItemID": item.cabinetItem?.id.uuidString ?? ""]
+            }
+            if !items.isEmpty, let data = try? JSONEncoder().encode(items) {
+                m["items"] = String(data: data, encoding: .utf8) ?? ""
             }
             _ = try await objects.findOrCreate(
                 name: proto.title, kind: .careProtocol, metadata: encode(m))
@@ -1900,6 +2113,26 @@ struct SwiftDataMigrator {
         return "HealthGraph/attachments/\(id.uuidString).jpg"
     }
 }
+
+private extension UUID {
+    /// Namespace for migration-derived ids. NEVER change this value —
+    /// changing it breaks re-run idempotence against already-migrated data.
+    static let hgMigrationNamespace = UUID(uuidString: "8F1E4A2C-0B7D-4E5A-9C3F-2D6B1A0E7F45")!
+
+    /// RFC 4122 v5 (name-based, SHA-1): the same name always yields the same
+    /// UUID, so migration re-runs upsert rows instead of duplicating them.
+    static func deterministic(_ name: String) -> UUID {
+        var data = withUnsafeBytes(of: hgMigrationNamespace.uuid) { Data($0) }
+        data.append(Data(name.utf8))
+        var digest = Array(Insecure.SHA1.hash(data: data))
+        digest[6] = (digest[6] & 0x0F) | 0x50 // version 5
+        digest[8] = (digest[8] & 0x3F) | 0x80 // RFC 4122 variant
+        return UUID(uuid: (digest[0], digest[1], digest[2], digest[3],
+                           digest[4], digest[5], digest[6], digest[7],
+                           digest[8], digest[9], digest[10], digest[11],
+                           digest[12], digest[13], digest[14], digest[15]))
+    }
+}
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -1911,7 +2144,7 @@ xcodebuild -project "Food Intolerances.xcodeproj" -scheme "Food Intolerances" \
   -destination 'platform=iOS Simulator,name=iPhone 16' \
   test -only-testing:"Food IntolerancesTests/SwiftDataMigratorTests" 2>&1 | tail -10
 ```
-Expected: `** TEST SUCCEEDED **` (3 tests).
+Expected: `** TEST SUCCEEDED **` (8 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -1972,6 +2205,12 @@ struct HealthGraphDebugView: View {
                 .disabled(isWorking)
                 Button("Load synthetic dataset (400 days)") {
                     Task { await loadSynthetic() }
+                }
+                .disabled(isWorking)
+                // Migration is idempotent (deterministic ids); synthetic load
+                // APPENDS a fresh dataset each tap — reset first to reload.
+                Button("Reset Health Graph DB (delete all rows)", role: .destructive) {
+                    Task { await resetDatabase() }
                 }
                 .disabled(isWorking)
             }
@@ -2042,6 +2281,24 @@ struct HealthGraphDebugView: View {
         }
     }
 
+    private func resetDatabase() async {
+        // DEBUG-only exception to the soft-delete rule: a dev tool for
+        // reloading datasets. Never exists outside #if DEBUG.
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            _ = try await database.dbWriter.write { db in
+                try HealthEvent.deleteAll(db)
+                try Relationship.deleteAll(db)
+                try HealthObject.deleteAll(db)
+            }
+            report = nil
+            await refresh()
+        } catch {
+            errorMessage = String(describing: error)
+        }
+    }
+
     private func reportText(_ r: SwiftDataMigrator.Report) -> String {
         """
         logEntries: \(r.logEntriesMigrated)  tracked: \(r.trackedItemsMigrated)
@@ -2058,16 +2315,12 @@ struct HealthGraphDebugView: View {
 
 - [ ] **Step 2: Add the entry point in MoreView**
 
-Open `MoreView.swift`, locate its main `List`/menu content, and add this snippet as the last section (adjusting only indentation; if MoreView is not inside a `NavigationStack`/`NavigationView`, wrap the link's destination in one):
+`MoreView.swift` already has a DEBUG-only Developer section (`#if DEBUG` around line 91: `Section(header: Text("Developer"))`). Add this link INSIDE that existing section — do not create a second Developer section:
 
 ```swift
-#if DEBUG
-Section("Developer") {
-    NavigationLink("Health Graph Debug") {
-        HealthGraphDebugView()
-    }
+NavigationLink("Health Graph Debug") {
+    HealthGraphDebugView()
 }
-#endif
 ```
 
 - [ ] **Step 3: Full verification — package tests, app tests, build**
@@ -2080,11 +2333,11 @@ xcodebuild -project "Food Intolerances.xcodeproj" -scheme "Food Intolerances" \
   -destination 'platform=iOS Simulator,name=iPhone 16' \
   test -only-testing:"Food IntolerancesTests/SwiftDataMigratorTests" 2>&1 | tail -3
 ```
-Expected: package `Test run with 25 tests passed`; app `** TEST SUCCEEDED **`.
+Expected: package `Test run with 26 tests passed`; app `** TEST SUCCEEDED **`.
 
 - [ ] **Step 4: Manual smoke test (human or simulator-driving agent)**
 
-Launch the app in the simulator, open More → Health Graph Debug: counts show 0; tap "Load synthetic dataset" → Events count jumps to several hundred and the last-20 list fills; tap "Run SwiftData migration (force)" → report appears with legacy counts.
+Launch the app in the simulator, open More → Health Graph Debug: counts show 0; tap "Load synthetic dataset" → Events count jumps to several hundred and the last-20 list fills; tap "Run SwiftData migration (force)" twice → report appears with legacy counts and the Events count is the SAME after the second tap (idempotence); tap "Reset Health Graph DB" → counts return to 0.
 
 - [ ] **Step 5: Commit**
 
@@ -2098,8 +2351,10 @@ git commit -m "feat(app): DEBUG Health Graph inspector with migration and synthe
 
 ## Done criteria (Phase 0 exit)
 
-- `swift test` in `HealthGraphCore`: 25 tests green.
-- App test target: 3 migrator tests green; app builds and runs.
+- `swift test` in `HealthGraphCore`: 26 tests green.
+- App test target: 8 migrator tests green; app builds and runs.
+- Forced migration is idempotent: running it twice leaves row counts unchanged
+  (deterministic UUIDv5 event ids).
 - Debug screen shows event/object counts; synthetic dataset loads; forced migration produces a plausible report against Leo's real data (verified manually).
 - The SwiftData store is untouched (app still runs on it — feature work moves to the graph in Phase 1).
 - Spec deltas recorded: `EventSource.legacyImport`, `ObjectKind.activity`, `ObjectKind.careProtocol = "protocol"` (spec §4 updated alongside this plan).
