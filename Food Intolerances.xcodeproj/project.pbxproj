@@ -23,6 +23,8 @@
 		B31A1E972D837B780024D855 /* EnvironmentalDataService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B31A1E962D837B780024D855 /* EnvironmentalDataService.swift */; };
 		B31A1E992D837C0B0024D855 /* NotificationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B31A1E982D837C0B0024D855 /* NotificationSettingsView.swift */; };
 		B32086572D2ECC56007EBB69 /* StringArrayTransformer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B32086562D2ECC56007EBB69 /* StringArrayTransformer.swift */; };
+		B3473B6F2FFA8B8C0098F5E4 /* HealthGraphCore in Frameworks */ = {isa = PBXBuildFile; productRef = B3473B6E2FFA8B8C0098F5E4 /* HealthGraphCore */; };
+		B3473B712FFA91500098F5E4 /* HealthGraphCore in Frameworks */ = {isa = PBXBuildFile; productRef = B3473B702FFA91500098F5E4 /* HealthGraphCore */; };
 		B34C6B302D3C5D4C00ECFFF0 /* Symptom.swift in Sources */ = {isa = PBXBuildFile; fileRef = B34C6B2F2D3C5D4C00ECFFF0 /* Symptom.swift */; };
 		B34C6B362D3C5D9A00ECFFF0 /* ActiveProtocolsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B34C6B352D3C5D9A00ECFFF0 /* ActiveProtocolsSection.swift */; };
 		B34C6B3C2D3C5FE500ECFFF0 /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B34C6B3B2D3C5FE500ECFFF0 /* MainTabView.swift */; };
@@ -275,6 +277,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B3473B6F2FFA8B8C0098F5E4 /* HealthGraphCore in Frameworks */,
 				B37132212D79115B0019E603 /* WebKit.framework in Frameworks */,
 				B371321F2D79114E0019E603 /* SafariServices.framework in Frameworks */,
 				B3B539CA2D322CF0003132AF /* SwiftAA in Frameworks */,
@@ -285,6 +288,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B3473B712FFA91500098F5E4 /* HealthGraphCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -442,6 +446,7 @@
 			name = "Food Intolerances";
 			packageProductDependencies = (
 				B3B539C92D322CF0003132AF /* SwiftAA */,
+				B3473B6E2FFA8B8C0098F5E4 /* HealthGraphCore */,
 			);
 			productName = "Food Intolerances";
 			productReference = B334267F2D13998700BAAE35 /* Food Intolerances.app */;
@@ -465,6 +470,7 @@
 			);
 			name = "Food IntolerancesTests";
 			packageProductDependencies = (
+				B3473B702FFA91500098F5E4 /* HealthGraphCore */,
 			);
 			productName = "Food IntolerancesTests";
 			productReference = B33426932D13998800BAAE35 /* Food IntolerancesTests.xctest */;
@@ -527,6 +533,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				B3B539C82D322CF0003132AF /* XCRemoteSwiftPackageReference "SwiftAA" */,
+				B3473B6D2FFA8B8C0098F5E4 /* XCLocalSwiftPackageReference "HealthGraphCore" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = B33426802D13998700BAAE35 /* Products */;
@@ -1002,6 +1009,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		B3473B6D2FFA8B8C0098F5E4 /* XCLocalSwiftPackageReference "HealthGraphCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = HealthGraphCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		B3B539C02D3213F5003132AF /* XCRemoteSwiftPackageReference "SwiftAA" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -1022,6 +1036,15 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		B3473B6E2FFA8B8C0098F5E4 /* HealthGraphCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = HealthGraphCore;
+		};
+		B3473B702FFA91500098F5E4 /* HealthGraphCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B3473B6D2FFA8B8C0098F5E4 /* XCLocalSwiftPackageReference "HealthGraphCore" */;
+			productName = HealthGraphCore;
+		};
 		B3B539C42D3229A3003132AF /* SwiftAA */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = B3B539C02D3213F5003132AF /* XCRemoteSwiftPackageReference "SwiftAA" */;
