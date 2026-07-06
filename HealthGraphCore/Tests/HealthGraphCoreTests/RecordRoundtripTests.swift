@@ -44,4 +44,17 @@ struct RecordRoundtripTests {
         #expect(fetched == rel)
         #expect(fetched?.status == .candidate)
     }
+
+    @Test func softDeletedEventRoundtripsWithDeletedAt() throws {
+        let db = try AppDatabase.inMemory()
+        let t = Date(timeIntervalSince1970: 1_750_000_000)
+        let event = HealthEvent(
+            timestamp: t, category: .symptom, subtype: "headache",
+            source: .manual, createdAt: t, deletedAt: t.addingTimeInterval(60)
+        )
+        try db.dbWriter.write { try event.insert($0) }
+        let fetched = try db.dbWriter.read { try HealthEvent.fetchOne($0, key: event.id) }
+        #expect(fetched == event)
+        #expect(fetched?.deletedAt == t.addingTimeInterval(60))
+    }
 }

@@ -55,4 +55,20 @@ struct ObjectStoreTests {
             try db.dbWriter.write { try b.insert($0) }
         }
     }
+
+    @Test func findOrCreateMatchKeepsExistingMetadata() async throws {
+        let db = try AppDatabase.inMemory()
+        let store = GRDBObjectStore(database: db)
+        let original = try JSONEncoder().encode(["brand": "NOW Foods"])
+        let first = try await store.findOrCreate(name: "Zinc 25mg", kind: .supplement,
+                                                 metadata: original)
+        // The migrator and ingest paths depend on this: a match returns the
+        // EXISTING object untouched — later metadata never overwrites earlier.
+        let second = try await store.findOrCreate(name: "zinc", kind: .supplement,
+                                                  metadata: try JSONEncoder().encode(["brand": "other"]))
+        #expect(second.id == first.id)
+        #expect(second.metadata == original)
+        let refetched = try await store.object(id: first.id)
+        #expect(refetched?.metadata == original)
+    }
 }

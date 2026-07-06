@@ -33,4 +33,37 @@ struct AppDatabaseTests {
         _ = try AppDatabase.open(at: url) // must not throw on second open
         try? FileManager.default.removeItem(at: dir)
     }
+
+    @Test func relationshipCheckConstraintsRejectEmptyEndpoints() throws {
+        let db = try AppDatabase.inMemory()
+        let now = Date(timeIntervalSince1970: 1_750_000_000)
+        // No fromObjectID/fromCategory: violates the "one endpoint per side" CHECK.
+        let bad = Relationship(
+            toCategory: "symptom", type: .possibleTrigger,
+            firstSeen: now, lastSeen: now, lastRecomputed: now
+        )
+        #expect(throws: DatabaseError.self) {
+            try db.dbWriter.write { try bad.insert($0) }
+        }
+    }
+
+    @Test func eraseAllRowsEmptiesEveryTable() async throws {
+        let db = try AppDatabase.inMemory()
+        let now = Date(timeIntervalSince1970: 1_750_000_000)
+        // async test context -> GRDB resolves to the async write/read overloads,
+        // so both calls need `await` (unlike the sync throws-tests above).
+        try await db.dbWriter.write { d in
+            try HealthObject(kind: .food, name: "milk", createdAt: now).insert(d)
+            try HealthEvent(timestamp: now, category: .food, subtype: "milk",
+                            source: .manual, createdAt: now).insert(d)
+            try Relationship(fromCategory: "food", toCategory: "symptom",
+                             type: .possibleTrigger, firstSeen: now,
+                             lastSeen: now, lastRecomputed: now).insert(d)
+        }
+        try await db.eraseAllRows()
+        let counts = try await db.dbWriter.read { d in
+            try (HealthEvent.fetchCount(d), HealthObject.fetchCount(d), Relationship.fetchCount(d))
+        }
+        #expect(counts == (0, 0, 0))
+    }
 }

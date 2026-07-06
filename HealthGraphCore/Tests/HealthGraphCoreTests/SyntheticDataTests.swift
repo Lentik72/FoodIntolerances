@@ -46,7 +46,11 @@ struct SyntheticDataTests {
         #expect(conditional > 0.55 && conditional < 0.85) // planted 0.7
 
         // base rate on non-exposure days stays low
-        let cal = Calendar(identifier: .gregorian)
+        // (UTC-pinned: the generator emits UTC timestamps; a host-local
+        // calendar would shift day boundaries and make the test result
+        // depend on the machine's timezone)
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
         let exposureDays = Set(exposures.map { cal.startOfDay(for: $0.timestamp) })
         let spontaneous = outcomes.filter { outcome in
             !exposureDays.contains(cal.startOfDay(for: outcome.timestamp.addingTimeInterval(-12 * 3600)))
