@@ -94,7 +94,7 @@ public final class AppleHealthExportParser: NSObject, XMLParserDelegate {
             guard let value = attrs["value"].flatMap(Double.init), let unit = attrs["unit"] else {
                 recordsSkipped += 1; return
             }
-            append(HealthKitSampleMapper.map(
+            try append(HealthKitSampleMapper.map(
                 QuantitySampleData(identifier: type, start: start, end: end,
                                    value: value, unit: unit, timezoneID: nil),
                 source: .healthExportFile))
@@ -105,7 +105,7 @@ public final class AppleHealthExportParser: NSObject, XMLParserDelegate {
                   let intValue = HealthKitSampleMapper.categoryValue(fromExportString: raw) else {
                 recordsSkipped += 1; return
             }
-            append(HealthKitSampleMapper.map(
+            try append(HealthKitSampleMapper.map(
                 CategorySampleData(identifier: type, start: start, end: end,
                                    value: intValue, timezoneID: nil),
                 source: .healthExportFile))
@@ -121,7 +121,7 @@ public final class AppleHealthExportParser: NSObject, XMLParserDelegate {
         recordsRead += 1
         var name = rawType.replacingOccurrences(of: "HKWorkoutActivityType", with: "")
         name = name.prefix(1).lowercased() + name.dropFirst()
-        append(HealthKitSampleMapper.map(
+        try append(HealthKitSampleMapper.map(
             WorkoutData(activityName: name, start: start, end: end,
                         kcal: attrs["totalEnergyBurned"].flatMap(Double.init),
                         distanceKm: attrs["totalDistance"].flatMap(Double.init),
@@ -129,11 +129,11 @@ public final class AppleHealthExportParser: NSObject, XMLParserDelegate {
             source: .healthExportFile))
     }
 
-    private func append(_ event: HealthEvent?) {
+    private func append(_ event: HealthEvent?) throws {
         guard let event else { recordsSkipped += 1; return }
         buffer.append(event)
         if buffer.count >= IngestPipeline.batchSize {
-            do { try flushBuffer() } catch { parseError = error }
+            try flushBuffer()
         }
     }
 

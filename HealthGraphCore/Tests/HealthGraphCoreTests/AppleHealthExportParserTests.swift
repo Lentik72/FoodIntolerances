@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import GRDB
 import ZIPFoundation
 @testable import HealthGraphCore
 
@@ -72,6 +73,33 @@ struct AppleHealthExportParserTests {
         let second = try parser.parse(xmlAt: url, progress: nil)
         #expect(second.summary.inserted == 0)
         #expect(try await GRDBEventStore(database: db).count() == 5)
+    }
+
+    @Test func malformedXMLThrows() throws {
+        let db = try AppDatabase.inMemory()
+        let malformed = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <HealthData locale="en_US">
+         <Record type="HKQuantityTypeIdentifierBodyMass" <<<garbage
+        """
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString).xml")
+        try malformed.write(to: url, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(throws: (any Error).self) {
+            _ = try AppleHealthExportParser(database: db).parse(xmlAt: url, progress: nil)
+        }
+    }
+
+    @Test func flushFailureSurfacesFromParse() throws {
+        let db = try AppDatabase.inMemory()
+        // Test-only sabotage: break the schema so the flush write fails.
+        try db.dbWriter.write { try $0.execute(sql: "DROP TABLE health_events") }
+        let url = try writeFixture()
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(throws: (any Error).self) {
+            _ = try AppleHealthExportParser(database: db).parse(xmlAt: url, progress: nil)
+        }
     }
 
     @Test func extractsExportXMLFromZip() throws {
