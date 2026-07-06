@@ -3,6 +3,7 @@ import SwiftUI
 import SwiftData
 import HealthGraphCore
 import UniformTypeIdentifiers
+import UIKit
 
 /// DEBUG-only inspector for the Health Graph database. Phase 0's only UI.
 struct HealthGraphDebugView: View {
@@ -19,6 +20,7 @@ struct HealthGraphDebugView: View {
     @State private var countsBySource: [String: Int] = [:]
     @State private var lastIngestSummary: String?
     @State private var showingImporter = false
+    @State private var importProgress: Int?
 
     private var database: AppDatabase { HealthGraphProvider.shared }
 
@@ -76,6 +78,10 @@ struct HealthGraphDebugView: View {
                         .font(.caption.monospaced())
                 }
                 Button("Import export.zip / export.xml…") { showingImporter = true }
+                if let importProgress {
+                    Text("importing… \(importProgress) records read — large exports take many minutes; keep the app open")
+                        .font(.caption.monospaced())
+                }
                 Button("Emit environmental events now") {
                     Task {
                         errorMessage = nil
@@ -210,7 +216,13 @@ struct HealthGraphDebugView: View {
     private func importExport(_ result: Result<[URL], Error>) async {
         errorMessage = nil
         isWorking = true
-        defer { isWorking = false }
+        importProgress = 0
+        UIApplication.shared.isIdleTimerDisabled = true
+        defer {
+            isWorking = false
+            importProgress = nil
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
         do {
             guard let picked = try result.get().first else { return }
             guard picked.startAccessingSecurityScopedResource() else {
@@ -227,8 +239,13 @@ struct HealthGraphDebugView: View {
                 ? try ExportArchive.extractExportXML(from: local)
                 : local
             let db = database
+            // AppleHealthExportParser.flushBuffer() calls `progress?(recordsRead)`
+            // once per IngestPipeline.batchSize (500) buffered events — that's
+            // already a sane UI update cadence, so no extra modulo throttle here.
             let parseResult = try await Task.detached(priority: .userInitiated) {
-                try AppleHealthExportParser(database: db).parse(xmlAt: xmlURL, progress: nil)
+                try AppleHealthExportParser(database: db).parse(xmlAt: xmlURL) { count in
+                    Task { @MainActor in importProgress = count }
+                }
             }.value
             lastIngestSummary = summ(parseResult.summary)
                 + " · read \(parseResult.recordsRead) · unmapped \(parseResult.recordsSkipped)"
