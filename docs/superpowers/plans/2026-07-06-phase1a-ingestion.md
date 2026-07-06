@@ -2444,7 +2444,7 @@ public enum EnvironmentalEventFactory {
 - [ ] **Step 4: Run the package suite**
 
 Run: `cd /Users/leo/Desktop/FoodIntolerances/HealthGraphCore && swift test 2>&1 | tail -3`
-Expected: `Test run with 68 tests in 11 suites passed` (62 + 6 new).
+Expected: `Test run with 70 tests in 11 suites passed` (64 + 6 new; the Task 7 fix loop added two error-path parser tests).
 
 - [ ] **Step 5: Implement the app emitter**
 
@@ -2700,7 +2700,7 @@ xcodebuild -project "Food Intolerances.xcodeproj" -scheme "Food Intolerances" \
   | grep -E "Test .* (started|passed|failed)|Restarting|TEST"
 ```
 
-Expected: 68 package tests pass; app suite shows the documented 8-pass/1-crash pattern.
+Expected: 70 package tests pass; app suite shows the documented 8-pass/1-crash pattern.
 
 - [ ] **Step 3: HUMAN CHECKPOINT — on-device smoke test (~10 minutes)**
 
@@ -2727,7 +2727,7 @@ git commit -m "feat(app): debug ingestion panel — backfill, export import, env
 
 ## Done criteria (Phase 1A exit)
 
-- Package suite ≈ 68 tests green (`swift test`), zero warnings; app builds and its migrator suite shows the documented 8-pass/1-known-crash pattern under `-parallel-testing-enabled NO`.
+- Package suite ≈ 70 tests green (`swift test`), zero warnings; app builds and its migrator suite shows the documented 8-pass/1-known-crash pattern under `-parallel-testing-enabled NO`.
 - Deployment floor is iOS 26.0 everywhere; the package floor is `.iOS(.v26)` under `swift-tools-version: 6.2`.
 - Migration v2 (`dedupKey` + partial unique index + `idx_events_category_subtype_timestamp`) is the ONLY schema change, registered in the migrator.
 - One-year HealthKit backfill runs from the debug panel with visible progress, is idempotent on re-run, and its elapsed time is recorded against the spec's ~2-minute budget (verified live at the human checkpoint).
