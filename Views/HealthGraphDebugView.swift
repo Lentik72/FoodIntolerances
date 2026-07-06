@@ -2,6 +2,7 @@
 import SwiftUI
 import SwiftData
 import HealthGraphCore
+import UniformTypeIdentifiers
 
 /// DEBUG-only inspector for the Health Graph database. Phase 0's only UI.
 struct HealthGraphDebugView: View {
@@ -13,6 +14,11 @@ struct HealthGraphDebugView: View {
     @State private var report: SwiftDataMigrator.Report?
     @State private var errorMessage: String?
     @State private var isWorking = false
+    @StateObject private var ingestor = HealthKitIngestor()
+    @State private var countsByCategory: [String: Int] = [:]
+    @State private var countsBySource: [String: Int] = [:]
+    @State private var lastIngestSummary: String?
+    @State private var showingImporter = false
 
     private var database: AppDatabase { HealthGraphProvider.shared }
 
@@ -45,6 +51,66 @@ struct HealthGraphDebugView: View {
                 }
                 .disabled(isWorking)
             }
+            Section("Ingestion") {
+                Button("Request HealthKit access") {
+                    Task {
+                        errorMessage = nil
+                        do { try await ingestor.requestAuthorization() }
+                        catch { errorMessage = String(describing: error) }
+                    }
+                }
+                Button(ingestor.isRunning ? "Backfilling…" : "Backfill HealthKit (1 year)") {
+                    Task {
+                        errorMessage = nil
+                        do {
+                            let summary = try await ingestor.backfill()
+                            lastIngestSummary = summ(summary)
+                            ingestor.startObserving()
+                            await refresh()
+                        } catch { errorMessage = String(describing: error) }
+                    }
+                }
+                .disabled(ingestor.isRunning)
+                if let p = ingestor.progress {
+                    Text("\(p.completedSteps)/\(p.totalSteps) · \(p.currentStep) · \(p.eventsIngested) events")
+                        .font(.caption.monospaced())
+                }
+                Button("Import export.zip / export.xml…") { showingImporter = true }
+                Button("Emit environmental events now") {
+                    Task {
+                        errorMessage = nil
+                        // clear the day guard so the button always works
+                        UserDefaults.standard.removeObject(
+                            forKey: EnvironmentalEventEmitter.lastEmitDayKey)
+                        await EnvironmentalEventEmitter.emitIfNeeded(
+                            service: EnvironmentalDataService())
+                        await refresh()
+                    }
+                }
+                Button("Backfill environmental history (1 year)") {
+                    Task {
+                        errorMessage = nil
+                        do {
+                            let summary = try await EnvironmentalEventEmitter.backfillDerived()
+                            lastIngestSummary = summ(summary)
+                            await refresh()
+                        } catch { errorMessage = String(describing: error) }
+                    }
+                }
+                if let lastIngestSummary {
+                    Text(lastIngestSummary).font(.caption.monospaced())
+                }
+            }
+            Section("Counts by source") {
+                ForEach(countsBySource.sorted(by: { $0.key < $1.key }), id: \.key) { key, n in
+                    LabeledContent(key, value: "\(n)")
+                }
+            }
+            Section("Counts by category") {
+                ForEach(countsByCategory.sorted(by: { $0.key < $1.key }), id: \.key) { key, n in
+                    LabeledContent(key, value: "\(n)")
+                }
+            }
             if let report {
                 Section("Last migration report") {
                     Text(reportText(report)).font(.caption.monospaced())
@@ -65,6 +131,11 @@ struct HealthGraphDebugView: View {
         }
         .navigationTitle("Health Graph Debug")
         .task { await refresh() }
+        .fileImporter(isPresented: $showingImporter,
+                      allowedContentTypes: [.zip, .xml],
+                      allowsMultipleSelection: false) { result in
+            Task { await importExport(result) }
+        }
     }
 
     private func refresh() async {
@@ -74,6 +145,8 @@ struct HealthGraphDebugView: View {
             objectCount = try await GRDBObjectStore(database: database).count()
             relationshipCount = try await GRDBRelationshipStore(database: database).count()
             recent = try await GRDBEventStore(database: database).recentEvents(limit: 20)
+            countsByCategory = try await GRDBEventStore(database: database).countsByCategory()
+            countsBySource = try await GRDBEventStore(database: database).countsBySource()
         } catch {
             errorMessage = String(describing: error)
         }
@@ -124,6 +197,41 @@ struct HealthGraphDebugView: View {
         do {
             try await database.eraseAllRows()
             report = nil
+            await refresh()
+        } catch {
+            errorMessage = String(describing: error)
+        }
+    }
+
+    private func summ(_ s: IngestSummary) -> String {
+        "inserted \(s.inserted) · updated \(s.updated) · skipped \(s.skipped) · replaced \(s.replaced)"
+    }
+
+    private func importExport(_ result: Result<[URL], Error>) async {
+        errorMessage = nil
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            guard let picked = try result.get().first else { return }
+            guard picked.startAccessingSecurityScopedResource() else {
+                errorMessage = "No permission to read the selected file"
+                return
+            }
+            defer { picked.stopAccessingSecurityScopedResource() }
+            // copy out of the security scope so parsing can run detached
+            let local = FileManager.default.temporaryDirectory
+                .appendingPathComponent(picked.lastPathComponent)
+            try? FileManager.default.removeItem(at: local)
+            try FileManager.default.copyItem(at: picked, to: local)
+            let xmlURL = picked.pathExtension.lowercased() == "zip"
+                ? try ExportArchive.extractExportXML(from: local)
+                : local
+            let db = database
+            let parseResult = try await Task.detached(priority: .userInitiated) {
+                try AppleHealthExportParser(database: db).parse(xmlAt: xmlURL, progress: nil)
+            }.value
+            lastIngestSummary = summ(parseResult.summary)
+                + " · read \(parseResult.recordsRead) · unmapped \(parseResult.recordsSkipped)"
             await refresh()
         } catch {
             errorMessage = String(describing: error)
