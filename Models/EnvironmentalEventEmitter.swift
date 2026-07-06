@@ -64,6 +64,7 @@ extension ISO8601DateFormatter {
     static func hgDayString(from date: Date) -> String {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withFullDate]
+        f.timeZone = .current
         return f.string(from: date)
     }
 }
