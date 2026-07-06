@@ -172,6 +172,73 @@ final class HealthKitIngestor: ObservableObject {
         return try await pipeline.ingest(events)
     }
 
+    // MARK: - Live ingestion
+
+    private var observerQueries: [HKObserverQuery] = []
+
+    /// Registers observer queries + background delivery for all read types.
+    /// Idempotent per process (re-calling replaces the query list).
+    func startObserving() {
+        guard HKHealthStore.isHealthDataAvailable(),
+              UserDefaults.standard.bool(forKey: Self.backfillCompletedKey) else { return }
+        for query in observerQueries { healthStore.stop(query) }
+        observerQueries = []
+
+        for type in Self.perSampleTypes {
+            let query = HKObserverQuery(sampleType: type, predicate: nil) {
+                [weak self] _, completion, error in
+                guard error == nil else { completion(); return }
+                Task { @MainActor [weak self] in
+                    await self?.ingestNewSamples(for: type)
+                    completion()
+                }
+            }
+            healthStore.execute(query)
+            observerQueries.append(query)
+            healthStore.enableBackgroundDelivery(for: type, frequency: .hourly) { _, _ in }
+        }
+        for type in Self.dailyStatTypes {
+            let query = HKObserverQuery(sampleType: type, predicate: nil) {
+                [weak self] _, completion, error in
+                guard error == nil else { completion(); return }
+                Task { @MainActor [weak self] in
+                    await self?.recomputeRecentDailyStats(for: type)
+                    completion()
+                }
+            }
+            healthStore.execute(query)
+            observerQueries.append(query)
+            healthStore.enableBackgroundDelivery(for: type, frequency: .hourly) { _, _ in }
+        }
+    }
+
+    /// Incremental anchored fetch from the persisted anchor.
+    private func ingestNewSamples(for type: HKSampleType) async {
+        do {
+            let (samples, newAnchor) = try await fetchAnchored(
+                type: type, predicate: nil,
+                anchor: loadAnchor(for: type.identifier), limit: HKObjectQueryNoLimit)
+            if !samples.isEmpty {
+                _ = try await pipeline.ingest(samples.compactMap(Self.mapSample))
+            }
+            persistAnchor(newAnchor, for: type.identifier)
+        } catch {
+            // Observer fires again on the next change; never log health data.
+            Logger.error("HK live ingest failed for a sample type", category: .data)
+        }
+    }
+
+    /// Daily-stat types have no anchors: recompute the trailing 2 days —
+    /// dedupKeys make the re-ingest an idempotent same-day update.
+    private func recomputeRecentDailyStats(for type: HKQuantityType) async {
+        let start = Calendar.current.date(byAdding: .day, value: -2, to: Date())!
+        do {
+            _ = try await ingestDailyStats(for: type, from: start, to: Date())
+        } catch {
+            Logger.error("HK daily-stat recompute failed", category: .data)
+        }
+    }
+
     // MARK: - HK → DTO conversion
 
     static func hkUnit(for identifier: String) -> HKUnit {

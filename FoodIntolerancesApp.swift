@@ -13,6 +13,7 @@ struct FoodIntolerancesApp: App {
     @StateObject private var environmentalService = EnvironmentalDataService(locationManager: LocationService())
     @StateObject private var tabManager = TabManager()
     @StateObject private var healthKitManager = HealthKitManager()
+    @StateObject private var healthKitIngestor = HealthKitIngestor()
     @AppStorage("enableDiagnostics") private var enableDiagnostics = false
     @AppStorage("debugMode") private var debugMode = false
 
@@ -80,6 +81,7 @@ struct FoodIntolerancesApp: App {
             
             MainTabView()
                 .environmentObject(healthKitManager)
+                .environmentObject(healthKitIngestor)
                 .environmentObject(logItemViewModel)
                 .environmentObject(tabManager)
                 .modelContainer(for: [
@@ -108,6 +110,7 @@ struct FoodIntolerancesApp: App {
                         Logger.debug("Diagnostics mode enabled", category: .app)
                     }
                 }
+                .task { healthKitIngestor.startObserving() }
         }
     }
 
