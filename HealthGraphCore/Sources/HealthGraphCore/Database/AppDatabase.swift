@@ -3,7 +3,7 @@ import GRDB
 
 /// Owns the GRDB database and its schema migrations.
 /// Schema changes happen ONLY here, in numbered migrations.
-public struct AppDatabase {
+public struct AppDatabase: Sendable {
     public let dbWriter: any DatabaseWriter
 
     public init(_ dbWriter: any DatabaseWriter) throws {
@@ -103,6 +103,25 @@ public struct AppDatabase {
             try db.create(index: "idx_rel_from", on: "relationships", columns: ["fromObjectID"])
             try db.create(index: "idx_rel_to", on: "relationships", columns: ["toObjectID"])
             try db.create(index: "idx_rel_status", on: "relationships", columns: ["status"])
+        }
+
+        migrator.registerMigration("v2") { db in
+            try db.alter(table: "health_events") { t in
+                // Cross-source ingest dedup (spec §5.5). NULL = exempt (manual
+                // and legacy events don't participate in import dedup).
+                t.add(column: "dedupKey", .text)
+            }
+            // Partial unique index: SQLite treats NULLs as distinct anyway,
+            // but the WHERE clause keeps the index small.
+            try db.execute(sql: """
+                CREATE UNIQUE INDEX idx_events_dedupKey
+                ON health_events(dedupKey) WHERE dedupKey IS NOT NULL
+                """)
+            // Serves the ingest pipeline's duration-overlap query
+            // (category + subtype + time range) at 100k+ events (spec §17).
+            try db.create(index: "idx_events_category_subtype_timestamp",
+                          on: "health_events",
+                          columns: ["category", "subtype", "timestamp"])
         }
 
         return migrator

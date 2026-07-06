@@ -20,6 +20,7 @@ public struct HealthEvent: Codable, Identifiable, Equatable,
     public var metadata: Data?
     public var attachmentPath: String?
     public var createdAt: Date
+    public var dedupKey: String?
     public var deletedAt: Date?
 
     public init(
@@ -37,6 +38,7 @@ public struct HealthEvent: Codable, Identifiable, Equatable,
         metadata: Data? = nil,
         attachmentPath: String? = nil,
         createdAt: Date = Date(),
+        dedupKey: String? = nil,
         deletedAt: Date? = nil
     ) {
         self.id = id
@@ -53,6 +55,7 @@ public struct HealthEvent: Codable, Identifiable, Equatable,
         self.metadata = metadata
         self.attachmentPath = attachmentPath
         self.createdAt = createdAt
+        self.dedupKey = dedupKey
         self.deletedAt = deletedAt
     }
 }

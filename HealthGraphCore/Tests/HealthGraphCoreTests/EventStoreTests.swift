@@ -70,4 +70,22 @@ struct EventStoreTests {
         let recent = try await store.recentEvents(limit: 2)
         #expect(recent.map(\.subtype) == ["b", "c"])
     }
+
+    @Test func countsByCategoryAndSourceGroupCorrectly() async throws {
+        let db = try AppDatabase.inMemory()
+        let store = GRDBEventStore(database: db)
+        let t = Date(timeIntervalSince1970: 1_750_000_000)
+        let deleted = HealthEvent(timestamp: t, category: .sleep, subtype: "asleepCore",
+                                  source: .healthKit, createdAt: t)
+        try await store.save([
+            HealthEvent(timestamp: t, category: .food, subtype: "eggs", source: .manual, createdAt: t),
+            HealthEvent(timestamp: t, category: .food, subtype: "milk", source: .healthKit, createdAt: t),
+            deleted,
+        ])
+        try await store.softDelete(id: deleted.id)
+        let byCategory = try await store.countsByCategory()
+        let bySource = try await store.countsBySource()
+        #expect(byCategory == ["food": 2]) // soft-deleted sleep event excluded
+        #expect(bySource == ["manual": 1, "healthKit": 1])
+    }
 }

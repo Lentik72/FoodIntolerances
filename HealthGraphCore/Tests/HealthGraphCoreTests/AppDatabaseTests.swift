@@ -66,4 +66,43 @@ struct AppDatabaseTests {
         }
         #expect(counts == (0, 0, 0))
     }
+
+    @Test func v2AddsDedupKeyColumnAndUniqueIndex() throws {
+        let db = try AppDatabase.inMemory()
+        try db.dbWriter.read { d in
+            let cols = try d.columns(in: "health_events").map(\.name)
+            #expect(cols.contains("dedupKey"))
+            let indexes = try d.indexes(on: "health_events").map(\.name)
+            #expect(indexes.contains("idx_events_dedupKey"))
+            #expect(indexes.contains("idx_events_category_subtype_timestamp"))
+        }
+    }
+
+    @Test func dedupKeyUniqueIndexRejectsSecondInsert() throws {
+        let db = try AppDatabase.inMemory()
+        let t = Date(timeIntervalSince1970: 1_750_000_000)
+        try db.dbWriter.write { d in
+            try HealthEvent(timestamp: t, category: .sleep, subtype: "asleepCore",
+                            source: .healthKit, createdAt: t,
+                            dedupKey: "sleep|asleepCore|29166666").insert(d)
+        }
+        #expect(throws: DatabaseError.self) {
+            try db.dbWriter.write { d in
+                try HealthEvent(timestamp: t, category: .sleep, subtype: "asleepCore",
+                                source: .healthExportFile, createdAt: t,
+                                dedupKey: "sleep|asleepCore|29166666").insert(d)
+            }
+        }
+    }
+
+    @Test func nilDedupKeysDoNotCollide() throws {
+        let db = try AppDatabase.inMemory()
+        let t = Date(timeIntervalSince1970: 1_750_000_000)
+        try db.dbWriter.write { d in
+            try HealthEvent(timestamp: t, category: .food, source: .manual, createdAt: t).insert(d)
+            try HealthEvent(timestamp: t, category: .food, source: .manual, createdAt: t).insert(d)
+        }
+        let count = try db.dbWriter.read { try HealthEvent.fetchCount($0) }
+        #expect(count == 2) // partial index: NULL keys are exempt
+    }
 }

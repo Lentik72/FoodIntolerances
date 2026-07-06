@@ -9,6 +9,8 @@ public protocol EventStore {
     func recentEvents(limit: Int) async throws -> [HealthEvent]
     func softDelete(id: UUID) async throws
     func count() async throws -> Int
+    func countsByCategory() async throws -> [String: Int]
+    func countsBySource() async throws -> [String: Int]
 }
 
 public struct GRDBEventStore: EventStore {
@@ -77,5 +79,23 @@ public struct GRDBEventStore: EventStore {
     /// Test/debug helper: physical row count, including soft-deleted.
     public func rawCountIncludingDeleted() async throws -> Int {
         try await dbWriter.read { db in try HealthEvent.fetchCount(db) }
+    }
+
+    public func countsByCategory() async throws -> [String: Int] {
+        try await groupedCounts(column: "category")
+    }
+
+    public func countsBySource() async throws -> [String: Int] {
+        try await groupedCounts(column: "source")
+    }
+
+    private func groupedCounts(column: String) async throws -> [String: Int] {
+        try await dbWriter.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT \(column) AS k, COUNT(*) AS c FROM health_events
+                WHERE deletedAt IS NULL GROUP BY \(column)
+                """)
+            return Dictionary(uniqueKeysWithValues: rows.map { ($0["k"] as String, $0["c"] as Int) })
+        }
     }
 }
