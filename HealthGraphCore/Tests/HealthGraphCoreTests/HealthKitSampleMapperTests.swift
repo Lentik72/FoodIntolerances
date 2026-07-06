@@ -101,6 +101,19 @@ struct HealthKitSampleMapperTests {
         #expect(meta["distanceKm"] == "5.2")
     }
 
+    @Test func workoutNamesCanonicalizeIdenticallyAcrossSources() {
+        // export-derived (raw string, prefix stripped, first letter lowered)
+        #expect(HealthKitSampleMapper.canonicalActivityName("functionalStrengthTraining") == "strengthTraining")
+        #expect(HealthKitSampleMapper.canonicalActivityName("highIntensityIntervalTraining") == "hiit")
+        // live-derived (app table output, first letter lowered)
+        #expect(HealthKitSampleMapper.canonicalActivityName("strengthTraining") == "strengthTraining")
+        #expect(HealthKitSampleMapper.canonicalActivityName("hIIT") == "hiit")
+        // both paths collapse unknowns identically
+        #expect(HealthKitSampleMapper.canonicalActivityName("wheelchairRunPace") == "other")
+        #expect(HealthKitSampleMapper.canonicalActivityName("other") == "other")
+        #expect(HealthKitSampleMapper.canonicalActivityName("running") == "running")
+    }
+
     @Test func dailyStatBecomesDayLongDurationEvent() {
         let e = HealthKitSampleMapper.map(
             DailyStatData(identifier: "HKQuantityTypeIdentifierStepCount",

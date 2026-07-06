@@ -108,6 +108,37 @@ public enum HealthKitSampleMapper {
         dailyTable[identifier]?.3 ?? .sum
     }
 
+    /// Canonical workout subtype shared by the live-HealthKit and export-file
+    /// paths (spec §5.2: identical mapping and dedup keys so the two compose).
+    /// Input: a raw activity name with the "HKWorkoutActivityType" prefix
+    /// already stripped and the first letter lowercased.
+    public static func canonicalActivityName(_ name: String) -> String {
+        switch name {
+        case "running": return "running"
+        case "walking": return "walking"
+        case "cycling": return "cycling"
+        case "swimming": return "swimming"
+        case "yoga": return "yoga"
+        case "functionalStrengthTraining", "traditionalStrengthTraining",
+             "strengthTraining": return "strengthTraining"
+        case "highIntensityIntervalTraining", "hIIT", "hiit": return "hiit"
+        case "hiking": return "hiking"
+        case "pilates": return "pilates"
+        case "rowing": return "rowing"
+        case "elliptical": return "elliptical"
+        case "stairClimbing": return "stairClimbing"
+        case "dance": return "dance"
+        case "tennis": return "tennis"
+        case "basketball": return "basketball"
+        case "soccer": return "soccer"
+        case "golf": return "golf"
+        case "paddleSports": return "paddleSports"
+        case "martialArts": return "martialArts"
+        case "coreTraining": return "coreTraining"
+        default: return "other"
+        }
+    }
+
     // MARK: - Unit Conversion
 
     private static func convertUnit(_ value: Double, from inputUnit: String,

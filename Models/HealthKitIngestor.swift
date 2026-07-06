@@ -289,6 +289,7 @@ final class HealthKitIngestor: ObservableObject {
         if let workout = sample as? HKWorkout {
             var name = workout.workoutActivityType.hgActivityName
             name = name.prefix(1).lowercased() + name.dropFirst()
+            let canonicalName = HealthKitSampleMapper.canonicalActivityName(name)
             let kcal = workout.statistics(
                 for: HKQuantityType(.activeEnergyBurned))?.sumQuantity()?
                 .doubleValue(for: .kilocalorie())
@@ -296,7 +297,7 @@ final class HealthKitIngestor: ObservableObject {
                 for: HKQuantityType(.distanceWalkingRunning))?.sumQuantity()?
                 .doubleValue(for: .meterUnit(with: .kilo))
             return HealthKitSampleMapper.map(
-                WorkoutData(activityName: name, start: workout.startDate, end: workout.endDate,
+                WorkoutData(activityName: canonicalName, start: workout.startDate, end: workout.endDate,
                             kcal: kcal, distanceKm: distance, timezoneID: timezoneID),
                 source: .healthKit)
         }

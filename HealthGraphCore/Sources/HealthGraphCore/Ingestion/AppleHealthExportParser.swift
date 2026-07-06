@@ -53,7 +53,7 @@ public final class AppleHealthExportParser: NSObject, XMLParserDelegate {
         parser.parse()
         if let parseError { throw parseError }
         if let xmlError = parser.parserError { throw xmlError }
-        flushDailyAccumulators()
+        try flushDailyAccumulators()
         try flushBuffer()
         return ExportParseResult(summary: summary, recordsRead: recordsRead,
                                  recordsSkipped: recordsSkipped)
@@ -121,8 +121,9 @@ public final class AppleHealthExportParser: NSObject, XMLParserDelegate {
         recordsRead += 1
         var name = rawType.replacingOccurrences(of: "HKWorkoutActivityType", with: "")
         name = name.prefix(1).lowercased() + name.dropFirst()
+        let canonical = HealthKitSampleMapper.canonicalActivityName(name)
         try append(HealthKitSampleMapper.map(
-            WorkoutData(activityName: name, start: start, end: end,
+            WorkoutData(activityName: canonical, start: start, end: end,
                         kcal: attrs["totalEnergyBurned"].flatMap(Double.init),
                         distanceKm: attrs["totalDistance"].flatMap(Double.init),
                         timezoneID: nil),
@@ -137,7 +138,7 @@ public final class AppleHealthExportParser: NSObject, XMLParserDelegate {
         }
     }
 
-    private func flushDailyAccumulators() {
+    private func flushDailyAccumulators() throws {
         for (key, acc) in dailyAccumulator.sorted(by: { $0.key < $1.key }) {
             let identifier = String(key.split(separator: "|")[0])
             let value: Double
@@ -149,7 +150,7 @@ public final class AppleHealthExportParser: NSObject, XMLParserDelegate {
                 DailyStatData(identifier: identifier, dayStart: acc.dayStart,
                               value: value, timezoneID: nil),
                 source: .healthExportFile) {
-                buffer.append(event)
+                try append(event)
             }
         }
         dailyAccumulator = [:]
