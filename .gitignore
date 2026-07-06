@@ -26,3 +26,4 @@ Secrets.xcconfig
 *.tmp
 *.temp
 .superpowers/
+.swiftpm/
