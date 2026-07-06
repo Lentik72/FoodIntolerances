@@ -63,6 +63,10 @@ final class HealthKitIngestor: ObservableObject {
     // MARK: - Backfill
 
     func backfill(years: Int = 1) async throws -> IngestSummary {
+        // Self-request: presents the permission sheet only when not yet
+        // determined; a no-op afterwards. Prevents the "Authorization not
+        // determined" trap when backfill is tapped before the request button.
+        try await requestAuthorization()
         isRunning = true
         defer { isRunning = false; progress = nil }
         let start = Calendar.current.date(byAdding: .year, value: -years, to: Date())!

@@ -7,6 +7,7 @@ import HealthGraphCore
 enum EnvironmentalEventEmitter {
     static let lastEmitDayKey = "hg.env.lastEmitDay"
 
+    @MainActor
     static func emitIfNeeded(database: AppDatabase = HealthGraphProvider.shared,
                              service: EnvironmentalDataService) async {
         let today = ISO8601DateFormatter.hgDayString(from: Date())
