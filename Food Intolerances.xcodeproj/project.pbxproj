@@ -97,6 +97,7 @@
 		B3FEA0932D349517000727AD /* PrimaryButtonStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3FEA0922D349517000727AD /* PrimaryButtonStyle.swift */; };
 		B3FEA0952D349537000727AD /* SearchBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3FEA0942D349537000727AD /* SearchBar.swift */; };
 		B3FEA0972D349559000727AD /* SymptomToggleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3FEA0962D349559000727AD /* SymptomToggleView.swift */; };
+		C1346EB43B878F755DA6BE6E /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 41B6D886C741EA2D03861400 /* GRDB */; };
 		ENVCONST0000000000001 /* EnvironmentalConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = ENVCONST0000000000002 /* EnvironmentalConstants.swift */; };
 		LOGGER00000000000000001 /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = LOGGER00000000000000002 /* Logger.swift */; };
 /* End PBXBuildFile section */
@@ -247,26 +248,36 @@
 		};
 		B33426962D13998800BAAE35 /* Food IntolerancesTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = "Food IntolerancesTests";
 			sourceTree = "<group>";
 		};
 		B33426A02D13998800BAAE35 /* Food IntolerancesUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = "Food IntolerancesUITests";
 			sourceTree = "<group>";
 		};
 		B3D485DA2D4E930200F7E3BA /* Models */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = Models;
 			sourceTree = "<group>";
 		};
 		B3D485DD2D4E95E900F7E3BA /* Views */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = Views;
 			sourceTree = "<group>";
 		};
 		B3D485F52D52C92C00F7E3BA /* Utilities */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = Utilities;
 			sourceTree = "<group>";
 		};
@@ -281,6 +292,7 @@
 				B37132212D79115B0019E603 /* WebKit.framework in Frameworks */,
 				B371321F2D79114E0019E603 /* SafariServices.framework in Frameworks */,
 				B3B539CA2D322CF0003132AF /* SwiftAA in Frameworks */,
+				C1346EB43B878F755DA6BE6E /* GRDB in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -447,6 +459,7 @@
 			packageProductDependencies = (
 				B3B539C92D322CF0003132AF /* SwiftAA */,
 				B3473B6E2FFA8B8C0098F5E4 /* HealthGraphCore */,
+				41B6D886C741EA2D03861400 /* GRDB */,
 			);
 			productName = "Food Intolerances";
 			productReference = B334267F2D13998700BAAE35 /* Food Intolerances.app */;
@@ -493,8 +506,6 @@
 				B33426A02D13998800BAAE35 /* Food IntolerancesUITests */,
 			);
 			name = "Food IntolerancesUITests";
-			packageProductDependencies = (
-			);
 			productName = "Food IntolerancesUITests";
 			productReference = B334269D2D13998800BAAE35 /* Food IntolerancesUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
@@ -534,6 +545,7 @@
 			packageReferences = (
 				B3B539C82D322CF0003132AF /* XCRemoteSwiftPackageReference "SwiftAA" */,
 				B3473B6D2FFA8B8C0098F5E4 /* XCLocalSwiftPackageReference "HealthGraphCore" */,
+				8B1A0CDDCBCD063FFDAF873C /* XCRemoteSwiftPackageReference "GRDB.swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = B33426802D13998700BAAE35 /* Products */;
@@ -731,6 +743,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.leo.symptomtracker;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_ENABLE_BATCH_MODE = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -1017,6 +1030,14 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		8B1A0CDDCBCD063FFDAF873C /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/groue/GRDB.swift.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 7.0.0;
+			};
+		};
 		B3B539C02D3213F5003132AF /* XCRemoteSwiftPackageReference "SwiftAA" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/onekiloparsec/SwiftAA.git";
@@ -1036,6 +1057,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		41B6D886C741EA2D03861400 /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8B1A0CDDCBCD063FFDAF873C /* XCRemoteSwiftPackageReference "GRDB.swift" */;
+			productName = GRDB;
+		};
 		B3473B6E2FFA8B8C0098F5E4 /* HealthGraphCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = HealthGraphCore;

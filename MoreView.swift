@@ -95,6 +95,10 @@ struct MoreView: View {
                     } label: {
                         Label("AI Debug Inspector", systemImage: "ant.fill")
                     }
+
+                    NavigationLink("Health Graph Debug") {
+                        HealthGraphDebugView()
+                    }
                 }
                 #endif
             }
