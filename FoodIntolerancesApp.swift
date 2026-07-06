@@ -111,6 +111,7 @@ struct FoodIntolerancesApp: App {
                     }
                 }
                 .task { healthKitIngestor.startObserving() }
+                .task { await EnvironmentalEventEmitter.emitIfNeeded(service: environmentalService) }
         }
     }
 
