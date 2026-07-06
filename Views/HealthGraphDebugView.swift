@@ -1,7 +1,6 @@
 #if DEBUG
 import SwiftUI
 import SwiftData
-import GRDB
 import HealthGraphCore
 
 /// DEBUG-only inspector for the Health Graph database. Phase 0's only UI.
@@ -23,8 +22,12 @@ struct HealthGraphDebugView: View {
                 LabeledContent("Events", value: "\(eventCount)")
                 LabeledContent("Objects", value: "\(objectCount)")
                 LabeledContent("Relationships", value: "\(relationshipCount)")
-                LabeledContent("Migration flag",
-                               value: SwiftDataMigrator.isCompleted ? "completed" : "not run")
+                VStack(alignment: .leading, spacing: 2) {
+                    LabeledContent("Migration flag",
+                                   value: SwiftDataMigrator.isCompleted ? "completed" : "not run")
+                    Text("Forced runs don't set the flag — 'not run' after a forced migration is expected.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
             }
             Section("Actions") {
                 Button(isWorking ? "Working…" : "Run SwiftData migration (force)") {
@@ -65,6 +68,7 @@ struct HealthGraphDebugView: View {
     }
 
     private func refresh() async {
+        errorMessage = nil
         do {
             eventCount = try await GRDBEventStore(database: database).count()
             objectCount = try await GRDBObjectStore(database: database).count()
@@ -76,6 +80,7 @@ struct HealthGraphDebugView: View {
     }
 
     private func migrate() async {
+        errorMessage = nil
         isWorking = true
         defer { isWorking = false }
         do {
@@ -88,6 +93,7 @@ struct HealthGraphDebugView: View {
     }
 
     private func loadSynthetic() async {
+        errorMessage = nil
         isWorking = true
         defer { isWorking = false }
         do {
@@ -112,14 +118,11 @@ struct HealthGraphDebugView: View {
     private func resetDatabase() async {
         // DEBUG-only exception to the soft-delete rule: a dev tool for
         // reloading datasets. Never exists outside #if DEBUG.
+        errorMessage = nil
         isWorking = true
         defer { isWorking = false }
         do {
-            _ = try await database.dbWriter.write { db in
-                try HealthEvent.deleteAll(db)
-                try Relationship.deleteAll(db)
-                try HealthObject.deleteAll(db)
-            }
+            try await database.eraseAllRows()
             report = nil
             await refresh()
         } catch {
@@ -134,7 +137,7 @@ struct HealthGraphDebugView: View {
         ongoing: \(r.ongoingSymptomsMigrated)  checkIns: \(r.checkInsMigrated)
         protocols: \(r.protocolsMigrated)
         events created: \(r.eventsCreated)  objects total: \(r.objectsCreated)
-        attachments: \(r.attachmentsSaved)
+        attachments: \(r.attachmentsSaved)  failures: \(r.attachmentFailures)
         """
     }
 }

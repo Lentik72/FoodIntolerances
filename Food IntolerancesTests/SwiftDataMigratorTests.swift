@@ -94,15 +94,81 @@ struct SwiftDataMigratorTests {
     }
 
     @Test func forcedMigrationIsIdempotent() async throws {
+        // Multi-entity fixture: one of each proven-crash-safe legacy model.
+        // (TherapyProtocol/AvoidedItem/CabinetItem are deliberately excluded —
+        // see the KNOWN ISSUE comment on migratesObjectsFromAvoidedCabinetAndProtocols;
+        // their idempotence rides the same deterministic-UUID mechanism.)
         let context = try makeContext()
-        context.insert(OngoingSymptom(
-            name: "Back pain", startDate: Date(timeIntervalSince1970: 1_740_000_000)))
+        context.insert(LogEntry(
+            itemName: "Headache", itemType: .symptom, category: "Neurological",
+            symptoms: ["Headache"], severity: 5, notes: "",
+            date: Date(timeIntervalSince1970: 1_740_010_000),
+            moonPhase: "", atmosphericPressure: "Normal",
+            suddenChange: false, isMercuryRetrograde: false, season: "Winter",
+            treatments: [Treatment(
+                type: "Medication", name: "Ibuprofen",
+                startDate: Date(timeIntervalSince1970: 1_740_012_000),
+                endDate: nil, dosage: "400mg", effectiveness: 4, notes: nil)]
+        ))
+        context.insert(LogEntry(
+            itemName: "Lunch", itemType: .foodDrink, category: "Food",
+            symptoms: [], severity: 1, notes: "",
+            date: Date(timeIntervalSince1970: 1_740_000_000),
+            moonPhase: "", atmosphericPressure: "Normal",
+            suddenChange: false, isMercuryRetrograde: false, season: "Winter",
+            foodDrinkItem: "Cheese sandwich"
+        ))
+        context.insert(TrackedItem(name: "Magnesium", type: .supplement))
+        let ongoing = OngoingSymptom(
+            name: "Back pain", startDate: Date(timeIntervalSince1970: 1_740_000_000))
+        context.insert(ongoing)
+        context.insert(SymptomCheckIn(
+            parentSymptomID: ongoing.id,
+            date: Date(timeIntervalSince1970: 1_740_086_400), severity: 5))
         try context.save()
+
         let db = try AppDatabase.inMemory()
-        _ = try await SwiftDataMigrator.run(context: context, database: db, force: true)
-        _ = try await SwiftDataMigrator.run(context: context, database: db, force: true)
-        let eventCount = try await GRDBEventStore(database: db).count()
-        #expect(eventCount == 1) // deterministic ids: second run upserts, never duplicates
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        _ = try await SwiftDataMigrator.run(
+            context: context, database: db, force: true, attachmentsDirectory: dir)
+        let eventsAfterFirst = try await GRDBEventStore(database: db).count()
+        let objectsAfterFirst = try await GRDBObjectStore(database: db).count()
+        #expect(eventsAfterFirst == 5) // symptom + treatment + food + ongoing + check-in
+
+        _ = try await SwiftDataMigrator.run(
+            context: context, database: db, force: true, attachmentsDirectory: dir)
+        let eventsAfterSecond = try await GRDBEventStore(database: db).count()
+        let objectsAfterSecond = try await GRDBObjectStore(database: db).count()
+        #expect(eventsAfterSecond == eventsAfterFirst) // deterministic ids: upsert, never duplicate
+        #expect(objectsAfterSecond == objectsAfterFirst)
+    }
+
+    @Test func migratesTreatmentsOnFoodDrinkEntries() async throws {
+        let context = try makeContext()
+        context.insert(LogEntry(
+            itemName: "Dinner", itemType: .foodDrink, category: "Food",
+            symptoms: [], severity: 1, notes: "",
+            date: Date(timeIntervalSince1970: 1_740_000_000),
+            moonPhase: "", atmosphericPressure: "Normal",
+            suddenChange: false, isMercuryRetrograde: false, season: "Winter",
+            foodDrinkItem: "Curry",
+            treatments: [Treatment(
+                type: "Medication", name: "Antacid",
+                startDate: Date(timeIntervalSince1970: 1_740_003_600),
+                endDate: nil, dosage: "10mg", effectiveness: 3, notes: nil)]
+        ))
+        try context.save()
+
+        let db = try AppDatabase.inMemory()
+        let report = try await SwiftDataMigrator.run(context: context, database: db, force: true)
+
+        #expect(report.eventsCreated == 2) // food + its treatment
+        let all = try await GRDBEventStore(database: db).recentEvents(limit: 10)
+        #expect(all.contains { $0.category == .medication && $0.subtype == "Antacid" })
     }
 
     @Test func migratesFoodEntryAndTreatments() async throws {
@@ -213,13 +279,17 @@ struct SwiftDataMigratorTests {
         try context.save()
 
         let db = try AppDatabase.inMemory()
-        let report = try await SwiftDataMigrator.run(context: context, database: db, force: true)
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let report = try await SwiftDataMigrator.run(
+            context: context, database: db, force: true, attachmentsDirectory: dir)
 
         #expect(report.attachmentsSaved == 1)
         #expect(report.attachmentFailures == 0)
-        let file = try HealthGraphProvider.attachmentsDirectory()
-            .appendingPathComponent("\(entry.id.uuidString).jpg")
-        defer { try? FileManager.default.removeItem(at: file) }
+        let file = dir.appendingPathComponent("\(entry.id.uuidString).jpg")
         #expect(FileManager.default.fileExists(atPath: file.path))
     }
 }

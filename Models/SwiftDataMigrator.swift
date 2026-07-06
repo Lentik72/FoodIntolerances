@@ -30,8 +30,12 @@ struct SwiftDataMigrator {
     }
 
     @MainActor
-    static func run(context: ModelContext, database: AppDatabase,
-                    force: Bool = false) async throws -> Report {
+    static func run(
+        context: ModelContext,
+        database: AppDatabase,
+        force: Bool = false,
+        attachmentsDirectory: URL? = nil
+    ) async throws -> Report {
         guard force || !isCompleted else { return Report() }
 
         let events = GRDBEventStore(database: database)
@@ -69,7 +73,8 @@ struct SwiftDataMigrator {
                 var attachmentPath: String?
                 if let photo = entry.symptomPhotoData {
                     do {
-                        attachmentPath = try saveAttachment(photo, id: entry.id)
+                        attachmentPath = try saveAttachment(photo, id: entry.id,
+                                                            directory: attachmentsDirectory)
                         report.attachmentsSaved += 1
                     } catch {
                         report.attachmentFailures += 1
@@ -99,25 +104,6 @@ struct SwiftDataMigrator {
                     ))
                     report.eventsCreated += 1
                 }
-                for (index, treatment) in entry.treatments.enumerated() {
-                    let isSupplement = treatment.type.lowercased().contains("supp")
-                    let kind: ObjectKind = isSupplement ? .supplement : .medication
-                    let object = try await objects.findOrCreate(
-                        name: treatment.name, kind: kind, metadata: nil)
-                    var m: [String: String] = ["fromLogEntry": entry.id.uuidString]
-                    if let dosage = treatment.dosage { m["dosage"] = dosage }
-                    if let eff = treatment.effectiveness { m["effectiveness"] = String(eff) }
-                    if let notes = treatment.notes, !notes.isEmpty { m["notes"] = notes }
-                    try await events.save(HealthEvent(
-                        id: .deterministic("logEntry:\(entry.id.uuidString):treatment:\(index)"),
-                        timestamp: treatment.startDate, timezoneID: tz,
-                        endTimestamp: treatment.endDate,
-                        category: isSupplement ? .supplement : .medication,
-                        subtype: treatment.name, objectID: object.id,
-                        source: .legacyImport, metadata: encode(m)
-                    ))
-                    report.eventsCreated += 1
-                }
             case .foodDrink:
                 let foodName = entry.foodDrinkItem ?? entry.itemName
                 let object = try await objects.findOrCreate(
@@ -128,6 +114,25 @@ struct SwiftDataMigrator {
                     subtype: foodName, objectID: object.id,
                     source: .legacyImport, metadata: encode(meta),
                     deletedAt: deletedAt
+                ))
+                report.eventsCreated += 1
+            }
+            for (index, treatment) in entry.treatments.enumerated() {
+                let isSupplement = treatment.type.lowercased().contains("supp")
+                let kind: ObjectKind = isSupplement ? .supplement : .medication
+                let object = try await objects.findOrCreate(
+                    name: treatment.name, kind: kind, metadata: nil)
+                var m: [String: String] = ["fromLogEntry": entry.id.uuidString]
+                if let dosage = treatment.dosage { m["dosage"] = dosage }
+                if let eff = treatment.effectiveness { m["effectiveness"] = String(eff) }
+                if let notes = treatment.notes, !notes.isEmpty { m["notes"] = notes }
+                try await events.save(HealthEvent(
+                    id: .deterministic("logEntry:\(entry.id.uuidString):treatment:\(index)"),
+                    timestamp: treatment.startDate, timezoneID: tz,
+                    endTimestamp: treatment.endDate,
+                    category: isSupplement ? .supplement : .medication,
+                    subtype: treatment.name, objectID: object.id,
+                    source: .legacyImport, metadata: encode(m)
                 ))
                 report.eventsCreated += 1
             }
@@ -290,8 +295,12 @@ struct SwiftDataMigrator {
         dict.isEmpty ? nil : try? JSONEncoder().encode(dict)
     }
 
-    static func saveAttachment(_ data: Data, id: UUID) throws -> String {
-        let dir = try HealthGraphProvider.attachmentsDirectory()
+    /// Writes attachment data and returns the canonical relative path stored
+    /// on the event. `directory` overrides the write location (tests);
+    /// the stored path is unchanged — it is defined relative to
+    /// Application Support regardless of where the bytes land.
+    static func saveAttachment(_ data: Data, id: UUID, directory: URL?) throws -> String {
+        let dir = try directory ?? HealthGraphProvider.attachmentsDirectory()
         let file = dir.appendingPathComponent("\(id.uuidString).jpg")
         try data.write(to: file)
         return "HealthGraph/attachments/\(id.uuidString).jpg"
