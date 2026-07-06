@@ -248,36 +248,26 @@
 		};
 		B33426962D13998800BAAE35 /* Food IntolerancesTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = "Food IntolerancesTests";
 			sourceTree = "<group>";
 		};
 		B33426A02D13998800BAAE35 /* Food IntolerancesUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = "Food IntolerancesUITests";
 			sourceTree = "<group>";
 		};
 		B3D485DA2D4E930200F7E3BA /* Models */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = Models;
 			sourceTree = "<group>";
 		};
 		B3D485DD2D4E95E900F7E3BA /* Views */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = Views;
 			sourceTree = "<group>";
 		};
 		B3D485F52D52C92C00F7E3BA /* Utilities */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = Utilities;
 			sourceTree = "<group>";
 		};
