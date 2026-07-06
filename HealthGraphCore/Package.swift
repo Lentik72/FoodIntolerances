@@ -1,9 +1,9 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 import PackageDescription
 
 let package = Package(
     name: "HealthGraphCore",
-    platforms: [.iOS(.v18), .macOS(.v15)],
+    platforms: [.iOS(.v26), .macOS(.v15)],
     products: [
         .library(name: "HealthGraphCore", targets: ["HealthGraphCore"])
     ],
