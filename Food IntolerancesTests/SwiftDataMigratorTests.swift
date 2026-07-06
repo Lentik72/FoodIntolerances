@@ -141,6 +141,16 @@ struct SwiftDataMigratorTests {
         #expect(objectCount == 2) // cheese sandwich + ibuprofen
     }
 
+    /// KNOWN ISSUE: This test crashes during Apple's SwiftData/CoreData teardown machinery.
+    /// Root cause (extensively bisected): inserting and saving a bare TherapyProtocol @Model
+    /// (which uses @Attribute(.transformable(by: StringArrayTransformer.self))) into an
+    /// in-memory ModelContainer triggers a framework-level crash. This is a pre-existing defect
+    /// in either the Apple framework or the TherapyProtocol/StringArrayTransformer model code.
+    /// Reproduced reliably on iOS 18.5 and 26.5 simulator runtimes after full DerivedData wipes.
+    /// WORKAROUND: Run this suite with `-parallel-testing-enabled NO`. Under default parallel
+    /// execution, the crash kills a simulator clone mid-batch, causing all 8 tests on that clone
+    /// to report "failed (0.000s)" even if 7 genuinely passed — masking the real status.
+    /// DO NOT disable or skip this test; the workaround is a test-run flag, not code changes.
     @Test func migratesObjectsFromAvoidedCabinetAndProtocols() async throws {
         let context = try makeContext()
         context.insert(AvoidedItem(name: "Gluten", type: .food, reason: "bloating"))
