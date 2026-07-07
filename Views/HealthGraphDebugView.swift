@@ -77,6 +77,11 @@ struct HealthGraphDebugView: View {
                     Text("\(p.completedSteps)/\(p.totalSteps) · \(p.currentStep) · \(p.eventsIngested) events")
                         .font(.caption.monospaced())
                 }
+                if !ingestor.lastBackfillFailures.isEmpty {
+                    Text("failed types:\n" + ingestor.lastBackfillFailures.joined(separator: "\n"))
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.red)
+                }
                 Button("Import export.zip / export.xml…") { showingImporter = true }
                 if let importProgress {
                     Text("importing… \(importProgress) records read — large exports take many minutes; keep the app open")

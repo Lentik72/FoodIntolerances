@@ -15,6 +15,7 @@ struct BackfillProgress {
 final class HealthKitIngestor: ObservableObject {
     @Published var isRunning = false
     @Published var progress: BackfillProgress?
+    @Published var lastBackfillFailures: [String] = []
 
     private let healthStore = HKHealthStore()
     private let database: AppDatabase
@@ -68,6 +69,7 @@ final class HealthKitIngestor: ObservableObject {
         // determined" trap when backfill is tapped before the request button.
         try await requestAuthorization()
         isRunning = true
+        lastBackfillFailures = []
         defer { isRunning = false; progress = nil }
         let start = Calendar.current.date(byAdding: .year, value: -years, to: Date())!
         let window = HKQuery.predicateForSamples(withStart: start, end: Date())
@@ -79,14 +81,22 @@ final class HealthKitIngestor: ObservableObject {
             progress = BackfillProgress(completedSteps: done, totalSteps: steps,
                                         currentStep: type.identifier,
                                         eventsIngested: total.inserted + total.updated)
-            total = total + (try await backfillSampleType(type, predicate: window))
+            do {
+                total = total + (try await backfillSampleType(type, predicate: window))
+            } catch {
+                lastBackfillFailures.append("\(type.identifier): \(error.localizedDescription)")
+            }
             done += 1
         }
         for type in Self.dailyStatTypes {
             progress = BackfillProgress(completedSteps: done, totalSteps: steps,
                                         currentStep: type.identifier,
                                         eventsIngested: total.inserted + total.updated)
-            total = total + (try await ingestDailyStats(for: type, from: start, to: Date()))
+            do {
+                total = total + (try await ingestDailyStats(for: type, from: start, to: Date()))
+            } catch {
+                lastBackfillFailures.append("\(type.identifier): \(error.localizedDescription)")
+            }
             done += 1
         }
         UserDefaults.standard.set(true, forKey: Self.backfillCompletedKey)
