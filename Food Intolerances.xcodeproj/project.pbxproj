@@ -97,7 +97,6 @@
 		B3FEA0932D349517000727AD /* PrimaryButtonStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3FEA0922D349517000727AD /* PrimaryButtonStyle.swift */; };
 		B3FEA0952D349537000727AD /* SearchBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3FEA0942D349537000727AD /* SearchBar.swift */; };
 		B3FEA0972D349559000727AD /* SymptomToggleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3FEA0962D349559000727AD /* SymptomToggleView.swift */; };
-		C1346EB43B878F755DA6BE6E /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 41B6D886C741EA2D03861400 /* GRDB */; };
 		ENVCONST0000000000001 /* EnvironmentalConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = ENVCONST0000000000002 /* EnvironmentalConstants.swift */; };
 		LOGGER00000000000000001 /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = LOGGER00000000000000002 /* Logger.swift */; };
 /* End PBXBuildFile section */
@@ -282,7 +281,6 @@
 				B37132212D79115B0019E603 /* WebKit.framework in Frameworks */,
 				B371321F2D79114E0019E603 /* SafariServices.framework in Frameworks */,
 				B3B539CA2D322CF0003132AF /* SwiftAA in Frameworks */,
-				C1346EB43B878F755DA6BE6E /* GRDB in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -449,7 +447,6 @@
 			packageProductDependencies = (
 				B3B539C92D322CF0003132AF /* SwiftAA */,
 				B3473B6E2FFA8B8C0098F5E4 /* HealthGraphCore */,
-				41B6D886C741EA2D03861400 /* GRDB */,
 			);
 			productName = "Food Intolerances";
 			productReference = B334267F2D13998700BAAE35 /* Food Intolerances.app */;
@@ -1047,11 +1044,6 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		41B6D886C741EA2D03861400 /* GRDB */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 8B1A0CDDCBCD063FFDAF873C /* XCRemoteSwiftPackageReference "GRDB.swift" */;
-			productName = GRDB;
-		};
 		B3473B6E2FFA8B8C0098F5E4 /* HealthGraphCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = HealthGraphCore;
