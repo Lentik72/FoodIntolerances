@@ -28,6 +28,9 @@ public protocol EventStore {
                     categories: Set<EventCategory>?, sources: Set<EventSource>?) async throws -> [HealthEvent]
     /// User-facing undo of a soft delete.
     func restore(id: UUID) async throws
+    /// FTS-backed prefix search over subtype + category. Sanitizes input;
+    /// empty/symbol-only queries return []. Newest first, soft-deleted excluded.
+    func searchEvents(matching query: String, limit: Int) async throws -> [HealthEvent]
 }
 
 public struct GRDBEventStore: EventStore {
@@ -152,6 +155,25 @@ public struct GRDBEventStore: EventStore {
         try await dbWriter.write { db in
             try db.execute(sql: "UPDATE health_events SET deletedAt = NULL WHERE id = ?",
                            arguments: [id.databaseValue])
+        }
+    }
+
+    public func searchEvents(matching query: String, limit: Int) async throws -> [HealthEvent] {
+        // Tokenize to alphanumerics; each token becomes a quoted prefix term.
+        let tokens = query.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+        guard !tokens.isEmpty else { return [] }
+        let match = tokens.map { "\"\($0)\"*" }.joined(separator: " ")
+        return try await dbWriter.read { db in
+            try HealthEvent.fetchAll(db, sql: """
+                SELECT he.* FROM health_events he
+                JOIN health_events_fts f ON f.rowid = he.rowid
+                WHERE health_events_fts MATCH ?
+                  AND he.deletedAt IS NULL
+                ORDER BY he.timestamp DESC
+                LIMIT ?
+                """, arguments: [match, limit])
         }
     }
 }

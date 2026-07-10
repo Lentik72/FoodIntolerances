@@ -105,4 +105,25 @@ struct AppDatabaseTests {
         let count = try db.dbWriter.read { try HealthEvent.fetchCount($0) }
         #expect(count == 2) // partial index: NULL keys are exempt
     }
+
+    @Test func v3CreatesFTSTableAndTriggersAndBackfills() throws {
+        let db = try AppDatabase.inMemory()
+        let now = Date(timeIntervalSince1970: 1_750_000_000)
+        try db.dbWriter.write { d in
+            try HealthEvent(timestamp: now, category: .symptom, subtype: "headache",
+                            source: .manual, createdAt: now).insert(d)
+        }
+        let ftsCount = try db.dbWriter.read { d in
+            try Int.fetchOne(d, sql: "SELECT count(*) FROM health_events_fts WHERE health_events_fts MATCH 'headache'") ?? -1
+        }
+        #expect(ftsCount == 1)
+        // Trigger keeps FTS in sync on UPDATE
+        try db.dbWriter.write { d in
+            try d.execute(sql: "UPDATE health_events SET subtype = 'migraine'")
+        }
+        let after = try db.dbWriter.read { d in
+            try Int.fetchOne(d, sql: "SELECT count(*) FROM health_events_fts WHERE health_events_fts MATCH 'migraine'") ?? -1
+        }
+        #expect(after == 1)
+    }
 }

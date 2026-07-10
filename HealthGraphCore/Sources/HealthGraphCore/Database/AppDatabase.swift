@@ -124,6 +124,46 @@ public struct AppDatabase: Sendable {
                           columns: ["category", "subtype", "timestamp"])
         }
 
+        migrator.registerMigration("v3") { db in
+            // External-content FTS5 index over subtype + category.
+            // Scope is deliberately narrow in 1B; capture (1C) extends it to
+            // user-typed text. unicode61 default tokenizer; camelCase subtypes
+            // index as single tokens ("asleepCore" -> asleepcore) — prefix
+            // queries still reach them ("asleep*").
+            try db.execute(sql: """
+                CREATE VIRTUAL TABLE health_events_fts USING fts5(
+                    subtype, category,
+                    content='health_events',
+                    content_rowid='rowid'
+                )
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER health_events_fts_ai AFTER INSERT ON health_events BEGIN
+                    INSERT INTO health_events_fts(rowid, subtype, category)
+                    VALUES (new.rowid, new.subtype, new.category);
+                END
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER health_events_fts_ad AFTER DELETE ON health_events BEGIN
+                    INSERT INTO health_events_fts(health_events_fts, rowid, subtype, category)
+                    VALUES ('delete', old.rowid, old.subtype, old.category);
+                END
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER health_events_fts_au AFTER UPDATE ON health_events BEGIN
+                    INSERT INTO health_events_fts(health_events_fts, rowid, subtype, category)
+                    VALUES ('delete', old.rowid, old.subtype, old.category);
+                    INSERT INTO health_events_fts(rowid, subtype, category)
+                    VALUES (new.rowid, new.subtype, new.category);
+                END
+                """)
+            // Backfill rows that predate the index.
+            try db.execute(sql: """
+                INSERT INTO health_events_fts(rowid, subtype, category)
+                SELECT rowid, subtype, category FROM health_events
+                """)
+        }
+
         return migrator
     }
 }

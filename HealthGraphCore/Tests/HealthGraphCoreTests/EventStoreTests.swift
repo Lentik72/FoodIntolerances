@@ -205,4 +205,33 @@ struct EventStoreTests {
         let afterRestore = try await store.eventsPage(before: nil, limit: 10, categories: nil, sources: nil)
         #expect(afterRestore.map(\.id) == [event.id])
     }
+
+    @Test func searchEventsMatchesPrefixAndCategoryAndSkipsDeleted() async throws {
+        let db = try AppDatabase.inMemory()
+        let store = GRDBEventStore(database: db)
+        let base = Date(timeIntervalSince1970: 1_750_000_000)
+        let headache = HealthEvent(timestamp: base, category: .symptom, subtype: "headache",
+                                   value: 5, unit: "severity", source: .manual, createdAt: base)
+        let run = HealthEvent(timestamp: base.addingTimeInterval(60), category: .exercise,
+                              subtype: "running", source: .healthKit, createdAt: base)
+        let sleepStage = HealthEvent(timestamp: base.addingTimeInterval(120), category: .sleep,
+                                     subtype: "asleepCore", source: .healthKit, createdAt: base)
+        try await store.save([headache, run, sleepStage])
+
+        // Prefix match on subtype
+        #expect(try await store.searchEvents(matching: "head", limit: 10).map(\.id) == [headache.id])
+        // Category raw value matches too
+        #expect(try await store.searchEvents(matching: "sleep", limit: 10).map(\.id) == [sleepStage.id])
+        // Injection-shaped input is sanitized to plain tokens, never executed as FTS
+        // syntax. `run" *` reduces to the single prefix term "run" → matches `running`.
+        #expect(try await store.searchEvents(matching: "run\" *", limit: 10).map(\.id) == [run.id])
+        // Operator/symbol-only input yields no matching token (tokens are ANDed prefixes;
+        // "or" matches nothing here) → empty result, and crucially NO FTS syntax error.
+        #expect(try await store.searchEvents(matching: "\" OR ", limit: 10).isEmpty)
+        // Empty and symbol-only queries return nothing
+        #expect(try await store.searchEvents(matching: "   ", limit: 10).isEmpty)
+        // Soft-deleted rows never surface
+        try await store.softDelete(id: headache.id)
+        #expect(try await store.searchEvents(matching: "head", limit: 10).isEmpty)
+    }
 }
