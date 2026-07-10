@@ -1,6 +1,17 @@
 import Foundation
 import GRDB
 
+/// Keyset cursor for descending timeline pagination. Derive the next cursor
+/// from the LAST event of the previous page.
+public struct TimelineCursor: Equatable, Sendable {
+    public let timestamp: Date
+    public let id: UUID
+    public init(timestamp: Date, id: UUID) {
+        self.timestamp = timestamp
+        self.id = id
+    }
+}
+
 public protocol EventStore {
     func save(_ event: HealthEvent) async throws
     func save(_ events: [HealthEvent]) async throws
@@ -11,6 +22,12 @@ public protocol EventStore {
     func count() async throws -> Int
     func countsByCategory() async throws -> [String: Int]
     func countsBySource() async throws -> [String: Int]
+    /// Newest-first page for the timeline. `cursor == nil` = newest page.
+    /// Strictly-older-than-cursor keyset: (timestamp, id) DESC. Excludes soft-deleted.
+    func eventsPage(before cursor: TimelineCursor?, limit: Int,
+                    categories: Set<EventCategory>?, sources: Set<EventSource>?) async throws -> [HealthEvent]
+    /// User-facing undo of a soft delete.
+    func restore(id: UUID) async throws
 }
 
 public struct GRDBEventStore: EventStore {
@@ -96,6 +113,45 @@ public struct GRDBEventStore: EventStore {
                 WHERE deletedAt IS NULL GROUP BY \(column)
                 """)
             return Dictionary(uniqueKeysWithValues: rows.map { ($0["k"] as String, $0["c"] as Int) })
+        }
+    }
+
+    public func eventsPage(before cursor: TimelineCursor?, limit: Int,
+                           categories: Set<EventCategory>?, sources: Set<EventSource>?) async throws -> [HealthEvent] {
+        try await dbWriter.read { db in
+            var conditions: [String] = ["deletedAt IS NULL"]
+            var arguments: [(any DatabaseValueConvertible)?] = []
+            if let cursor {
+                conditions.append("(timestamp < ? OR (timestamp = ? AND id < ?))")
+                arguments.append(cursor.timestamp)
+                arguments.append(cursor.timestamp)
+                arguments.append(cursor.id.databaseValue)
+            }
+            if let categories, !categories.isEmpty {
+                let marks = Array(repeating: "?", count: categories.count).joined(separator: ",")
+                conditions.append("category IN (\(marks))")
+                arguments.append(contentsOf: categories.map(\.rawValue).sorted())
+            }
+            if let sources, !sources.isEmpty {
+                let marks = Array(repeating: "?", count: sources.count).joined(separator: ",")
+                conditions.append("source IN (\(marks))")
+                arguments.append(contentsOf: sources.map(\.rawValue).sorted())
+            }
+            let sql = """
+                SELECT * FROM health_events
+                WHERE \(conditions.joined(separator: " AND "))
+                ORDER BY timestamp DESC, id DESC
+                LIMIT ?
+                """
+            arguments.append(limit)
+            return try HealthEvent.fetchAll(db, sql: sql, arguments: StatementArguments(arguments))
+        }
+    }
+
+    public func restore(id: UUID) async throws {
+        try await dbWriter.write { db in
+            try db.execute(sql: "UPDATE health_events SET deletedAt = NULL WHERE id = ?",
+                           arguments: [id.databaseValue])
         }
     }
 }
