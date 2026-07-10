@@ -121,23 +121,75 @@ struct EventStoreTests {
         let byID = Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0.timestamp) })
         let stamps = seen.map { byID[$0]! }
         #expect(stamps == stamps.sorted(by: >))
+
+        // Second walk with limit: 1 forces every row onto its own page, so the
+        // boundary between the two shared-timestamp rows must be crossed via a
+        // fresh cursor. This is the only way to exercise the keyset WHERE
+        // clause's `(timestamp = ? AND id < ?)` tiebreak branch: with limit 3
+        // above, both shared-timestamp rows land inside a single page and the
+        // branch is never evaluated across a page boundary.
+        var seen2: [UUID] = []
+        var cursor2: TimelineCursor? = nil
+        while true {
+            let page = try await store.eventsPage(before: cursor2, limit: 1, categories: nil, sources: nil)
+            if page.isEmpty { break }
+            #expect(page.count <= 1)
+            seen2.append(contentsOf: page.map(\.id))
+            cursor2 = TimelineCursor(timestamp: page.last!.timestamp, id: page.last!.id)
+        }
+        #expect(seen2.count == 7)                      // no skips
+        #expect(Set(seen2).count == 7)                 // no dupes
+        let stamps2 = seen2.map { byID[$0]! }
+        #expect(stamps2 == stamps2.sorted(by: >))
+
+        // The store orders ties by `id DESC`, where id is stored as a 16-byte
+        // BLOB of the UUID's raw bytes (see UUID.databaseValue). Comparing
+        // `uuidString` lexicographically matches that byte order exactly,
+        // since the string is just those same bytes rendered as fixed-width
+        // hex pairs with hyphens at identical positions in both operands.
+        let sharedPair = all.filter { $0.timestamp == sharedTS }.map(\.id)
+        #expect(sharedPair.count == 2)
+        let orderedSharedIDs = sharedPair.sorted { $0.uuidString > $1.uuidString }
+        let tiebreakFired = zip(seen2, seen2.dropFirst())
+            .contains { $0 == orderedSharedIDs[0] && $1 == orderedSharedIDs[1] }
+        #expect(tiebreakFired)                         // larger id, then smaller id, back-to-back
     }
 
     @Test func eventsPageAppliesCategoryAndSourceFilters() async throws {
         let db = try AppDatabase.inMemory()
         let store = GRDBEventStore(database: db)
         let base = Date(timeIntervalSince1970: 1_750_000_000)
-        try await store.save([
-            HealthEvent(timestamp: base, category: .sleep, subtype: "asleepCore", source: .healthKit, createdAt: base),
-            HealthEvent(timestamp: base.addingTimeInterval(60), category: .food, subtype: "milk", source: .manual, createdAt: base),
-            HealthEvent(timestamp: base.addingTimeInterval(120), category: .exercise, subtype: "running", source: .healthKit, createdAt: base),
-        ])
+        let asleepCore = HealthEvent(timestamp: base, category: .sleep, subtype: "asleepCore", source: .healthKit, createdAt: base)
+        let milk = HealthEvent(timestamp: base.addingTimeInterval(60), category: .food, subtype: "milk", source: .manual, createdAt: base)
+        let running = HealthEvent(timestamp: base.addingTimeInterval(120), category: .exercise, subtype: "running", source: .healthKit, createdAt: base)
+        // Extra rows for the combined cursor+categories+sources assertion
+        // below, chosen so the three assertions above are unaffected: an
+        // exercise+healthKit row (doesn't change the {sleep, exercise}
+        // category set already produced by hkOnly) and a food+manual row
+        // (excluded from hkOnly's source filter and from both's isEmpty
+        // food+healthKit combo, same as milk already is).
+        let cycling = HealthEvent(timestamp: base.addingTimeInterval(180), category: .exercise, subtype: "cycling", source: .healthKit, createdAt: base)
+        let steak = HealthEvent(timestamp: base.addingTimeInterval(240), category: .food, subtype: "steak", source: .manual, createdAt: base)
+        try await store.save([asleepCore, milk, running, cycling, steak])
         let sleepOnly = try await store.eventsPage(before: nil, limit: 10, categories: [.sleep], sources: nil)
         #expect(sleepOnly.map(\.subtype) == ["asleepCore"])
         let hkOnly = try await store.eventsPage(before: nil, limit: 10, categories: nil, sources: [.healthKit])
         #expect(Set(hkOnly.map(\.category)) == Set([.sleep, .exercise]))
         let both = try await store.eventsPage(before: nil, limit: 10, categories: [.food], sources: [.healthKit])
         #expect(both.isEmpty)
+
+        // Combined cursor + categories + sources: the keyset predicate and
+        // both IN filters must compose as an intersection, not independently.
+        // The cursor points at cycling, so cycling itself is excluded by the
+        // keyset even though it matches both IN filters; steak and milk are
+        // excluded by category (and source); asleepCore and running are the
+        // only rows that satisfy the keyset AND category-IN AND source-IN
+        // simultaneously.
+        let cursor = TimelineCursor(timestamp: cycling.timestamp, id: cycling.id)
+        let combined = try await store.eventsPage(
+            before: cursor, limit: 10, categories: [.sleep, .exercise], sources: [.healthKit]
+        )
+        #expect(combined.map(\.subtype) == ["running", "asleepCore"])
     }
 
     @Test func eventsPageExcludesSoftDeletedAndRestoreBringsBack() async throws {
