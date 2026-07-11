@@ -1,0 +1,53 @@
+import SwiftUI
+
+/// Root of the Health OS shell: 4 content tabs + center capture.
+/// Replaces MainTabView as the app root (Task 7); the legacy app stays
+/// reachable from the Health tab until its features are ported.
+struct HealthOSRootView: View {
+    @State private var selection: HealthOSTab = .home
+    @State private var showingCapture = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ZStack {
+                tab(.home) { HomeView() }
+                tab(.timeline) { TimelineView() }
+                tab(.insights) { InsightsPlaceholderView() }
+                tab(.health) { HealthTabView() }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            HealthOSTabBar(selection: $selection) { showingCapture = true }
+        }
+        .background(HealthTheme.paper.ignoresSafeArea())
+        .sheet(isPresented: $showingCapture) {
+            CapturePlaceholderSheet()
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.hidden)
+        }
+    }
+
+    /// Keeps EVERY tab mounted and toggles visibility, rather than a `switch`
+    /// that gives each tab a distinct structural identity — a `switch` tears
+    /// the inactive tab down, destroying its `@StateObject` view-model (paging,
+    /// filters, search text, scroll position) on every tab change. Mounting all
+    /// four preserves that state and makes tab switches instant. Hidden tabs are
+    /// non-interactive and hidden from VoiceOver.
+    @ViewBuilder
+    private func tab<Content: View>(_ which: HealthOSTab,
+                                    @ViewBuilder _ content: () -> Content) -> some View {
+        let isActive = selection == which
+        content()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .opacity(isActive ? 1 : 0)
+            .allowsHitTesting(isActive)
+            .accessibilityHidden(!isActive)
+    }
+}
+
+#Preview("Shell — light") {
+    HealthOSRootView()
+}
+
+#Preview("Shell — dark") {
+    HealthOSRootView().preferredColorScheme(.dark)
+}
