@@ -144,4 +144,24 @@ struct TimelineViewModelTests {
         #expect(allIds.filter { $0 == searchOnly.id }.count == 1)
         #expect(allIds.count == filler.count + 1)
     }
+
+    @Test func refreshDuringActiveSearchStaysInSearchMode() async throws {
+        let (_, store) = try makeStore()
+        let base = Date(timeIntervalSince1970: 1_750_000_000)
+        let matching = HealthEvent(timestamp: base, category: .symptom, subtype: "headache",
+                                    value: 5, unit: "severity", source: .manual, createdAt: base)
+        let other = HealthEvent(timestamp: base.addingTimeInterval(60), category: .food, subtype: "toast",
+                                 source: .manual, createdAt: base)
+        try await store.save([matching, other])
+        let vm = TimelineViewModel(store: store, timeZone: TimeZone(identifier: "UTC")!, pageSize: 50)
+        await vm.loadInitial()
+        vm.searchText = "head"
+        await vm.searchTextChanged()
+        #expect(vm.isSearchActive)
+        #expect(vm.days.flatMap(\.events).map(\.subtype) == ["headache"])
+        await vm.refresh()
+        #expect(vm.isSearchActive)
+        // refresh() must have re-run the search, not reverted to the full browse slice.
+        #expect(vm.days.flatMap(\.events).map(\.subtype) == ["headache"])
+    }
 }

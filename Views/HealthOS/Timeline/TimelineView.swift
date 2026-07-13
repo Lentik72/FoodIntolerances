@@ -6,6 +6,7 @@ struct TimelineView: View {
         store: GRDBEventStore(database: HealthGraphProvider.shared))
     @State private var searchDebounce: Task<Void, Never>?
     @State private var path = NavigationPath()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -46,6 +47,9 @@ struct TimelineView: View {
             .animation(.easeOut(duration: 0.2), value: viewModel.pendingUndo)
         }
         .task { await viewModel.loadInitial() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await viewModel.refresh() } }
+        }
     }
 
     private var header: some View {
@@ -102,7 +106,7 @@ struct TimelineView: View {
                         .padding(.leading, 16)
                     }
                 }
-                if viewModel.hasMore && !viewModel.days.isEmpty {
+                if viewModel.hasMore && !viewModel.days.isEmpty && !viewModel.isSearchActive {
                     ProgressView()
                         .padding(.vertical, 24)
                         .onAppear { Task { await viewModel.loadMore() } }

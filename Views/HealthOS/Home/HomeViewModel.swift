@@ -34,6 +34,8 @@ final class HomeViewModel: ObservableObject {
                 .compactMap(\.value)
                 .reduce(0, +)
             sleepSummary = minutes > 0 ? EventDisplay.durationString(minutes: minutes) : nil
+        } else {
+            sleepSummary = nil
         }
 
         // Steps: today's daily stat.

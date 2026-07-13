@@ -38,7 +38,7 @@ struct HealthTabView: View {
                         .foregroundStyle(HealthTheme.inkMuted)
                         .padding(16)
                         .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("\(item.name), coming soon")
+                        .accessibilityLabel("\(item.name), coming soon. \(item.detail)")
                         if item.name != comingRows.last?.name {
                             Divider().padding(.leading, 52)
                         }
@@ -100,6 +100,8 @@ struct HealthTabView: View {
                         .font(.subheadline.weight(.semibold))
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
                         .background(.ultraThinMaterial, in: Capsule())
                         .padding(.trailing, 12)
                         .padding(.top, 6)

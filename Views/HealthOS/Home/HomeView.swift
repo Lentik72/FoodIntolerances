@@ -4,6 +4,7 @@ import HealthGraphCore
 struct HomeView: View {
     @StateObject private var viewModel = HomeViewModel(
         store: GRDBEventStore(database: HealthGraphProvider.shared))
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         ScrollView {
@@ -21,6 +22,9 @@ struct HomeView: View {
         .background(HealthTheme.paper)
         .task { await viewModel.refresh() }
         .refreshable { await viewModel.refresh() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await viewModel.refresh() } }
+        }
     }
 
     private var greeting: some View {

@@ -3,6 +3,7 @@ import HealthGraphCore
 
 struct InsightsPlaceholderView: View {
     @State private var familyCounts: [(family: CategoryFamily, count: Int)] = []
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         ScrollView {
@@ -45,6 +46,10 @@ struct InsightsPlaceholderView: View {
         }
         .background(HealthTheme.paper)
         .task { await loadCounts() }
+        .refreshable { await loadCounts() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await loadCounts() } }
+        }
     }
 
     private func loadCounts() async {

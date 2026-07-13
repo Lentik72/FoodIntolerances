@@ -76,7 +76,11 @@ final class TimelineViewModel: ObservableObject {
     }
 
     func refresh() async {
-        await reloadFromScratch()
+        if isSearchActive {
+            await runSearch()
+        } else {
+            await reloadFromScratch()
+        }
     }
 
     func filtersChanged() async {
@@ -119,6 +123,9 @@ final class TimelineViewModel: ObservableObject {
         }
         pendingUndoWasInBrowse = wasInBrowseSlice
         armUndo(event)
+        // Discard any in-flight loadPage() that snapshotted the DB before this
+        // softDelete committed — otherwise it could re-append the deleted row.
+        loadGeneration &+= 1
         return true
     }
 
