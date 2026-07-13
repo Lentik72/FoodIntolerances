@@ -16,9 +16,32 @@ struct TimelineView: View {
             }
             .background(HealthTheme.paper)
             .navigationDestination(for: HealthEvent.self) { event in
-                // Task 11 replaces this with EventDetailView(event:viewModel:)
-                Text(EventDisplay.title(for: event))
+                EventDetailView(event: event, viewModel: viewModel)
             }
+            .overlay(alignment: .bottom) {
+                if let pending = viewModel.pendingUndo {
+                    HStack(spacing: 12) {
+                        Text("Event deleted")
+                            .font(.subheadline)
+                            .foregroundStyle(HealthTheme.ink)
+                        Button("Undo") {
+                            Task { await viewModel.undoDelete() }
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(HealthTheme.accent)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .hgCard()
+                    .padding(.bottom, 12)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Event deleted")
+                    .accessibilityAction(named: "Undo") { Task { await viewModel.undoDelete() } }
+                    .id(pending.id)
+                }
+            }
+            .animation(.easeOut(duration: 0.2), value: viewModel.pendingUndo)
         }
         .task { await viewModel.loadInitial() }
     }
