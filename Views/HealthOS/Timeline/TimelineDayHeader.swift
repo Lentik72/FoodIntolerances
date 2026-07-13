@@ -9,7 +9,7 @@ struct TimelineDayHeader: View {
             Text(dayTitle)
                 .font(.system(.subheadline, design: .serif, weight: .semibold))
                 .foregroundStyle(HealthTheme.ink)
-            // Task 10 replaces this line with `SeveritySparkline(day: day)`.
+            SeveritySparkline(day: day)
             Spacer()
             Text("\(day.events.count)")
                 .font(.caption)
