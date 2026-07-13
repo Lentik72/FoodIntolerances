@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Root of the Health OS shell: 4 content tabs + center capture.
 /// Replaces MainTabView as the app root (Task 7); the legacy app stays
@@ -23,6 +24,9 @@ struct HealthOSRootView: View {
             CapturePlaceholderSheet()
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.hidden)
+        }
+        .onChange(of: selection) { _, _ in
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         }
     }
 

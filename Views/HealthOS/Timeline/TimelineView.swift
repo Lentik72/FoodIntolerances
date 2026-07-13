@@ -114,6 +114,7 @@ struct TimelineView: View {
             }
             .padding(.bottom, 12)
         }
+        .scrollDismissesKeyboard(.immediately)
         .refreshable { await viewModel.refresh() }
     }
 
