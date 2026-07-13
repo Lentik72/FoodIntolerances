@@ -168,12 +168,16 @@ public struct GRDBEventStore: EventStore {
         return try await dbWriter.read { db in
             try HealthEvent.fetchAll(db, sql: """
                 SELECT he.* FROM health_events he
-                JOIN health_events_fts f ON f.rowid = he.rowid
-                WHERE health_events_fts MATCH ?
-                  AND he.deletedAt IS NULL
+                WHERE he.deletedAt IS NULL AND (
+                    he.rowid IN (SELECT rowid FROM health_events_fts WHERE health_events_fts MATCH ?)
+                    OR he.objectID IN (
+                        SELECT ho.id FROM health_objects ho
+                        JOIN health_objects_fts f ON f.rowid = ho.rowid
+                        WHERE health_objects_fts MATCH ?)
+                )
                 ORDER BY he.timestamp DESC
                 LIMIT ?
-                """, arguments: [match, limit])
+                """, arguments: [match, match, limit])
         }
     }
 }

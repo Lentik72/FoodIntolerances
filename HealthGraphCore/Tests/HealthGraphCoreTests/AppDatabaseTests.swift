@@ -126,4 +126,19 @@ struct AppDatabaseTests {
         }
         #expect(after == 1)
     }
+
+    @Test func v4CreatesObjectFTSAndBackfills() throws {
+        let db = try AppDatabase.inMemory()
+        let obj = HealthObject(kind: .supplement, name: "Magnesium Glycinate")
+        try db.dbWriter.write { d in try obj.insert(d) }
+        let n = try db.dbWriter.read { d in
+            try Int.fetchOne(d, sql: "SELECT count(*) FROM health_objects_fts WHERE health_objects_fts MATCH 'magnesium'") ?? -1
+        }
+        #expect(n == 1)
+        try db.dbWriter.write { d in try d.execute(sql: "UPDATE health_objects SET name = 'Zinc'") }
+        let after = try db.dbWriter.read { d in
+            try Int.fetchOne(d, sql: "SELECT count(*) FROM health_objects_fts WHERE health_objects_fts MATCH 'zinc'") ?? -1
+        }
+        #expect(after == 1)
+    }
 }

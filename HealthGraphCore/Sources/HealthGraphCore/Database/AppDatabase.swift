@@ -164,6 +164,37 @@ public struct AppDatabase: Sendable {
                 """)
         }
 
+        migrator.registerMigration("v4") { db in
+            // External-content FTS over object names, so "search your history" finds
+            // events by their linked substance/food name, not only the typed subtype.
+            try db.execute(sql: """
+                CREATE VIRTUAL TABLE health_objects_fts USING fts5(
+                    name, content='health_objects', content_rowid='rowid')
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER health_objects_fts_ai AFTER INSERT ON health_objects BEGIN
+                    INSERT INTO health_objects_fts(rowid, name) VALUES (new.rowid, new.name);
+                END
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER health_objects_fts_ad AFTER DELETE ON health_objects BEGIN
+                    INSERT INTO health_objects_fts(health_objects_fts, rowid, name)
+                    VALUES ('delete', old.rowid, old.name);
+                END
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER health_objects_fts_au AFTER UPDATE ON health_objects BEGIN
+                    INSERT INTO health_objects_fts(health_objects_fts, rowid, name)
+                    VALUES ('delete', old.rowid, old.name);
+                    INSERT INTO health_objects_fts(rowid, name) VALUES (new.rowid, new.name);
+                END
+                """)
+            try db.execute(sql: """
+                INSERT INTO health_objects_fts(rowid, name)
+                SELECT rowid, name FROM health_objects
+                """)
+        }
+
         return migrator
     }
 }

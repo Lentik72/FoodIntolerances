@@ -234,4 +234,19 @@ struct EventStoreTests {
         try await store.softDelete(id: headache.id)
         #expect(try await store.searchEvents(matching: "head", limit: 10).isEmpty)
     }
+
+    @Test func searchMatchesLinkedObjectNameNotJustSubtype() async throws {
+        let db = try AppDatabase.inMemory()
+        let store = GRDBEventStore(database: db)
+        let objects = GRDBObjectStore(database: db)
+        let base = Date(timeIntervalSince1970: 1_750_000_000)
+        let obj = try await objects.findOrCreate(name: "Vitamin D3", kind: .supplement, metadata: nil)
+        // Subtype is an abbreviation; the searchable full name lives on the object.
+        let dose = HealthEvent(timestamp: base, category: .supplement, subtype: "D3",
+                               objectID: obj.id, value: 2000, unit: "iu", source: .manual, createdAt: base)
+        try await store.save(dose)
+        #expect(try await store.searchEvents(matching: "vitamin", limit: 10).map(\.id) == [dose.id])
+        // Subtype search still works.
+        #expect(try await store.searchEvents(matching: "d3", limit: 10).map(\.id) == [dose.id])
+    }
 }
