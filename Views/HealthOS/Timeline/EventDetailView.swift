@@ -5,6 +5,7 @@ struct EventDetailView: View {
     let event: HealthEvent
     @ObservedObject var viewModel: TimelineViewModel
     @Environment(\.dismiss) private var dismiss
+    @State private var deleteFailed = false
 
     private var style: CategoryStyle { .style(for: event.category) }
 
@@ -16,6 +17,12 @@ struct EventDetailView: View {
                 sourceCard
                 if !metadataRows.isEmpty { detailsCard }
                 deleteButton
+                if deleteFailed {
+                    Text("Couldn't delete. Please try again.")
+                        .font(.footnote)
+                        .foregroundStyle(HealthTheme.amber)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                }
                 Text("Editing arrives with capture, in the next update.")
                     .font(.footnote)
                     .foregroundStyle(HealthTheme.inkMuted)
@@ -98,9 +105,12 @@ struct EventDetailView: View {
         Button(role: .destructive) {
             let target = event
             Task {
-                await viewModel.delete(target)
+                if await viewModel.delete(target) {
+                    dismiss()
+                } else {
+                    deleteFailed = true
+                }
             }
-            dismiss()
         } label: {
             Text("Delete event")
                 .frame(maxWidth: .infinity)

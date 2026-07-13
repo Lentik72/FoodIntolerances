@@ -102,11 +102,12 @@ final class TimelineViewModel: ObservableObject {
         }
     }
 
-    func delete(_ event: HealthEvent) async {
+    @discardableResult
+    func delete(_ event: HealthEvent) async -> Bool {
         do {
             try await store.softDelete(id: event.id)
         } catch {
-            return // row untouched; keep UI consistent with the store
+            return false // row untouched; keep UI consistent with the store
         }
         let wasInBrowseSlice = browseEvents.contains { $0.id == event.id }
         browseEvents.removeAll { $0.id == event.id }
@@ -118,6 +119,7 @@ final class TimelineViewModel: ObservableObject {
         }
         pendingUndoWasInBrowse = wasInBrowseSlice
         armUndo(event)
+        return true
     }
 
     func undoDelete() async {

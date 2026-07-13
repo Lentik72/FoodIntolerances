@@ -29,6 +29,8 @@ struct TimelineView: View {
                         }
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(HealthTheme.accent)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
                     }
                     .padding(.horizontal, 20)
                     .padding(.vertical, 12)
