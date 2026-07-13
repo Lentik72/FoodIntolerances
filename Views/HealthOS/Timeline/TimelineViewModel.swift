@@ -43,6 +43,16 @@ final class TimelineViewModel: ObservableObject {
     private var browseEvents: [HealthEvent] = []
     private var cursor: TimelineCursor?
     private var undoTimer: Task<Void, Never>?
+    /// Whether the event currently pending undo was actually present in `browseEvents`
+    /// (as opposed to a search-only row never paged into the browse slice). Guards
+    /// `undoDelete()`'s re-insert so we don't duplicate a row that `loadMore()` will
+    /// later re-fetch from the DB anyway.
+    private var pendingUndoWasInBrowse = false
+    /// Bumped by `reloadFromScratch()` on every fresh load. `loadPage()`/`runSearch()`
+    /// capture it before their await and re-check it after, so a superseded in-flight
+    /// load (e.g. a stale page fetch racing a filter change that already reset the
+    /// slice) discards its results instead of corrupting the current one.
+    private var loadGeneration = 0
 
     init(store: any EventStore, timeZone: TimeZone = .current, pageSize: Int = 200) {
         self.store = store
@@ -98,6 +108,7 @@ final class TimelineViewModel: ObservableObject {
         } catch {
             return // row untouched; keep UI consistent with the store
         }
+        let wasInBrowseSlice = browseEvents.contains { $0.id == event.id }
         browseEvents.removeAll { $0.id == event.id }
         days = days.compactMap { day in
             guard day.events.contains(where: { $0.id == event.id }) else { return day }
@@ -105,6 +116,7 @@ final class TimelineViewModel: ObservableObject {
             guard !remaining.isEmpty else { return nil }
             return TimelineDayBuilder.days(from: remaining, timeZone: timeZone).first
         }
+        pendingUndoWasInBrowse = wasInBrowseSlice
         armUndo(event)
     }
 
@@ -117,11 +129,17 @@ final class TimelineViewModel: ObservableObject {
         } catch {
             return
         }
-        let insertAt = browseEvents.firstIndex {
-            ($0.timestamp, $0.id.uuidString) < (event.timestamp, event.id.uuidString)
-        } ?? browseEvents.endIndex
-        browseEvents.insert(event, at: insertAt)
-        if !isSearchActive {
+        if pendingUndoWasInBrowse {
+            let insertAt = browseEvents.firstIndex {
+                ($0.timestamp, $0.id.uuidString) < (event.timestamp, event.id.uuidString)
+            } ?? browseEvents.endIndex
+            browseEvents.insert(event, at: insertAt)
+        }
+        // A search-only row (never paged into browseEvents) doesn't need a manual
+        // splice: re-running the active search re-surfaces it straight from the DB.
+        if isSearchActive {
+            await runSearch()
+        } else {
             days = TimelineDayBuilder.days(from: browseEvents, timeZone: timeZone)
         }
     }
@@ -129,11 +147,13 @@ final class TimelineViewModel: ObservableObject {
     func dismissUndo() {
         undoTimer?.cancel()
         pendingUndo = nil
+        pendingUndoWasInBrowse = false
     }
 
     // MARK: private
 
     private func reloadFromScratch() async {
+        loadGeneration &+= 1
         cursor = nil
         browseEvents = []
         hasMore = true
@@ -141,11 +161,16 @@ final class TimelineViewModel: ObservableObject {
     }
 
     private func loadPage() async {
+        let gen = loadGeneration
         isLoading = true
         defer { isLoading = false }
         do {
             let page = try await store.eventsPage(before: cursor, limit: pageSize,
                                                   categories: categoryFilter, sources: sourceFilter)
+            // A newer reloadFromScratch() already reset cursor/browseEvents while this
+            // fetch was in flight — discard the stale-filter results instead of
+            // appending onto (and thereby corrupting) the current slice.
+            guard gen == loadGeneration else { return }
             if let last = page.last {
                 cursor = TimelineCursor(timestamp: last.timestamp, id: last.id)
             }
@@ -153,20 +178,24 @@ final class TimelineViewModel: ObservableObject {
             browseEvents.append(contentsOf: page)
             days = TimelineDayBuilder.days(from: browseEvents, timeZone: timeZone)
         } catch {
+            guard gen == loadGeneration else { return }
             hasMore = false
         }
     }
 
     private func runSearch() async {
+        let gen = loadGeneration
         isLoading = true
         defer { isLoading = false }
         isSearchActive = true
         do {
             var results = try await store.searchEvents(matching: searchText, limit: 400)
+            guard gen == loadGeneration else { return }
             if let categoryFilter { results = results.filter { categoryFilter.contains($0.category) } }
             if let sourceFilter { results = results.filter { sourceFilter.contains($0.source) } }
             days = TimelineDayBuilder.days(from: results, timeZone: timeZone)
         } catch {
+            guard gen == loadGeneration else { return }
             days = []
         }
     }
@@ -181,6 +210,7 @@ final class TimelineViewModel: ObservableObject {
             try? await Task.sleep(for: window)
             guard !Task.isCancelled else { return }
             self?.pendingUndo = nil
+            self?.pendingUndoWasInBrowse = false
         }
     }
 }
