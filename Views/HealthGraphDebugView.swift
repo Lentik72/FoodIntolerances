@@ -15,7 +15,7 @@ struct HealthGraphDebugView: View {
     @State private var report: SwiftDataMigrator.Report?
     @State private var errorMessage: String?
     @State private var isWorking = false
-    @StateObject private var ingestor = HealthKitIngestor()
+    @EnvironmentObject private var ingestor: HealthKitIngestor
     @State private var countsByCategory: [String: Int] = [:]
     @State private var countsBySource: [String: Int] = [:]
     @State private var lastIngestSummary: String?

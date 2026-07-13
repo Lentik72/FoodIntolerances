@@ -16,6 +16,7 @@ struct FoodIntolerancesApp: App {
     @StateObject private var healthKitIngestor = HealthKitIngestor()
     @AppStorage("enableDiagnostics") private var enableDiagnostics = false
     @AppStorage("debugMode") private var debugMode = false
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         // Ensure transformers are registered before any other code runs
@@ -79,7 +80,7 @@ struct FoodIntolerancesApp: App {
         WindowGroup {
             let _ = StringArrayTransformer.register() // Ensure registration happens first
             
-            MainTabView()
+            HealthOSRootView()
                 .environmentObject(healthKitManager)
                 .environmentObject(healthKitIngestor)
                 .environmentObject(logItemViewModel)
@@ -112,6 +113,10 @@ struct FoodIntolerancesApp: App {
                 }
                 .task { healthKitIngestor.startObserving() }
                 .task { await EnvironmentalEventEmitter.emitIfNeeded(service: environmentalService) }
+                .onChange(of: scenePhase) { _, phase in
+                    guard phase == .active else { return }
+                    Task { await EnvironmentalEventEmitter.emitIfNeeded(service: environmentalService) }
+                }
         }
     }
 

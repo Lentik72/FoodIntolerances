@@ -13,7 +13,7 @@ struct HealthOSRootView: View {
                 tab(.home) { HomeView() }
                 tab(.timeline) { TimelineView() }
                 tab(.insights) { InsightsPlaceholderView() }
-                tab(.health) { HealthTabView() }
+                tab(.health) { NavigationStack { HealthTabView() } }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             HealthOSTabBar(selection: $selection) { showingCapture = true }
