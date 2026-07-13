@@ -3,6 +3,14 @@ import SwiftUI
 struct HealthTabView: View {
     @State private var showingLegacyApp = false
 
+    private let comingRows: [(icon: String, name: String, detail: String)] = [
+        ("cabinet", "Cabinet", "meds, supplements, peptides — stock and refills"),
+        ("checklist", "Protocols & experiments", "adherence and outcomes"),
+        ("testtube.2", "Labs", "trends per analyte, imports"),
+        ("chart.bar", "Health confidence", "how complete your data is"),
+        ("doc.text", "Doctor report", "a PDF your practitioner can actually read"),
+    ]
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -13,6 +21,30 @@ struct HealthTabView: View {
                 Text("Cabinet, protocols, labs, and reports will live here.")
                     .font(.subheadline)
                     .foregroundStyle(HealthTheme.inkSecondary)
+
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(comingRows, id: \.name) { item in
+                        HStack(spacing: 12) {
+                            Image(systemName: item.icon).frame(width: 24)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(item.name).font(.body)
+                                Text(item.detail).font(.caption)
+                            }
+                            Spacer()
+                            Text("Soon").font(.caption2)
+                                .padding(.horizontal, 8).padding(.vertical, 3)
+                                .background(Capsule().fill(HealthTheme.dotMiss.opacity(0.4)))
+                        }
+                        .foregroundStyle(HealthTheme.inkMuted)
+                        .padding(16)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("\(item.name), coming soon")
+                        if item.name != comingRows.last?.name {
+                            Divider().padding(.leading, 52)
+                        }
+                    }
+                }
+                .hgCard()
 
                 VStack(spacing: 0) {
                     Button {
