@@ -2,7 +2,7 @@ import Foundation
 import GRDB
 
 /// Everything that happens is an event. Spec §4.
-public struct HealthEvent: Codable, Identifiable, Equatable,
+public struct HealthEvent: Codable, Identifiable, Equatable, Hashable,
                            FetchableRecord, PersistableRecord, Sendable {
     public static let databaseTableName = "health_events"
 
