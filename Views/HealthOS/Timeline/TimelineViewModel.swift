@@ -220,6 +220,7 @@ final class TimelineViewModel: ObservableObject {
             days = TimelineDayBuilder.days(from: results, timeZone: timeZone)
         } catch {
             guard gen == loadGeneration else { return }
+            isSearchActive = true
             days = []
         }
     }
