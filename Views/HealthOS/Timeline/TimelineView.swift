@@ -7,6 +7,7 @@ struct TimelineView: View {
     @State private var searchDebounce: Task<Void, Never>?
     @State private var path = NavigationPath()
     @Environment(\.scenePhase) private var scenePhase
+    @EnvironmentObject private var captureCoordinator: CaptureCoordinator
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -49,6 +50,9 @@ struct TimelineView: View {
         .task { await viewModel.loadInitial() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await viewModel.refresh() } }
+        }
+        .onChange(of: captureCoordinator.lastCaptureAt) { _, _ in
+            Task { await viewModel.refresh() }
         }
     }
 

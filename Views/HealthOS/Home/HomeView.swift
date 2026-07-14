@@ -5,6 +5,7 @@ struct HomeView: View {
     @StateObject private var viewModel = HomeViewModel(
         store: GRDBEventStore(database: HealthGraphProvider.shared))
     @Environment(\.scenePhase) private var scenePhase
+    @EnvironmentObject private var captureCoordinator: CaptureCoordinator
 
     var body: some View {
         ScrollView {
@@ -24,6 +25,9 @@ struct HomeView: View {
         .refreshable { await viewModel.refresh() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await viewModel.refresh() } }
+        }
+        .onChange(of: captureCoordinator.lastCaptureAt) { _, _ in
+            Task { await viewModel.refresh() }
         }
     }
 

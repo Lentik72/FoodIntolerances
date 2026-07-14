@@ -14,6 +14,7 @@ struct FoodIntolerancesApp: App {
     @StateObject private var tabManager = TabManager()
     @StateObject private var healthKitManager = HealthKitManager()
     @StateObject private var healthKitIngestor = HealthKitIngestor()
+    @StateObject private var captureCoordinator = CaptureCoordinator()
     @AppStorage("enableDiagnostics") private var enableDiagnostics = false
     @AppStorage("debugMode") private var debugMode = false
     @Environment(\.scenePhase) private var scenePhase
@@ -85,6 +86,7 @@ struct FoodIntolerancesApp: App {
                 .environmentObject(healthKitIngestor)
                 .environmentObject(logItemViewModel)
                 .environmentObject(tabManager)
+                .environmentObject(captureCoordinator)
                 .modelContainer(for: [
                     LogEntry.self,
                     TrackedItem.self,

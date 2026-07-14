@@ -4,6 +4,7 @@ import HealthGraphCore
 struct InsightsPlaceholderView: View {
     @State private var familyCounts: [(family: CategoryFamily, count: Int)] = []
     @Environment(\.scenePhase) private var scenePhase
+    @EnvironmentObject private var captureCoordinator: CaptureCoordinator
 
     var body: some View {
         ScrollView {
@@ -49,6 +50,9 @@ struct InsightsPlaceholderView: View {
         .refreshable { await loadCounts() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await loadCounts() } }
+        }
+        .onChange(of: captureCoordinator.lastCaptureAt) { _, _ in
+            Task { await loadCounts() }
         }
     }
 

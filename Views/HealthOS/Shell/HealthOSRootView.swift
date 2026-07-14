@@ -50,8 +50,11 @@ struct HealthOSRootView: View {
 
 #Preview("Shell — light") {
     HealthOSRootView()
+        .environmentObject(CaptureCoordinator())
 }
 
 #Preview("Shell — dark") {
-    HealthOSRootView().preferredColorScheme(.dark)
+    HealthOSRootView()
+        .environmentObject(CaptureCoordinator())
+        .preferredColorScheme(.dark)
 }
