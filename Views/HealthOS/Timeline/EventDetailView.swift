@@ -6,6 +6,7 @@ struct EventDetailView: View {
     @ObservedObject var viewModel: TimelineViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var deleteFailed = false
+    @State private var editing = false
 
     private var style: CategoryStyle { .style(for: event.category) }
 
@@ -23,10 +24,11 @@ struct EventDetailView: View {
                         .foregroundStyle(HealthTheme.amber)
                         .frame(maxWidth: .infinity, alignment: .center)
                 }
-                Text("Editing arrives with capture, in the next update.")
-                    .font(.footnote)
-                    .foregroundStyle(HealthTheme.inkMuted)
-                    .frame(maxWidth: .infinity, alignment: .center)
+                Button { editing = true } label: {
+                    Label("Edit", systemImage: "pencil").frame(maxWidth: .infinity).padding(.vertical, 12)
+                }
+                .buttonStyle(.bordered)
+                .sheet(isPresented: $editing) { EventEditView(event: event, viewModel: viewModel) }
             }
             .padding(16)
         }

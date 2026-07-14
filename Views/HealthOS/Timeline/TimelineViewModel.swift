@@ -159,6 +159,15 @@ final class TimelineViewModel: ObservableObject {
         pendingUndoWasInBrowse = false
     }
 
+    /// Persist an edit (re-save by id = upsert; FTS resyncs) and refresh the visible list.
+    @discardableResult
+    func update(_ event: HealthEvent) async -> Bool {
+        do { try await store.save(event) } catch { return false }
+        loadGeneration &+= 1
+        await refresh()   // search-aware; re-reads and regroups so the edit shows
+        return true
+    }
+
     // MARK: private
 
     private func reloadFromScratch() async {

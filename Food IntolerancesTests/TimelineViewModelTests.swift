@@ -164,4 +164,21 @@ struct TimelineViewModelTests {
         // refresh() must have re-run the search, not reverted to the full browse slice.
         #expect(vm.days.flatMap(\.events).map(\.subtype) == ["headache"])
     }
+
+    @Test func updatePersistsEditedEventAndRefreshes() async throws {
+        let (_, store) = try makeStore()
+        let base = Date(timeIntervalSince1970: 1_750_000_000)
+        let e = HealthEvent(timestamp: base, category: .symptom, subtype: "headache",
+                            value: 5, unit: "severity", source: .manual, createdAt: base)
+        try await store.save(e)
+        let vm = TimelineViewModel(store: store, timeZone: TimeZone(identifier: "UTC")!, pageSize: 50)
+        await vm.loadInitial()
+        var edited = e; edited.value = 9
+        #expect(await vm.update(edited))
+        // Persisted (upsert by id — still one row) and reflected.
+        let page = try await store.eventsPage(before: nil, limit: 10, categories: nil, sources: nil)
+        #expect(page.count == 1)
+        #expect(page.first?.value == 9)
+        #expect(vm.days.flatMap(\.events).first?.value == 9)
+    }
 }
