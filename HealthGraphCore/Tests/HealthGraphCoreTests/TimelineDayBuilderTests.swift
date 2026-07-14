@@ -87,5 +87,7 @@ struct TimelineDayBuilderTests {
         // A dose shows amount + unit.
         #expect(EventDisplay.valueLine(for: ev(.peptide, "Semaglutide", 0.25, "mg")) == "0.25 mg")
         #expect(EventDisplay.valueLine(for: ev(.supplement, "Vitamin D3", 2000, "iu")) == "2000 iu")
+        // A nutrition daily-stat (category .food, mg) still rounds to an integer (not the dose bucket).
+        #expect(EventDisplay.valueLine(for: ev(.food, "dietarySodium", 675.1, "mg")) == "675 mg")
     }
 }

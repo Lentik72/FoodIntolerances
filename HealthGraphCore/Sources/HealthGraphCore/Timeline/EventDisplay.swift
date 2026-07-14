@@ -70,7 +70,8 @@ public enum EventDisplay {
             case 3: return "heavy"
             default: return nil
             }
-        case let u? where ["mg", "mcg", "iu", "ml", "tablet", "capsule", "drop", "spray"].contains(u):
+        case let u? where ["mg", "mcg", "iu", "ml", "tablet", "capsule", "drop", "spray"].contains(u)
+                && [.medication, .supplement, .peptide].contains(event.category):
             return "\(trimmed(value)) \(u)"
         case let unit? where ["kcal", "g", "mg", "bpm", "ms", "hPa", "mmHg", "breaths/min"].contains(unit):
             return String(format: "%.0f %@", value, unit)
