@@ -40,4 +40,28 @@ struct CaptureFlowTests {
         #expect(e?.category == .food)
         #expect(try await objects.count() == 1)
     }
+    @Test func doseModelFormLogsLinkedPeptideEvent() async throws {
+        let database = try db()
+        let base = Date(timeIntervalSince1970: 1_750_000_000)
+        let model = DoseCaptureModel(database: database)
+        model.kind = .peptide; model.substance = "Semaglutide"; model.amountText = "0.25"; model.unit = "mg"; model.route = "subQ"
+        let e = await model.saveForm(at: base)
+        #expect(e?.category == .peptide)
+        #expect(e?.value == 0.25)
+        #expect(e?.objectID != nil)
+    }
+    @Test func doseChipRepeatsLastAmountForSubstance() async throws {
+        let database = try db()
+        let store = GRDBEventStore(database: database)
+        let objects = GRDBObjectStore(database: database)
+        let base = Date(timeIntervalSince1970: 1_750_000_000)
+        let obj = try await objects.findOrCreate(name: "Vitamin D3", kind: .supplement, metadata: nil)
+        try await store.save(HealthEvent(timestamp: base, category: .supplement, subtype: "Vitamin D3",
+                                         objectID: obj.id, value: 2000, unit: "iu", source: .manual, createdAt: base))
+        let model = DoseCaptureModel(database: database, now: { base })
+        await model.loadChips()
+        let e = await model.logChip(substance: "Vitamin D3", at: base.addingTimeInterval(60))
+        #expect(e?.value == 2000)   // repeats the last logged amount
+        #expect(e?.unit == "iu")
+    }
 }
