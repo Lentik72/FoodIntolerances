@@ -64,4 +64,13 @@ struct CaptureFlowTests {
         #expect(e?.value == 2000)   // repeats the last logged amount
         #expect(e?.unit == "iu")
     }
+    @Test func noteModelLogsSearchableNote() async throws {
+        let database = try db()
+        let store = GRDBEventStore(database: database)
+        let base = Date(timeIntervalSince1970: 1_750_000_000)
+        let model = NoteCaptureModel(database: database)
+        let e = await model.log(text: "Slept badly, groggy morning", at: base)
+        #expect(e != nil)
+        #expect(try await store.searchEvents(matching: "groggy", limit: 10).count == 1)
+    }
 }
