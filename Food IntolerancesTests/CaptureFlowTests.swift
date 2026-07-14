@@ -31,4 +31,13 @@ struct CaptureFlowTests {
         model.searchText = "Sinus Pain"
         #expect(model.newKey() == "sinusPain")
     }
+    @Test func mealModelLogsFoodEventAndObject() async throws {
+        let database = try db()
+        let objects = GRDBObjectStore(database: database)
+        let base = Date(timeIntervalSince1970: 1_750_000_000)
+        let model = MealCaptureModel(database: database)
+        let e = await model.log(name: "Oat milk latte", at: base)
+        #expect(e?.category == .food)
+        #expect(try await objects.count() == 1)
+    }
 }
