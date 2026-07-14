@@ -21,8 +21,8 @@ struct HealthOSRootView: View {
         }
         .background(HealthTheme.paper.ignoresSafeArea())
         .sheet(isPresented: $showingCapture) {
-            CapturePlaceholderSheet()
-                .presentationDetents([.medium])
+            CaptureSheet()
+                .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.hidden)
         }
         .onChange(of: selection) { _, _ in
