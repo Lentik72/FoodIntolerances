@@ -99,6 +99,9 @@ final class TimelineViewModel: ObservableObject {
     func searchTextChanged() async {
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
+            // Discard any still-suspended runSearch() so it can't resume later and
+            // repaint stale search results over the just-restored browse slice.
+            loadGeneration &+= 1
             isSearchActive = false
             days = TimelineDayBuilder.days(from: browseEvents, timeZone: timeZone)
         } else {
@@ -202,13 +205,16 @@ final class TimelineViewModel: ObservableObject {
     }
 
     private func runSearch() async {
+        // A search supersedes any in-flight browse loadPage() and discards any
+        // earlier in-flight search — bump before capturing gen so both are stale.
+        loadGeneration &+= 1
         let gen = loadGeneration
         isLoading = true
         defer { isLoading = false }
-        isSearchActive = true
         do {
             var results = try await store.searchEvents(matching: searchText, limit: 400)
             guard gen == loadGeneration else { return }
+            isSearchActive = true
             if let categoryFilter { results = results.filter { categoryFilter.contains($0.category) } }
             if let sourceFilter { results = results.filter { sourceFilter.contains($0.source) } }
             days = TimelineDayBuilder.days(from: results, timeZone: timeZone)

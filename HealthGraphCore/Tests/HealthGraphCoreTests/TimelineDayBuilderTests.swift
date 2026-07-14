@@ -90,4 +90,23 @@ struct TimelineDayBuilderTests {
         // A nutrition daily-stat (category .food, mg) still rounds to an integer (not the dose bucket).
         #expect(EventDisplay.valueLine(for: ev(.food, "dietarySodium", 675.1, "mg")) == "675 mg")
     }
+
+    @Test func dropsSubMinuteDurationMicroSegments() {
+        let base = Date(timeIntervalSince1970: 1_750_000_000)
+        let micro = HealthEvent(timestamp: base, endTimestamp: base.addingTimeInterval(20),
+                                category: .sleep, subtype: "awake", value: 0, unit: "min",
+                                source: .healthKit, createdAt: base)
+        let real = HealthEvent(timestamp: base.addingTimeInterval(100), endTimestamp: base.addingTimeInterval(100 + 600),
+                               category: .sleep, subtype: "asleepCore", value: 10, unit: "min",
+                               source: .healthKit, createdAt: base)
+        let days = TimelineDayBuilder.days(from: [real, micro], timeZone: TimeZone(identifier: "UTC")!)
+        #expect(days.flatMap(\.events).map(\.subtype) == ["asleepCore"])   // micro dropped
+    }
+    @Test func keepsPointEventsEvenWithZeroValue() {
+        let base = Date(timeIntervalSince1970: 1_750_000_000)
+        let point = HealthEvent(timestamp: base, category: .symptom, subtype: "headache",
+                                value: 0, unit: "severity", source: .manual, createdAt: base)
+        let days = TimelineDayBuilder.days(from: [point], timeZone: TimeZone(identifier: "UTC")!)
+        #expect(days.flatMap(\.events).count == 1)   // point event kept
+    }
 }

@@ -27,9 +27,15 @@ public enum TimelineDayBuilder {
     public static func days(from events: [HealthEvent], timeZone: TimeZone) -> [TimelineDay] {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
+        // HealthKit emits sub-30-second sleep stages that would otherwise render as
+        // cluttering "0m" rows; drop those while keeping all point-in-time events.
+        let kept = events.filter { e in
+            guard let end = e.endTimestamp else { return true }        // point events kept
+            return end.timeIntervalSince(e.timestamp) >= 60            // duration >= 1 min
+        }
         var order: [Date] = []
         var buckets: [Date: [HealthEvent]] = [:]
-        for event in events {
+        for event in kept {
             let day = calendar.startOfDay(for: event.timestamp)
             if buckets[day] == nil { order.append(day) }
             buckets[day, default: []].append(event)

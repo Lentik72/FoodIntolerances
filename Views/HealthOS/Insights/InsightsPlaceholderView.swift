@@ -58,7 +58,7 @@ struct InsightsPlaceholderView: View {
 
     private func loadCounts() async {
         let store = GRDBEventStore(database: HealthGraphProvider.shared)
-        guard let raw = try? await store.countsByCategory() else { return }
+        guard let raw = try? await store.countsByCategory() else { familyCounts = []; return }
         let counts = raw.reduce(into: [CategoryFamily: Int]()) { acc, pair in
             guard let category = EventCategory(rawValue: pair.key) else { return }
             acc[CategoryStyle.style(for: category).family, default: 0] += pair.value

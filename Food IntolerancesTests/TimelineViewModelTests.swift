@@ -181,4 +181,17 @@ struct TimelineViewModelTests {
         #expect(page.first?.value == 9)
         #expect(vm.days.flatMap(\.events).first?.value == 9)
     }
+
+    @Test func runSearchBumpsGenerationSoStaleSearchDiscarded() async throws {
+        // Behavioural pin: after a search then a clear, the browse slice is shown (no stale search repaint).
+        let (_, store) = try makeStore()
+        _ = try await seed(store, count: 3)
+        let vm = TimelineViewModel(store: store, timeZone: TimeZone(identifier: "UTC")!, pageSize: 50)
+        await vm.loadInitial()
+        vm.searchText = "item0"; await vm.searchTextChanged()
+        #expect(vm.isSearchActive)
+        vm.searchText = ""; await vm.searchTextChanged()
+        #expect(!vm.isSearchActive)
+        #expect(vm.days.flatMap(\.events).count == 3)
+    }
 }
