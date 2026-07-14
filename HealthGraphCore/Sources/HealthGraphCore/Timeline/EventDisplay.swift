@@ -29,6 +29,8 @@ public enum EventDisplay {
     ]
 
     public static func title(for event: HealthEvent) -> String {
+        // A note's title IS its text.
+        if event.category == .note, let s = event.subtype, !s.isEmpty { return s }
         guard let subtype = event.subtype, !subtype.isEmpty else {
             return event.category.rawValue.prefix(1).uppercased() + event.category.rawValue.dropFirst()
         }
@@ -40,7 +42,7 @@ public enum EventDisplay {
             // `Character(ch.uppercased())` traps when a case change yields >1 grapheme
             // (e.g. "ß" → "SS"), reachable via user-typed food names in 1C — append the String.
             if i == 0 { out.append(contentsOf: ch.uppercased()) }
-            else if ch.isUppercase { out.append(" "); out.append(contentsOf: ch.lowercased()) }
+            else if ch.isUppercase { out.append(" "); out.append(ch) }
             else { out.append(ch) }
         }
         return out
@@ -68,11 +70,18 @@ public enum EventDisplay {
             case 3: return "heavy"
             default: return nil
             }
+        case let u? where ["mg", "mcg", "iu", "ml", "tablet", "capsule", "drop", "spray"].contains(u):
+            return "\(trimmed(value)) \(u)"
         case let unit? where ["kcal", "g", "mg", "bpm", "ms", "hPa", "mmHg", "breaths/min"].contains(unit):
             return String(format: "%.0f %@", value, unit)
         case let unit?: return "\(String(format: "%g", value)) \(unit)"
         case nil: return String(format: "%g", value)
         }
+    }
+
+    /// Whole number → plain Int string ("2000"); otherwise trimmed decimal ("0.25").
+    private static func trimmed(_ v: Double) -> String {
+        v == v.rounded() ? String(Int(v)) : String(format: "%g", v)
     }
 
     public static func durationString(minutes: Double) -> String {

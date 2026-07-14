@@ -73,4 +73,19 @@ struct TimelineDayBuilderTests {
         #expect(EventDisplay.durationString(minutes: 45) == "45m")
         #expect(EventDisplay.durationString(minutes: 420) == "7h")
     }
+
+    @Test func noteAndDoseDisplay() {
+        let base = Date(timeIntervalSince1970: 1_750_000_000)
+        func ev(_ cat: EventCategory, _ sub: String?, _ value: Double?, _ unit: String?) -> HealthEvent {
+            HealthEvent(timestamp: base, category: cat, subtype: sub, value: value, unit: unit,
+                        source: .manual, createdAt: base)
+        }
+        // A note shows its text as the title (not the category name).
+        #expect(EventDisplay.title(for: ev(.note, "Felt wired after coffee", nil, nil)) == "Felt wired after coffee")
+        // A multi-word symptom subtype title-cases consistently with SymptomCatalog.displayName.
+        #expect(EventDisplay.title(for: ev(.symptom, "sinusPain", nil, nil)) == "Sinus Pain")
+        // A dose shows amount + unit.
+        #expect(EventDisplay.valueLine(for: ev(.peptide, "Semaglutide", 0.25, "mg")) == "0.25 mg")
+        #expect(EventDisplay.valueLine(for: ev(.supplement, "Vitamin D3", 2000, "iu")) == "2000 iu")
+    }
 }

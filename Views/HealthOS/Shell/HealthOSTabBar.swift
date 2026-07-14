@@ -44,7 +44,7 @@ struct HealthOSTabBar: View {
         Button(action: onCapture) {
             Image(systemName: "plus")
                 .font(.system(size: 24, weight: .semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(HealthTheme.onAccent)
                 .frame(width: 56, height: 56)
                 .background(Circle().fill(HealthTheme.accent))
                 .shadow(color: .black.opacity(0.15), radius: 4, y: 2)

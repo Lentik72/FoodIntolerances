@@ -15,6 +15,8 @@ enum HealthTheme {
     /// Evidence dots & warm alerts ONLY (Phase 2 insight cards). Never a category color.
     static let amber       = dyn(light: 0xC77E32, dark: 0xD89A55)
     static let dotMiss     = dyn(light: 0xD8D2C6, dark: 0x4A463C)
+    /// Content drawn on top of the accent fill (buttons, the capture [+]).
+    static let onAccent = dyn(light: 0xFFFFFF, dark: 0xFFFFFF)
 
     // MARK: type — semantic styles only, so Dynamic Type scales everything
     static func screenTitle() -> Font { .system(.largeTitle, design: .serif, weight: .semibold) }
