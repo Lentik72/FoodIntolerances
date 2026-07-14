@@ -141,4 +141,21 @@ struct AppDatabaseTests {
         }
         #expect(after == 1)
     }
+
+    @Test func reopeningPreservesRowsAcrossMigrations() async throws {
+        // Two AppDatabase instances over the same on-disk file: reopening runs the
+        // migrator again and must NOT erase existing rows. NOTE: open(at:) takes a URL.
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("hg-1c-\(UInt64(1_750_000_000)).sqlite")
+        try? FileManager.default.removeItem(at: dir)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let base = Date(timeIntervalSince1970: 1_750_000_000)
+        do {
+            let db = try AppDatabase.open(at: dir)
+            try await GRDBEventStore(database: db).save(
+                HealthEvent(timestamp: base, category: .note, subtype: "keep me", source: .manual, createdAt: base))
+        }
+        let db2 = try AppDatabase.open(at: dir)
+        #expect(try await GRDBEventStore(database: db2).count() == 1)
+    }
 }

@@ -28,15 +28,11 @@ public struct AppDatabase: Sendable {
 
     static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
-        #if DEBUG
-        // GRDB does not checksum migration bodies: without this flag, editing
-        // migration v1 during development leaves SILENT schema drift on
-        // existing databases — worse than erasure. This is safe only while
-        // the graph is fully reconstructible (legacy SwiftData store intact,
-        // synthetic data reloadable). REMOVE this flag before Phase 1 live
-        // capture ships, when the graph becomes the source of truth.
-        migrator.eraseDatabaseOnSchemaChange = true
-        #endif
+        // Migrations are append-only and immutable from Phase 1C on: the graph is the
+        // source of truth, so a shipped migration body must never change (GRDB does not
+        // checksum bodies). New schema = a new numbered migration. Editing v1..vN in place
+        // would silently drift schemas on existing installs. `eraseDatabaseOnSchemaChange`
+        // was removed here; the DEBUG-only `eraseAllRows()` remains for the debug Reset button.
 
         migrator.registerMigration("v1") { db in
             try db.create(table: "health_objects") { t in
