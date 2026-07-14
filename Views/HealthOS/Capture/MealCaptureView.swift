@@ -12,7 +12,7 @@ final class MealCaptureModel: ObservableObject {
         store = GRDBEventStore(database: database); capture = CaptureService(database: database); self.now = now
     }
     func loadChips() async {
-        guard let recent = try? await store.recentEvents(limit: 300) else { return }
+        guard let recent = try? await store.eventsPage(before: nil, limit: 300, categories: [.food], sources: [.manual]) else { return }
         chips = ChipRanker.rank(history: recent, category: .food, now: now(), timeZone: .current, limit: 8)
     }
     @discardableResult

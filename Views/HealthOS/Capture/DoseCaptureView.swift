@@ -3,7 +3,7 @@ import HealthGraphCore
 
 @MainActor
 final class DoseCaptureModel: ObservableObject {
-    @Published var kind: DoseKind = .supplement { didSet { Task { await loadChips() } } }
+    @Published var kind: DoseKind = .supplement { didSet { route = ""; Task { await loadChips() } } }
     @Published var substance: String = ""
     @Published var amountText: String = ""
     @Published var unit: String = "mg"
@@ -18,7 +18,7 @@ final class DoseCaptureModel: ObservableObject {
         store = GRDBEventStore(database: database); capture = CaptureService(database: database); self.now = now
     }
     func loadChips() async {
-        recent = (try? await store.recentEvents(limit: 300)) ?? []
+        recent = (try? await store.eventsPage(before: nil, limit: 300, categories: [kind.eventCategory], sources: [.manual])) ?? []
         chips = ChipRanker.rank(history: recent, category: kind.eventCategory, now: now(), timeZone: .current, limit: 8)
     }
     private func lastDose(for substance: String) -> (Double?, String?) {

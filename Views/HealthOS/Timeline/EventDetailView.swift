@@ -8,7 +8,14 @@ struct EventDetailView: View {
     @State private var deleteFailed = false
     @State private var editing = false
 
-    private var style: CategoryStyle { .style(for: event.category) }
+    /// Re-resolves the event by id from the (already `@ObservedObject`) viewModel's
+    /// refreshed timeline so the screen reflects a just-saved edit live, falling
+    /// back to the original copy if it's no longer in the loaded slice.
+    private var displayEvent: HealthEvent {
+        viewModel.days.flatMap(\.events).first { $0.id == event.id } ?? event
+    }
+
+    private var style: CategoryStyle { .style(for: displayEvent.category) }
 
     var body: some View {
         ScrollView {
@@ -24,16 +31,18 @@ struct EventDetailView: View {
                         .foregroundStyle(HealthTheme.amber)
                         .frame(maxWidth: .infinity, alignment: .center)
                 }
-                Button { editing = true } label: {
-                    Label("Edit", systemImage: "pencil").frame(maxWidth: .infinity).padding(.vertical, 12)
+                if event.source == .manual {
+                    Button { editing = true } label: {
+                        Label("Edit", systemImage: "pencil").frame(maxWidth: .infinity).padding(.vertical, 12)
+                    }
+                    .buttonStyle(.bordered)
+                    .sheet(isPresented: $editing) { EventEditView(event: displayEvent, viewModel: viewModel) }
                 }
-                .buttonStyle(.bordered)
-                .sheet(isPresented: $editing) { EventEditView(event: event, viewModel: viewModel) }
             }
             .padding(16)
         }
         .background(HealthTheme.paper)
-        .navigationTitle(EventDisplay.title(for: event))
+        .navigationTitle(EventDisplay.title(for: displayEvent))
         .navigationBarTitleDisplayMode(.inline)
     }
 
@@ -45,7 +54,7 @@ struct EventDetailView: View {
                 .frame(width: 44, height: 44)
                 .background(Circle().fill(style.color.opacity(0.12)))
             VStack(alignment: .leading, spacing: 2) {
-                Text(EventDisplay.title(for: event))
+                Text(EventDisplay.title(for: displayEvent))
                     .font(HealthTheme.sectionHeader())
                     .foregroundStyle(HealthTheme.ink)
                 HStack(spacing: 6) {
@@ -53,7 +62,7 @@ struct EventDetailView: View {
                     Text(style.family.label)
                         .font(.footnote)
                         .foregroundStyle(HealthTheme.inkSecondary)
-                    if let line = EventDisplay.valueLine(for: event) {
+                    if let line = EventDisplay.valueLine(for: displayEvent) {
                         Text("·").foregroundStyle(HealthTheme.inkMuted)
                         Text(line)
                             .font(.footnote)
@@ -66,12 +75,12 @@ struct EventDetailView: View {
 
     private var whenCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            row("Time", event.timestamp.formatted(.dateTime.weekday(.wide).month().day().hour().minute()))
-            if let end = event.endTimestamp {
+            row("Time", displayEvent.timestamp.formatted(.dateTime.weekday(.wide).month().day().hour().minute()))
+            if let end = displayEvent.endTimestamp {
                 row("Until", end.formatted(.dateTime.hour().minute()))
             }
-            if event.timezoneID != TimeZone.current.identifier {
-                row("Time zone", event.timezoneID)
+            if displayEvent.timezoneID != TimeZone.current.identifier {
+                row("Time zone", displayEvent.timezoneID)
             }
         }
         .padding(16)
@@ -82,10 +91,10 @@ struct EventDetailView: View {
     private var sourceCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             row("Source", sourceLabel)
-            if event.confidence < 1 {
-                row("Parse confidence", event.confidence.formatted(.percent.precision(.fractionLength(0))))
+            if displayEvent.confidence < 1 {
+                row("Parse confidence", displayEvent.confidence.formatted(.percent.precision(.fractionLength(0))))
             }
-            row("Added", event.createdAt.formatted(.dateTime.month().day().year()))
+            row("Added", displayEvent.createdAt.formatted(.dateTime.month().day().year()))
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -150,7 +159,7 @@ struct EventDetailView: View {
     }
 
     private var metadataRows: [(String, String)] {
-        guard let data = event.metadata,
+        guard let data = displayEvent.metadata,
               let dict = try? JSONDecoder().decode([String: String].self, from: data) else { return [] }
         let labels = ["kcal": "Calories", "distanceKm": "Distance (km)",
                       "phase": "Moon phase", "season": "Season"]

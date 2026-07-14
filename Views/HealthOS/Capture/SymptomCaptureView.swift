@@ -25,7 +25,7 @@ final class SymptomCaptureModel: ObservableObject {
     var results: [HealthGraphCore.SymptomDefinition] { HealthGraphCore.SymptomCatalog.search(searchText) }
 
     func loadChips() async {
-        guard let recent = try? await store.recentEvents(limit: 300) else { return }
+        guard let recent = try? await store.eventsPage(before: nil, limit: 300, categories: [.symptom], sources: [.manual]) else { return }
         chipKeys = ChipRanker.rank(history: recent, category: .symptom, now: now(),
                                    timeZone: .current, limit: 8)
     }

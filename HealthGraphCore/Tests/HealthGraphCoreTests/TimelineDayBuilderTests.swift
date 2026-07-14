@@ -109,4 +109,13 @@ struct TimelineDayBuilderTests {
         let days = TimelineDayBuilder.days(from: [point], timeZone: TimeZone(identifier: "UTC")!)
         #expect(days.flatMap(\.events).count == 1)   // point event kept
     }
+
+    @Test func keepsExactlySixtySecondDuration() {
+        let base = Date(timeIntervalSince1970: 1_750_000_000)
+        let sixty = HealthEvent(timestamp: base, endTimestamp: base.addingTimeInterval(60),
+                                category: .sleep, subtype: "asleepCore", value: 1, unit: "min",
+                                source: .healthKit, createdAt: base)
+        let days = TimelineDayBuilder.days(from: [sixty], timeZone: TimeZone(identifier: "UTC")!)
+        #expect(days.flatMap(\.events).count == 1)
+    }
 }

@@ -199,9 +199,9 @@ public struct AppDatabase: Sendable {
 extension AppDatabase {
     /// Dev/debug tooling: hard-deletes every row in every table. The single
     /// sanctioned exception to the soft-delete rule — exists so the app's
-    /// DEBUG screens never need to import GRDB directly. #if DEBUG-gated
-    /// (same pattern as eraseDatabaseOnSchemaChange above) so it does not
-    /// exist in Release builds of the package at all.
+    /// DEBUG screens never need to import GRDB directly. #if DEBUG-gated so
+    /// it does not exist in Release builds of the package at all; the store
+    /// itself is durable in Release (no dev-time DB wipe on schema change).
     public func eraseAllRows() async throws {
         try await dbWriter.write { db in
             try HealthEvent.deleteAll(db)

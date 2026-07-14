@@ -49,7 +49,7 @@ struct CaptureSheet: View {
         coordinator.saveCompleted()
         lastLogged = event
         toastTask?.cancel()
-        toastTask = Task { try? await Task.sleep(for: .seconds(4)); lastLogged = nil }
+        toastTask = Task { try? await Task.sleep(for: .seconds(4)); guard !Task.isCancelled else { return }; lastLogged = nil }
     }
 
     private func undo(_ event: HealthEvent) {
@@ -69,7 +69,7 @@ struct CaptureSheet: View {
         .padding(.horizontal, 20).padding(.vertical, 8).hgCard().padding(.bottom, 12)
         .transition(.move(edge: .bottom).combined(with: .opacity))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Logged")
+        .accessibilityLabel("Logged \(EventDisplay.title(for: event))")
         .accessibilityAction(named: "Undo") { undo(event) }
         .id(event.id)
     }

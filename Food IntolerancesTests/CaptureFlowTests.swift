@@ -64,6 +64,19 @@ struct CaptureFlowTests {
         #expect(e?.value == 2000)   // repeats the last logged amount
         #expect(e?.unit == "iu")
     }
+    @Test func mealChipsExcludeHealthKitNutritionStats() async throws {
+        let database = try db()
+        let store = GRDBEventStore(database: database)
+        let capture = CaptureService(database: database)
+        let base = Date(timeIntervalSince1970: 1_750_000_000)
+        _ = try await capture.logMeal(name: "Coffee", at: base)
+        try await store.save(HealthEvent(timestamp: base, category: .food, subtype: "dietaryEnergy",
+                                         value: 450, unit: "kcal", source: .healthKit, createdAt: base))
+        let model = MealCaptureModel(database: database, now: { base })
+        await model.loadChips()
+        #expect(model.chips.contains("Coffee"))
+        #expect(!model.chips.contains("dietaryEnergy"))
+    }
     @Test func noteModelLogsSearchableNote() async throws {
         let database = try db()
         let store = GRDBEventStore(database: database)

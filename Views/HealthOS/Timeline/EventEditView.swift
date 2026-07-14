@@ -9,6 +9,7 @@ struct EventEditView: View {
     @State private var timestamp: Date
     @State private var name: String
     @State private var severity: Double
+    @State private var severityTouched = false
     @State private var amountText: String
 
     init(event: HealthEvent, viewModel: TimelineViewModel) {
@@ -36,7 +37,8 @@ struct EventEditView: View {
                     if isSymptom {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Severity: \(Int(severity))").font(.subheadline).foregroundStyle(HealthTheme.inkSecondary)
-                            Slider(value: $severity, in: 1...10, step: 1).tint(CategoryFamily.symptoms.color)
+                            Slider(value: $severity, in: 1...10, step: 1, onEditingChanged: { editing in if editing { severityTouched = true } })
+                                .tint(CategoryFamily.symptoms.color)
                         }
                     } else if isDose {
                         TextField("Amount", text: $amountText).keyboardType(.decimalPad).padding(12).hgCard()
@@ -50,7 +52,9 @@ struct EventEditView: View {
                 ToolbarItem(placement: .topBarLeading) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Save") { Task { await save() } }
-                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty
+                                  || (isDose && !amountText.trimmingCharacters(in: .whitespaces).isEmpty
+                                      && Double(amountText.replacingOccurrences(of: ",", with: ".")) == nil))
                 }
             }
         }
@@ -62,8 +66,14 @@ struct EventEditView: View {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         // Re-canonicalize a symptom name so the edited event stays in its severity series.
         edited.subtype = isSymptom ? HealthGraphCore.SymptomCatalog.canonicalKey(for: trimmedName) : trimmedName
-        if isSymptom { edited.value = severity; edited.unit = "severity" }
-        else if isDose { edited.value = Double(amountText.replacingOccurrences(of: ",", with: ".")) }
+        if isSymptom {
+            edited.unit = "severity"
+            edited.value = (original.value != nil || severityTouched) ? severity : nil
+        } else if isDose {
+            let amt = Double(amountText.replacingOccurrences(of: ",", with: "."))
+            edited.value = amt
+            if amt == nil { edited.unit = nil }   // amount cleared → no dangling unit
+        }
         if await viewModel.update(edited) { dismiss() }
     }
 }
