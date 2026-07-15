@@ -118,11 +118,20 @@ final class TimelineViewModel: ObservableObject {
         }
         let wasInBrowseSlice = browseEvents.contains { $0.id == event.id }
         browseEvents.removeAll { $0.id == event.id }
-        days = days.compactMap { day in
-            guard day.events.contains(where: { $0.id == event.id }) else { return day }
-            let remaining = day.events.filter { $0.id != event.id }
-            guard !remaining.isEmpty else { return nil }
-            return TimelineDayBuilder.days(from: remaining, timeZone: timeZone).first
+        if isSearchActive {
+            // Search days hold raw rows only (sessionizeSleep: false), so a
+            // surgical per-day rebuild is still valid here.
+            days = days.compactMap { day in
+                guard day.events.contains(where: { $0.id == event.id }) else { return day }
+                let remaining = day.events.filter { $0.id != event.id }
+                guard !remaining.isEmpty else { return nil }
+                return TimelineDayBuilder.days(from: remaining, timeZone: timeZone,
+                                               sessionizeSleep: false).first
+            }
+        } else {
+            // Browse days contain sleep sessions whose segments can span day
+            // buckets — rebuild from the full remaining slice instead.
+            days = TimelineDayBuilder.days(from: browseEvents, timeZone: timeZone)
         }
         pendingUndoWasInBrowse = wasInBrowseSlice
         armUndo(event)
@@ -217,7 +226,7 @@ final class TimelineViewModel: ObservableObject {
             isSearchActive = true
             if let categoryFilter { results = results.filter { categoryFilter.contains($0.category) } }
             if let sourceFilter { results = results.filter { sourceFilter.contains($0.source) } }
-            days = TimelineDayBuilder.days(from: results, timeZone: timeZone)
+            days = TimelineDayBuilder.days(from: results, timeZone: timeZone, sessionizeSleep: false)
         } catch {
             guard gen == loadGeneration else { return }
             isSearchActive = true

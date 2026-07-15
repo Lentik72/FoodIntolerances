@@ -194,4 +194,55 @@ struct TimelineViewModelTests {
         #expect(!vm.isSearchActive)
         #expect(vm.days.flatMap(\.events).count == 3)
     }
+
+    private func seedNight(_ store: GRDBEventStore, endingAt wake: Date) async throws {
+        // Two contiguous stage segments ending at `wake`: core 4h then rem 4h.
+        let core = HealthEvent(timestamp: wake.addingTimeInterval(-8 * 3600),
+                               endTimestamp: wake.addingTimeInterval(-4 * 3600),
+                               category: .sleep, subtype: "asleepCore", value: 240, unit: "min",
+                               source: .healthKit, createdAt: wake)
+        let rem = HealthEvent(timestamp: wake.addingTimeInterval(-4 * 3600), endTimestamp: wake,
+                              category: .sleep, subtype: "asleepREM", value: 240, unit: "min",
+                              source: .healthKit, createdAt: wake)
+        try await store.save([core, rem])
+    }
+
+    @Test func browseCollapsesSleepIntoOneSessionItem() async throws {
+        let (_, store) = try makeStore()
+        let wake = Date(timeIntervalSince1970: 1_750_000_000)
+        try await seedNight(store, endingAt: wake)
+        try await store.save(HealthEvent(timestamp: wake.addingTimeInterval(600),
+                                         category: .food, subtype: "coffee",
+                                         source: .manual, createdAt: wake))
+        let vm = TimelineViewModel(store: store, timeZone: TimeZone(identifier: "UTC")!, pageSize: 50)
+        await vm.loadInitial()
+        let sessions = vm.days.flatMap(\.items).compactMap { item -> SleepSession? in
+            if case .sleepSession(let s) = item { s } else { nil }
+        }
+        #expect(sessions.count == 1)
+        #expect(sessions[0].asleepMinutes == 480)
+        #expect(vm.days.flatMap(\.events).allSatisfy { $0.category != .sleep })
+    }
+
+    @Test func deletingEventOnSessionDayKeepsTheSession() async throws {
+        let (_, store) = try makeStore()
+        let wake = Date(timeIntervalSince1970: 1_750_000_000)
+        try await seedNight(store, endingAt: wake)
+        let coffee = HealthEvent(timestamp: wake.addingTimeInterval(600),
+                                 category: .food, subtype: "coffee",
+                                 source: .manual, createdAt: wake)
+        try await store.save(coffee)
+        let vm = TimelineViewModel(store: store, timeZone: TimeZone(identifier: "UTC")!, pageSize: 50)
+        await vm.loadInitial()
+        await vm.delete(coffee)
+        // The raw event is gone; the session row survives the rebuild.
+        #expect(vm.days.flatMap(\.events).isEmpty)
+        let sessions = vm.days.flatMap(\.items).compactMap { item -> SleepSession? in
+            if case .sleepSession(let s) = item { s } else { nil }
+        }
+        #expect(sessions.count == 1)
+        await vm.undoDelete()
+        #expect(vm.days.flatMap(\.events).map(\.subtype) == ["coffee"])
+        #expect(vm.days.flatMap(\.items).count == 2)   // session + coffee
+    }
 }
