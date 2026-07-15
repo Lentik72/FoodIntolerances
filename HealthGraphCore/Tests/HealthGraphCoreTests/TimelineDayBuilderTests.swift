@@ -94,13 +94,13 @@ struct TimelineDayBuilderTests {
     @Test func dropsSubMinuteDurationMicroSegments() {
         let base = Date(timeIntervalSince1970: 1_750_000_000)
         let micro = HealthEvent(timestamp: base, endTimestamp: base.addingTimeInterval(20),
-                                category: .sleep, subtype: "awake", value: 0, unit: "min",
+                                category: .exercise, subtype: "walking", value: 0, unit: "min",
                                 source: .healthKit, createdAt: base)
         let real = HealthEvent(timestamp: base.addingTimeInterval(100), endTimestamp: base.addingTimeInterval(100 + 600),
-                               category: .sleep, subtype: "asleepCore", value: 10, unit: "min",
+                               category: .exercise, subtype: "running", value: 10, unit: "min",
                                source: .healthKit, createdAt: base)
         let days = TimelineDayBuilder.days(from: [real, micro], timeZone: TimeZone(identifier: "UTC")!)
-        #expect(days.flatMap(\.events).map(\.subtype) == ["asleepCore"])   // micro dropped
+        #expect(days.flatMap(\.events).map(\.subtype) == ["running"])   // micro dropped
     }
     @Test func keepsPointEventsEvenWithZeroValue() {
         let base = Date(timeIntervalSince1970: 1_750_000_000)
@@ -113,9 +113,82 @@ struct TimelineDayBuilderTests {
     @Test func keepsExactlySixtySecondDuration() {
         let base = Date(timeIntervalSince1970: 1_750_000_000)
         let sixty = HealthEvent(timestamp: base, endTimestamp: base.addingTimeInterval(60),
-                                category: .sleep, subtype: "asleepCore", value: 1, unit: "min",
+                                category: .exercise, subtype: "walking", value: 1, unit: "min",
                                 source: .healthKit, createdAt: base)
         let days = TimelineDayBuilder.days(from: [sixty], timeZone: TimeZone(identifier: "UTC")!)
         #expect(days.flatMap(\.events).count == 1)
+    }
+
+    /// A cross-midnight night collapses to ONE session item on the WAKE-UP day.
+    @Test func sleepCollapsesIntoWakeDaySession() {
+        // 22:00 EDT core (60m) + 23:00 EDT rem (420m, ends 06:00 EDT July 5).
+        let core = HealthEvent(timestamp: lateNight, endTimestamp: lateNight.addingTimeInterval(3600),
+                               category: .sleep, subtype: "asleepCore", value: 60, unit: "min",
+                               source: .healthKit, createdAt: lateNight)
+        let rem = HealthEvent(timestamp: lateNight.addingTimeInterval(3600), endTimestamp: nextMorning,
+                              category: .sleep, subtype: "asleepREM", value: 420, unit: "min",
+                              source: .healthKit, createdAt: lateNight)
+        let dinner = HealthEvent(timestamp: lateNight, category: .food, subtype: "dinner",
+                                 source: .manual, createdAt: lateNight)
+        let days = TimelineDayBuilder.days(from: [rem, core, dinner], timeZone: tz)
+        #expect(days.count == 2)
+        // Newest day (July 5) holds ONLY the session; no raw sleep rows anywhere.
+        #expect(days[0].items.count == 1)
+        guard case .sleepSession(let s) = days[0].items[0] else {
+            Issue.record("expected a sleepSession item"); return
+        }
+        #expect(s.asleepMinutes == 480)
+        #expect(s.end == nextMorning)
+        var cal = Calendar(identifier: .gregorian); cal.timeZone = tz
+        #expect(days[0].dayStart == cal.startOfDay(for: nextMorning))
+        // Older day (July 4) holds the dinner only.
+        #expect(days[1].events.map(\.subtype) == ["dinner"])
+        #expect(days.flatMap(\.events).allSatisfy { $0.category != .sleep })
+    }
+
+    /// Search mode keeps raw stage rows (a filtered subset must not sessionize).
+    @Test func searchModeKeepsRawSleepRows() {
+        let core = HealthEvent(timestamp: lateNight, endTimestamp: lateNight.addingTimeInterval(3600),
+                               category: .sleep, subtype: "asleepCore", value: 60, unit: "min",
+                               source: .healthKit, createdAt: lateNight)
+        let rem = HealthEvent(timestamp: lateNight.addingTimeInterval(3600), endTimestamp: nextMorning,
+                              category: .sleep, subtype: "asleepREM", value: 420, unit: "min",
+                              source: .healthKit, createdAt: lateNight)
+        let days = TimelineDayBuilder.days(from: [rem, core], timeZone: tz, sessionizeSleep: false)
+        // Both group by START day (July 4), as raw rows.
+        #expect(days.count == 1)
+        #expect(days[0].events.count == 2)
+        #expect(days[0].items.allSatisfy { if case .event = $0 { true } else { false } })
+    }
+
+    /// A session sorts within its day by wake time, between neighboring events.
+    @Test func sessionRowInterleavesByWakeTime() {
+        let sleep = HealthEvent(timestamp: nextMorning.addingTimeInterval(-7 * 3600),
+                                endTimestamp: nextMorning,   // 23:00 -> 06:00
+                                category: .sleep, subtype: "asleepCore", value: 420, unit: "min",
+                                source: .healthKit, createdAt: nextMorning)
+        let earlier = HealthEvent(timestamp: nextMorning.addingTimeInterval(-600),  // 05:50
+                                  category: .symptom, subtype: "headache", value: 4, unit: "severity",
+                                  source: .manual, createdAt: nextMorning)
+        let later = HealthEvent(timestamp: nextMorning.addingTimeInterval(600),     // 06:10
+                                category: .food, subtype: "coffee", source: .manual, createdAt: nextMorning)
+        let days = TimelineDayBuilder.days(from: [later, earlier, sleep], timeZone: tz)
+        #expect(days.count == 1)
+        let kinds = days[0].items.map { item -> String in
+            switch item {
+            case .event(let e): e.subtype ?? ""
+            case .sleepSession: "session"
+            }
+        }
+        #expect(kinds == ["coffee", "session", "headache"])   // 06:10 > 06:00 > 05:50
+    }
+
+    /// Defensive: a point .sleep event (no endTimestamp) stays a raw row.
+    @Test func pointSleepEventsPassThroughAsRawRows() {
+        let point = HealthEvent(timestamp: nextMorning, category: .sleep, subtype: "item0",
+                                source: .healthKit, createdAt: nextMorning)
+        let days = TimelineDayBuilder.days(from: [point], timeZone: tz)
+        #expect(days.count == 1)
+        #expect(days[0].events.map(\.id) == [point.id])
     }
 }

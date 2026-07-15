@@ -9,46 +9,93 @@ public struct SeverityPoint: Equatable, Sendable {
     }
 }
 
+/// One visible Timeline row: a raw event or an aggregated sleep session.
+public enum TimelineItem: Identifiable, Equatable, Sendable {
+    case event(HealthEvent)
+    case sleepSession(SleepSession)
+
+    public var id: String {
+        switch self {
+        case .event(let e): e.id.uuidString
+        case .sleepSession(let s): s.id
+        }
+    }
+
+    /// Where the row sorts within its day: events by start, sessions by wake.
+    public var sortDate: Date {
+        switch self {
+        case .event(let e): e.timestamp
+        case .sleepSession(let s): s.end
+        }
+    }
+}
+
 public struct TimelineDay: Identifiable, Equatable, Sendable {
     public let dayStart: Date
-    public let events: [HealthEvent]
+    public let items: [TimelineItem]
     public let severityPoints: [SeverityPoint]
     public var id: Date { dayStart }
-    public init(dayStart: Date, events: [HealthEvent], severityPoints: [SeverityPoint]) {
+
+    /// The raw events among `items` (sessions excluded) — the accessor most
+    /// existing consumers (detail lookup by id, tests) still want.
+    public var events: [HealthEvent] {
+        items.compactMap { if case .event(let e) = $0 { e } else { nil } }
+    }
+
+    public init(dayStart: Date, items: [TimelineItem], severityPoints: [SeverityPoint]) {
         self.dayStart = dayStart
-        self.events = events
+        self.items = items
         self.severityPoints = severityPoints
     }
 }
 
 public enum TimelineDayBuilder {
-    /// Groups a newest-first slice of events into local-calendar days,
-    /// newest day first. Duration events group by their start timestamp.
-    public static func days(from events: [HealthEvent], timeZone: TimeZone) -> [TimelineDay] {
+    /// Groups a slice of events into local-calendar days, newest day first.
+    ///
+    /// With `sessionizeSleep` (browse mode, the default) `.sleep` DURATION
+    /// events leave the row stream and come back as ONE `SleepSession` item
+    /// bucketed under the wake-up day (`startOfDay(session.end)`) — so a
+    /// session row can live in a different day bucket than some of its
+    /// segments started in. Point `.sleep` events pass through as raw rows.
+    /// Search passes `false`: results are a filtered subset, and sessionizing
+    /// a subset would display wrong totals.
+    public static func days(from events: [HealthEvent], timeZone: TimeZone,
+                            sessionizeSleep: Bool = true) -> [TimelineDay] {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
-        // HealthKit emits sub-30-second sleep stages that would otherwise render as
+
+        // Sleep duration events feed the session builder INCLUDING sub-minute
+        // fragments — totals must be exact even though such rows never render.
+        let isSessionizable: (HealthEvent) -> Bool = { $0.category == .sleep && $0.endTimestamp != nil }
+        let sessions = sessionizeSleep
+            ? SleepSessionBuilder.sessions(from: events.filter(isSessionizable), timeZone: timeZone)
+            : []
+        let rowEvents = sessionizeSleep ? events.filter { !isSessionizable($0) } : events
+
+        // HealthKit emits sub-30-second stages that would otherwise render as
         // cluttering "0m" rows; drop those while keeping all point-in-time events.
-        let kept = events.filter { e in
+        let kept = rowEvents.filter { e in
             guard let end = e.endTimestamp else { return true }        // point events kept
             return end.timeIntervalSince(e.timestamp) >= 60            // duration >= 1 min
         }
-        var order: [Date] = []
-        var buckets: [Date: [HealthEvent]] = [:]
+
+        var buckets: [Date: [TimelineItem]] = [:]
         for event in kept {
-            let day = calendar.startOfDay(for: event.timestamp)
-            if buckets[day] == nil { order.append(day) }
-            buckets[day, default: []].append(event)
+            buckets[calendar.startOfDay(for: event.timestamp), default: []].append(.event(event))
         }
-        // Input is newest-first, so first-seen day order is already newest-first;
-        // sort defensively in case a caller passes an unordered slice.
-        return order.sorted(by: >).map { day in
-            let dayEvents = buckets[day]!.sorted { ($0.timestamp, $0.id.uuidString) > ($1.timestamp, $1.id.uuidString) }
-            let points = dayEvents
-                .filter { $0.category == .symptom && $0.value != nil }
-                .map { SeverityPoint(time: $0.timestamp, value: $0.value!) }
+        for session in sessions {
+            buckets[calendar.startOfDay(for: session.end), default: []].append(.sleepSession(session))
+        }
+
+        return buckets.keys.sorted(by: >).map { day in
+            let items = buckets[day]!.sorted { ($0.sortDate, $0.id) > ($1.sortDate, $1.id) }
+            let points = items
+                .compactMap { item -> SeverityPoint? in
+                    guard case .event(let e) = item, e.category == .symptom, let v = e.value else { return nil }
+                    return SeverityPoint(time: e.timestamp, value: v)
+                }
                 .sorted { $0.time < $1.time }
-            return TimelineDay(dayStart: day, events: dayEvents, severityPoints: points)
+            return TimelineDay(dayStart: day, items: items, severityPoints: points)
         }
     }
 }
