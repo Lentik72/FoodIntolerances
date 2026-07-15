@@ -158,4 +158,13 @@ struct AppDatabaseTests {
         let db2 = try AppDatabase.open(at: dir)
         #expect(try await GRDBEventStore(database: db2).count() == 1)
     }
+
+    @Test func migrationV5AddsEdgeKeyColumns() async throws {
+        let db = try AppDatabase.inMemory()
+        try await db.dbWriter.read { database in
+            let columns = try database.columns(in: "relationships").map(\.name)
+            #expect(columns.contains("edgeKey"))
+            #expect(columns.contains("toSubtype"))
+        }
+    }
 }

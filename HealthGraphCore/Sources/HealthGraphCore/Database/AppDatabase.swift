@@ -191,6 +191,22 @@ public struct AppDatabase: Sendable {
                 """)
         }
 
+        migrator.registerMigration("v5") { db in
+            // Phase 2A edge identity. `edgeKey` is the engine-computed, deterministic
+            // identity of an exposure→outcome edge (the schema deliberately left edge
+            // identity to the engine, v1 comment). A composite unique index can't work
+            // here — SQLite treats NULLs as distinct and every derived edge has a NULL
+            // fromObjectID — so a single non-null edgeKey carries uniqueness.
+            try db.alter(table: "relationships") { t in
+                t.add(column: "edgeKey", .text)
+                t.add(column: "toSubtype", .text)
+            }
+            try db.execute(sql: """
+                CREATE UNIQUE INDEX idx_rel_edgeKey
+                ON relationships(edgeKey) WHERE edgeKey IS NOT NULL
+                """)
+        }
+
         return migrator
     }
 }

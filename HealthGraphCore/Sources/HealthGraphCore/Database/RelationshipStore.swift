@@ -7,6 +7,8 @@ public protocol RelationshipStore {
     func relationships(status: RelStatus?) async throws -> [Relationship]
     func relationships(fromObjectID: UUID) async throws -> [Relationship]
     func count() async throws -> Int
+    func all() async throws -> [Relationship]
+    func save(_ relationships: [Relationship]) async throws
 }
 
 public struct GRDBRelationshipStore: RelationshipStore {
@@ -49,5 +51,15 @@ public struct GRDBRelationshipStore: RelationshipStore {
 
     public func count() async throws -> Int {
         try await dbWriter.read { db in try Relationship.fetchCount(db) }
+    }
+
+    public func all() async throws -> [Relationship] {
+        try await dbWriter.read { db in try Relationship.fetchAll(db) }
+    }
+
+    public func save(_ relationships: [Relationship]) async throws {
+        try await dbWriter.write { db in
+            for r in relationships { try r.save(db) }
+        }
     }
 }
