@@ -6,6 +6,7 @@ struct TimelineView: View {
         store: GRDBEventStore(database: HealthGraphProvider.shared))
     @State private var searchDebounce: Task<Void, Never>?
     @State private var path = NavigationPath()
+    @State private var expandedSessions: Set<String> = []
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var captureCoordinator: CaptureCoordinator
 
@@ -103,11 +104,26 @@ struct TimelineView: View {
                 }
                 ForEach(viewModel.days) { day in
                     TimelineDayHeader(day: day)
-                    ForEach(day.events) { event in
-                        TimelineEventRow(event: event) { tapped in
-                            path.append(tapped)
+                    ForEach(day.items) { item in
+                        switch item {
+                        case .event(let event):
+                            TimelineEventRow(event: event) { tapped in
+                                path.append(tapped)
+                            }
+                            .padding(.leading, 16)
+                        case .sleepSession(let session):
+                            SleepSessionRow(session: session,
+                                            isExpanded: expandedSessions.contains(session.id)) {
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    if expandedSessions.contains(session.id) {
+                                        expandedSessions.remove(session.id)
+                                    } else {
+                                        expandedSessions.insert(session.id)
+                                    }
+                                }
+                            }
+                            .padding(.leading, 16)
                         }
-                        .padding(.leading, 16)
                     }
                 }
                 if viewModel.hasMore && !viewModel.days.isEmpty && !viewModel.isSearchActive {

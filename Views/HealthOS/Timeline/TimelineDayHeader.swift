@@ -11,10 +11,10 @@ struct TimelineDayHeader: View {
                 .foregroundStyle(HealthTheme.ink)
             SeveritySparkline(day: day)
             Spacer()
-            Text("\(day.events.count)")
+            Text("\(day.items.count)")
                 .font(.caption)
                 .foregroundStyle(HealthTheme.inkMuted)
-                .accessibilityLabel("\(day.events.count) events")
+                .accessibilityLabel("\(day.items.count) entries")
         }
         .padding(.horizontal, 16)
         .padding(.top, 20)
