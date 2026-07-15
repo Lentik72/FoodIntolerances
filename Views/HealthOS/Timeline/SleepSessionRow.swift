@@ -11,12 +11,15 @@ struct SleepSessionRow: View {
 
     private var style: CategoryStyle { .style(for: .sleep) }
 
-    /// inBed-only sessions (phone-only data) have no stage breakdown.
+    /// Title basis: asleep total, else in-bed (phone-only data), else awake —
+    /// so an awake-only session reads "Awake · 32m", never "In bed · 0m".
     private var kindLabel: String {
-        session.asleepMinutes > 0 ? (session.kind == .nap ? "Nap" : "Sleep") : "In bed"
+        if session.asleepMinutes > 0 { return session.kind == .nap ? "Nap" : "Sleep" }
+        return session.inBedMinutes > 0 ? "In bed" : "Awake"
     }
     private var displayMinutes: Double {
-        session.asleepMinutes > 0 ? session.asleepMinutes : session.inBedMinutes
+        if session.asleepMinutes > 0 { return session.asleepMinutes }
+        return session.inBedMinutes > 0 ? session.inBedMinutes : session.awakeMinutes
     }
     private var rangeText: String {
         "\(session.start.formatted(.dateTime.hour().minute())) – \(session.end.formatted(.dateTime.hour().minute()))"
@@ -79,7 +82,7 @@ struct SleepSessionRow: View {
             .accessibilityHint(isExpandable
                                ? (isExpanded ? "Collapses stage breakdown" : "Expands stage breakdown")
                                : "")
-            .accessibilityAddTraits(.isButton)
+            .accessibilityAddTraits(isExpandable ? .isButton : [])
 
             if isExpanded && isExpandable {
                 breakdown

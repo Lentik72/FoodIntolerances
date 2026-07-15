@@ -191,4 +191,15 @@ struct TimelineDayBuilderTests {
         #expect(days.count == 1)
         #expect(days[0].events.map(\.id) == [point.id])
     }
+
+    /// Parity with the ≥60s row filter: an isolated sub-minute sleep fragment
+    /// must not become a permanent "0m" session row.
+    @Test func isolatedSubMinuteSleepFragmentProducesNoSessionRow() {
+        let base = Date(timeIntervalSince1970: 1_750_000_000)
+        let fragment = HealthEvent(timestamp: base, endTimestamp: base.addingTimeInterval(30),
+                                   category: .sleep, subtype: "asleepCore", value: 0, unit: "min",
+                                   source: .healthKit, createdAt: base)
+        let days = TimelineDayBuilder.days(from: [fragment], timeZone: TimeZone(identifier: "UTC")!)
+        #expect(days.isEmpty)
+    }
 }

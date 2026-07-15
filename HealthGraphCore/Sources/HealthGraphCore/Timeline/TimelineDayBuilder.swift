@@ -69,6 +69,9 @@ public enum TimelineDayBuilder {
         let isSessionizable: (HealthEvent) -> Bool = { $0.category == .sleep && $0.endTimestamp != nil }
         let sessions = sessionizeSleep
             ? SleepSessionBuilder.sessions(from: events.filter(isSessionizable), timeZone: timeZone)
+                // Parity with the >=60s row filter below: an isolated sub-minute
+                // fragment must not become a permanent "0m" session row.
+                .filter { $0.end.timeIntervalSince($0.start) >= 60 }
             : []
         let rowEvents = sessionizeSleep ? events.filter { !isSessionizable($0) } : events
 
