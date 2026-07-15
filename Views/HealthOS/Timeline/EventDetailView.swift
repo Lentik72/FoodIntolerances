@@ -17,6 +17,11 @@ struct EventDetailView: View {
 
     private var style: CategoryStyle { .style(for: displayEvent.category) }
 
+    private var valueLineColor: Color {
+        if displayEvent.category == .symptom, let v = displayEvent.value { return HealthTheme.severityColor(Int(v)) }
+        return HealthTheme.inkSecondary
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -66,7 +71,7 @@ struct EventDetailView: View {
                         Text("·").foregroundStyle(HealthTheme.inkMuted)
                         Text(line)
                             .font(.footnote)
-                            .foregroundStyle(HealthTheme.inkSecondary)
+                            .foregroundStyle(valueLineColor)
                     }
                 }
             }

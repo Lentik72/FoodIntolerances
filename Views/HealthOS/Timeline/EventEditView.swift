@@ -36,9 +36,9 @@ struct EventEditView: View {
                     TextField("Name", text: $name).padding(12).hgCard()
                     if isSymptom {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Severity: \(Int(severity))").font(.subheadline).foregroundStyle(HealthTheme.inkSecondary)
+                            Text("Severity: \(Int(severity))").font(.subheadline).foregroundStyle(HealthTheme.severityColor(Int(severity)))
                             Slider(value: $severity, in: 1...10, step: 1, onEditingChanged: { editing in if editing { severityTouched = true } })
-                                .tint(CategoryFamily.symptoms.color)
+                                .tint(HealthTheme.severityColor(Int(severity)))
                         }
                     } else if isDose {
                         TextField("Amount", text: $amountText).keyboardType(.decimalPad).padding(12).hgCard()

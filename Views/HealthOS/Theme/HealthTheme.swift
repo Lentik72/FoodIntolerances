@@ -22,6 +22,16 @@ enum HealthTheme {
     static func screenTitle() -> Font { .system(.largeTitle, design: .serif, weight: .semibold) }
     static func sectionHeader() -> Font { .system(.title3, design: .serif, weight: .semibold) }
 
+    /// Calm 3-band severity ramp for symptom severity 1–10. Stays in the warm
+    /// clinical palette: mild → sage, moderate → amber, severe → terracotta.
+    static func severityColor(_ severity: Int) -> Color {
+        switch severity {
+        case ..<4:  return dyn(light: 0x6E8B6A, dark: 0x84A67E)   // 1–3 mild
+        case 4...6: return amber                                   // 4–6 moderate (existing token)
+        default:    return dyn(light: 0xB5643F, dark: 0xC77A54)   // 7–10 severe
+        }
+    }
+
     // MARK: shape
     static let cardCornerRadius: CGFloat = 12
 

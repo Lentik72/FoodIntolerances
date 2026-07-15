@@ -97,7 +97,7 @@ struct SymptomCaptureView: View {
                         Text("\(n)").font(.subheadline.weight(.semibold))
                             .frame(maxWidth: .infinity, minHeight: 44)
                             .background(RoundedRectangle(cornerRadius: 8).fill(HealthTheme.card))
-                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(CategoryFamily.symptoms.color.opacity(0.4), lineWidth: 1))
+                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(HealthTheme.severityColor(n).opacity(0.6), lineWidth: 1))
                             .foregroundStyle(HealthTheme.ink)
                     }
                     .accessibilityLabel("Severity \(n)")
@@ -134,8 +134,8 @@ struct SymptomCaptureView: View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Severity: \(Int(model.severity))")
-                    .font(.subheadline).foregroundStyle(HealthTheme.inkSecondary)
-                Slider(value: $model.severity, in: 1...10, step: 1).tint(CategoryFamily.symptoms.color)
+                    .font(.subheadline).foregroundStyle(HealthTheme.severityColor(Int(model.severity)))
+                Slider(value: $model.severity, in: 1...10, step: 1).tint(HealthTheme.severityColor(Int(model.severity)))
             }
             TextField("Note (optional)", text: $model.note, axis: .vertical).padding(12).hgCard()
             Button {

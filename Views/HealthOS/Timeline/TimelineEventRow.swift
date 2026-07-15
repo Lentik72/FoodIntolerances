@@ -8,6 +8,11 @@ struct TimelineEventRow: View {
     private var style: CategoryStyle { .style(for: event.category) }
     private var isDuration: Bool { event.endTimestamp != nil }
 
+    private var valueLineColor: Color {
+        if event.category == .symptom, let v = event.value { return HealthTheme.severityColor(Int(v)) }
+        return HealthTheme.inkSecondary
+    }
+
     var body: some View {
         Button {
             onTap(event)
@@ -35,7 +40,7 @@ struct TimelineEventRow: View {
                     if let line = EventDisplay.valueLine(for: event) {
                         Text(line)
                             .font(.footnote)
-                            .foregroundStyle(HealthTheme.inkSecondary)
+                            .foregroundStyle(valueLineColor)
                     }
                 }
                 Spacer(minLength: 8)
