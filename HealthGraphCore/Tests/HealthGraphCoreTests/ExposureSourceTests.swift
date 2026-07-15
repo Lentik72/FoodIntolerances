@@ -73,3 +73,24 @@ struct ShortSleepExposureSourceTests {
         #expect(occ.first?.timestamp == Date(timeIntervalSince1970: 1_700_000_000 + 5 * 3600))
     }
 }
+
+struct DerivedEventExposureSourceTests {
+    @Test func highStressAboveThreshold() {
+        let events = [
+            HealthEvent(timestamp: Date(timeIntervalSince1970: 100), category: .stress, value: 8, source: .manual),
+            HealthEvent(timestamp: Date(timeIntervalSince1970: 200), category: .stress, value: 4, source: .manual),
+        ]
+        let occ = HighStressExposureSource(config: .default).occurrences(from: events)
+        #expect(occ.map(\.key) == [.derived(.highStress)])
+    }
+    @Test func pressureDropReadsPreEventizedSubtype() {
+        let events = [
+            HealthEvent(timestamp: Date(timeIntervalSince1970: 100), category: .environment,
+                        subtype: "pressureDrop", value: 9, unit: "hPa", source: .weatherAPI),
+            HealthEvent(timestamp: Date(timeIntervalSince1970: 200), category: .environment,
+                        subtype: "pressure", value: 1005, unit: "hPa", source: .weatherAPI),
+        ]
+        let occ = PressureDropExposureSource().occurrences(from: events)
+        #expect(occ.map(\.key) == [.derived(.pressureDrop)])
+    }
+}
