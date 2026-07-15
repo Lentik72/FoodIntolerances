@@ -53,3 +53,23 @@ struct OutcomeSourceTests {
         #expect(occ.count == 2)
     }
 }
+
+struct ShortSleepExposureSourceTests {
+    // Build one night of contiguous core-sleep segments totalling `hours`.
+    func night(startEpoch: Double, hours: Double) -> [HealthEvent] {
+        let start = Date(timeIntervalSince1970: startEpoch)
+        let end = start.addingTimeInterval(hours * 3600)
+        return [HealthEvent(timestamp: start, timezoneID: "UTC", endTimestamp: end,
+                            category: .sleep, subtype: "asleepCore", source: .healthKit)]
+    }
+    @Test func flagsNightsUnderSixHours() {
+        // Night A: 5h (short) starting 1700000000 (a 23:00-ish UTC bedtime); Night B: 8h (ok) a day later.
+        let events = night(startEpoch: 1_700_000_000, hours: 5)
+            + night(startEpoch: 1_700_000_000 + 86_400, hours: 8)
+        let occ = ShortSleepExposureSource(config: .default).occurrences(from: events)
+        #expect(occ.count == 1)
+        #expect(occ.first?.key == .derived(.shortSleep))
+        // Timestamped at wake time = start + 5h.
+        #expect(occ.first?.timestamp == Date(timeIntervalSince1970: 1_700_000_000 + 5 * 3600))
+    }
+}
