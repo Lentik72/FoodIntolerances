@@ -62,7 +62,7 @@ Timezone rule: day assignment and nap classification use the single `timeZone` p
 **`TimelineDay`**: `events: [HealthEvent]` becomes `items: [TimelineItem]`. `severityPoints` unchanged (still built from symptom events).
 
 **`TimelineDayBuilder.days(from:timeZone:sessionizeSleep:)`**:
-- `sessionizeSleep: true` (browse): `.sleep` events leave the row stream entirely; `SleepSessionBuilder` folds them into sessions, each bucketed under `startOfDay(end)` — the wake-up day. A session row can therefore live in a different day bucket than some of its segments started in; that is the point.
+- `sessionizeSleep: true` (browse): `.sleep` **duration** events leave the row stream entirely; `SleepSessionBuilder` folds them into sessions, each bucketed under `startOfDay(end)` — the wake-up day. A session row can therefore live in a different day bucket than some of its segments started in; that is the point. Point `.sleep` events (no `endTimestamp` — the mapper never emits them, but manual/synthetic data can) pass through as raw rows.
 - `sessionizeSleep: false` (search): raw rows as today. Search results are a filtered subset (e.g. matching "REM"); sessionizing a subset would show wrong totals. FTS and search behavior are unchanged.
 - The existing ≥60s duration-row filter still applies to *displayed raw* duration events (non-sleep, and sleep in search mode); sleep segments feeding the session builder bypass it.
 
@@ -91,7 +91,7 @@ Timezone rule: day assignment and nap classification use the single `timeZone` p
 - InBed-only night (phone-only) → "In bed" session, no breakdown, classified via `inBedMinutes`.
 - Sub-minute stage fragments: hidden as rows (existing filter) but counted in totals.
 - Same night from two sources (live HealthKit + export import) with non-identical timestamps can inflate totals — pre-existing raw-row limitation (dedupKey catches exact repeats only); documented, not solved here.
-- Empty input / single segment / all-point-event input → `[]` / one session / `[]`.
+- Empty input / single segment / all-point-event input → `[]` / one session / `[]` (the builder consumes only duration sleep events; point `.sleep` events stay raw Timeline rows).
 
 ## 8. Out of scope
 
