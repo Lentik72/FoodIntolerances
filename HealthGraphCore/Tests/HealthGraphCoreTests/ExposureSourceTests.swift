@@ -94,3 +94,24 @@ struct DerivedEventExposureSourceTests {
         #expect(occ.map(\.key) == [.derived(.pressureDrop)])
     }
 }
+
+struct CyclePhaseExposureSourceTests {
+    // Period starts (category .cycle, subtype "periodStart") 28 days apart.
+    func periodStart(dayOffset: Int) -> HealthEvent {
+        let base = 1_700_000_000.0
+        return HealthEvent(timestamp: Date(timeIntervalSince1970: base + Double(dayOffset) * 86_400),
+                           timezoneID: "UTC", category: .cycle, subtype: "periodStart", source: .manual)
+    }
+    @Test func derivesMenstrualAndLutealDays() {
+        // Two cycles: starts on day 0, 28, 56.
+        let events = [periodStart(dayOffset: 0), periodStart(dayOffset: 28), periodStart(dayOffset: 56)]
+        let src = CyclePhaseExposureSource(config: .default, timeZone: TimeZone(identifier: "UTC")!)
+        let occ = src.occurrences(from: events)
+        // Luteal = 5 days before each *next* start → days 23–27 and 51–55.
+        let luteal = occ.filter { $0.key == .derived(.cyclePhase(.luteal)) }
+        #expect(luteal.count == 10)
+        // Menstrual = the start day itself (v1: 1 day per logged start that has a known day).
+        let menstrual = occ.filter { $0.key == .derived(.cyclePhase(.menstrual)) }
+        #expect(menstrual.count >= 1)
+    }
+}
