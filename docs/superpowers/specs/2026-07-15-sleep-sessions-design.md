@@ -89,7 +89,8 @@ Timezone rule: day assignment and nap classification use the single `timeZone` p
 - Recorded `awake` segments extend the chain (never split) and sum into `awakeMinutes`.
 - Afternoon nap → separate session, `.nap`; 2 h sleep starting 1 AM → `.night`.
 - InBed-only night (phone-only) → "In bed" session, no breakdown, classified via `inBedMinutes`.
-- Sub-minute stage fragments: hidden as rows (existing filter) but counted in totals.
+- Sub-minute stage fragments: hidden as rows (existing filter) but counted in totals. A session whose entire span is under 60s is dropped from display (parity with the row filter — whole-branch review fix, 2026-07-15); the pure builder still returns it, so future Evidence Engine consumers see exact sessions.
+- An awake-only session (no stages, no inBed — e.g., an isolated recorded awake segment ≥ 1 min) titles "Awake · Xm"; the title basis falls back asleep → inBed → awake (amends §6's "In bed when asleepMinutes == 0" for the inBed-less sub-case).
 - Same night from two sources (live HealthKit + export import) with non-identical timestamps can inflate totals — pre-existing raw-row limitation (dedupKey catches exact repeats only); documented, not solved here.
 - Empty input / single segment / all-point-event input → `[]` / one session / `[]` (the builder consumes only duration sleep events; point `.sleep` events stay raw Timeline rows).
 
