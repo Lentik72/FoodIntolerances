@@ -72,7 +72,7 @@ public struct EvidenceEngine {
 ```
 
 - `RelationshipEvidence` is the itemized list 2B renders as dots: for each exposure, `{ exposureEventID, exposureTime, outcomeFollowed, outcomeEventID?, outcomeValue? }` plus the roll-up counts and the recorded confounders.
-- `RecomputeReport` is a plain summary (pairs evaluated, relationships upserted / decayed, wall-clock). Used by harness tests and later telemetry; **not persisted**.
+- `RecomputeReport` is a plain summary (pairs evaluated, relationships upserted / decayed). Used by harness tests and later telemetry; **not persisted**. Wall-clock is measured by the caller (the perf test), not carried in the struct.
 
 **Two commitments:** `now` is always injected (determinism is non-negotiable for a testable engine), and the engine's **only persistence side-effect is upserting `relationships`**.
 

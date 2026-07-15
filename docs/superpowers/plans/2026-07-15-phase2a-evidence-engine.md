@@ -69,14 +69,16 @@
     let db = try AppDatabase.inMemory()
     let store = GRDBRelationshipStore(database: db)
     let now = Date(timeIntervalSince1970: 1_750_000_000)
-    let a = Relationship(fromCategory: "food", toCategory: "symptom", toSubtype: "bloating",
+    let a = Relationship(fromCategory: "food", toCategory: "symptom",
                          type: .possibleTrigger, confidence: 0.6,
                          firstSeen: now, lastSeen: now, lastRecomputed: now,
-                         status: .active, edgeKey: "obj:a|symptom:bloating|possibleTrigger")
-    let b = Relationship(fromCategory: "shortSleep", toCategory: "symptom", toSubtype: "fatigue",
+                         status: .active, edgeKey: "obj:a|symptom:bloating|possibleTrigger",
+                         toSubtype: "bloating")
+    let b = Relationship(fromCategory: "shortSleep", toCategory: "symptom",
                          type: .possibleTrigger, confidence: 0.5,
                          firstSeen: now, lastSeen: now, lastRecomputed: now,
-                         status: .active, edgeKey: "derived:shortSleep|symptom:fatigue|possibleTrigger")
+                         status: .active, edgeKey: "derived:shortSleep|symptom:fatigue|possibleTrigger",
+                         toSubtype: "fatigue")
     try await store.save([a, b])
     let all = try await store.all()
     #expect(all.count == 2)
@@ -89,9 +91,9 @@
     let store = GRDBRelationshipStore(database: db)
     let now = Date(timeIntervalSince1970: 1_750_000_000)
     func edge(_ id: UUID) -> Relationship {
-        Relationship(id: id, fromCategory: "food", toCategory: "symptom", toSubtype: "x",
+        Relationship(id: id, fromCategory: "food", toCategory: "symptom",
                      type: .possibleTrigger, firstSeen: now, lastSeen: now,
-                     lastRecomputed: now, status: .active, edgeKey: "same-key")
+                     lastRecomputed: now, status: .active, edgeKey: "same-key", toSubtype: "x")
     }
     try await store.save(edge(UUID()))
     await #expect(throws: (any Error).self) { try await store.save(edge(UUID())) }
@@ -739,9 +741,10 @@ public struct CyclePhaseExposureSource: ExposureSource {
         var out: [ExposureOccurrence] = []
         func occ(_ phase: CyclePhase, day: Date) -> ExposureOccurrence {
             let d = cal.startOfDay(for: day)
+            // Deterministic synthetic id from the day (phase-days aren't graph events).
+            let sid = UUID(uuidString: ShortSleepExposureSource.uuid(from: d)) ?? UUID()
             return ExposureOccurrence(key: .derived(.cyclePhase(phase)), timestamp: d,
-                                      timezoneID: timeZone.identifier,
-                                      sourceEventID: ShortSleepExposureSource.uuid(from: d).flatMap(UUID.init(uuidString:)) ?? UUID())
+                                      timezoneID: timeZone.identifier, sourceEventID: sid)
         }
         for start in starts { out.append(occ(.menstrual, day: start)) }
         for i in 1..<starts.count {
@@ -755,14 +758,6 @@ public struct CyclePhaseExposureSource: ExposureSource {
         return out
     }
 }
-```
-
-Note: `ShortSleepExposureSource.uuid(from:)` returns a `String`; wrap with `UUID(uuidString:)`. Fix the line to:
-
-```swift
-            let sid = UUID(uuidString: ShortSleepExposureSource.uuid(from: d)) ?? UUID()
-            return ExposureOccurrence(key: .derived(.cyclePhase(phase)), timestamp: d,
-                                      timezoneID: timeZone.identifier, sourceEventID: sid)
 ```
 
 - [ ] **Step 4: Run to verify pass**
@@ -885,16 +880,22 @@ public struct CooccurrenceAnalyzer {
                         window: ClosedRange<Double>, observation: DateInterval) -> PairStats? {
         guard !exposure.isEmpty else { return nil }
         let cal = Self.utc
+        let sortedExposures = exposure.sorted { $0.timestamp < $1.timestamp }
         let sortedOutcomes = outcome.sorted { $0.timestamp < $1.timestamp }
+        let outcomeSecs = sortedOutcomes.map { $0.timestamp.timeIntervalSince1970 }
 
-        // Per-occurrence pairs (drives dots + evidenceCount).
+        // Per-occurrence pairs (drives dots + evidenceCount). Binary-search the window
+        // per exposure → O(N log M) not O(N·M), so recompute meets the <30s NFR at scale.
         var pairs: [ExposurePairDetail] = []
+        pairs.reserveCapacity(sortedExposures.count)
         var effects: [Double] = []
         var lags: [Double] = []
-        for e in exposure.sorted(by: { $0.timestamp < $1.timestamp }) {
-            let lo = e.timestamp.addingTimeInterval(window.lowerBound * 3600)
-            let hi = e.timestamp.addingTimeInterval(window.upperBound * 3600)
-            let hit = sortedOutcomes.first { $0.timestamp >= lo && $0.timestamp <= hi }
+        for e in sortedExposures {
+            let lo = e.timestamp.timeIntervalSince1970 + window.lowerBound * 3600
+            let hi = e.timestamp.timeIntervalSince1970 + window.upperBound * 3600
+            var l = 0, r = outcomeSecs.count
+            while l < r { let m = (l + r) / 2; if outcomeSecs[m] < lo { l = m + 1 } else { r = m } }
+            let hit = (l < outcomeSecs.count && outcomeSecs[l] <= hi) ? sortedOutcomes[l] : nil
             if let hit {
                 let lag = hit.timestamp.timeIntervalSince(e.timestamp) / 3600
                 lags.append(lag); if let v = hit.value { effects.append(v) }
@@ -912,22 +913,21 @@ public struct CooccurrenceAnalyzer {
         // Per-day base rate & ratio.
         let exposureDays = Set(exposure.map { cal.startOfDay(for: $0.timestamp) })
         let outcomeDays = Set(sortedOutcomes.map { cal.startOfDay(for: $0.timestamp) })
-        let exposureDaysWithOutcome = exposureDays.filter { exDay in
-            // an exposure that day whose window contains an outcome
-            exposure.contains { e in
-                guard cal.startOfDay(for: e.timestamp) == exDay else { return false }
-                let lo = e.timestamp.addingTimeInterval(window.lowerBound * 3600)
-                let hi = e.timestamp.addingTimeInterval(window.upperBound * 3600)
-                return sortedOutcomes.contains { $0.timestamp >= lo && $0.timestamp <= hi }
-            }
-        }.count
+        // Derived from `pairs` (O(exposures)) — avoids an O(days·exposures·outcomes) rescan.
+        let exposureDaysWithOutcome = Set(pairs.filter(\.outcomeFollowed)
+                                             .map { cal.startOfDay(for: $0.exposureTime) }).count
         let totalDays = max(1, Int(observation.duration / 86_400) + 1)
         let nonExposureDays = max(1, totalDays - exposureDays.count)
         let spontaneousOutcomeDays = outcomeDays.subtracting(exposureDays).count
-        let baseRate = Double(spontaneousOutcomeDays) / Double(nonExposureDays)
+        let baseRate = Double(spontaneousOutcomeDays) / Double(nonExposureDays)   // per calendar day
         let pYgivenX = Double(exposureDaysWithOutcome) / Double(max(1, exposureDays.count))
-        let eps = 0.01
-        let ratio = pYgivenX / max(baseRate, eps)
+        // The exposure numerator spans the lag window; scale the per-day base rate
+        // to the window length so a 48h window isn't compared against a 24h base.
+        // Without this, supplement ratios inflate ~2× and `improves`/`confirmedNoEffect`
+        // misfire (e.g. a real protective effect never crosses the 0.67 threshold).
+        let windowDays = max((window.upperBound - window.lowerBound) / 24.0, 1e-6)
+        let eps = 0.001
+        let ratio = pYgivenX / max(baseRate * windowDays, eps)
 
         let sortedLags = lags.sorted()
         let medianLag = sortedLags.isEmpty ? nil : sortedLags[sortedLags.count / 2]
@@ -1286,6 +1286,11 @@ struct RelationshipClassifierTests {
         let e = c.classify(stats: stats(ratio: 2, exposures: 8, spanDays: 20), confidence: 0.32, now: now)
         #expect(e?.status == .candidate)
     }
+    @Test func veryLowConfidenceTriggerIsDecayed() {
+        // Below the 0.3 decay threshold — the staleness path (spec §8 test #5).
+        let e = c.classify(stats: stats(ratio: 2, exposures: 8, spanDays: 20), confidence: 0.2, now: now)
+        #expect(e?.status == .decayed)
+    }
 }
 ```
 
@@ -1318,9 +1323,16 @@ public struct RelationshipClassifier {
             return ClassifiedEdge(type: .noEffect, status: .confirmedNoEffect)
         }
         let type: RelationshipType?
-        if stats.ratio >= config.candidateRatioTrigger { type = .possibleTrigger }
-        else if stats.ratio <= config.candidateRatioProtective { type = .improves }
-        else { type = nil }
+        if stats.ratio >= config.candidateRatioTrigger {
+            type = .possibleTrigger
+        } else if stats.ratio <= config.candidateRatioProtective && stats.followCount >= 1 {
+            // A protective claim needs the outcome to have followed the exposure at
+            // least once; zero co-occurrence is "unrelated / different phase", not
+            // protection (guards against e.g. a false menstrual→cramps `improves`).
+            type = .improves
+        } else {
+            type = nil
+        }
         guard let type else { return nil }
         let status: RelStatus =
             confidence >= config.activationThreshold ? .active
@@ -1371,9 +1383,9 @@ struct EdgeIdentityTests {
         let key = EdgeIdentity.edgeKey(from: from, to: to, type: .possibleTrigger)
         let cols = EdgeIdentity.columns(from: from, to: to)
         let r = Relationship(fromObjectID: cols.fromObjectID, fromCategory: cols.fromCategory,
-                             toCategory: cols.toCategory, toSubtype: cols.toSubtype,
-                             type: .possibleTrigger, firstSeen: Date(), lastSeen: Date(),
-                             lastRecomputed: Date(), status: .active, edgeKey: key)
+                             toCategory: cols.toCategory, type: .possibleTrigger,
+                             firstSeen: Date(), lastSeen: Date(), lastRecomputed: Date(),
+                             status: .active, edgeKey: key, toSubtype: cols.toSubtype)
         let parsed = EdgeIdentity.parse(r)
         #expect(parsed?.exposure == from)
         #expect(parsed?.outcome == to)
@@ -1596,6 +1608,28 @@ struct EvidenceEngineTests {
         let bloating = try await rels.all().first { $0.toSubtype == "bloating" }
         #expect(bloating?.status == .decayed)
     }
+
+    @Test func staleEvidenceDecaysViaStaleness() async throws {
+        // §8 test #5: an edge that IS still produced but whose evidence is all old
+        // → staleness pushes confidence below the decay threshold. Distinct from the
+        // reconcile path above (where the edge is no longer produced at all).
+        let db = try AppDatabase.inMemory()
+        let store = GRDBEventStore(database: db)
+        let dairy = try await GRDBObjectStore(database: db).findOrCreate(name: "dairy", kind: .food, metadata: nil)
+        var events: [HealthEvent] = []
+        let base = now.addingTimeInterval(-200 * 86_400)   // all evidence ~6 months old
+        for d in 0..<10 {                                  // few exposures + old → low confidence
+            let exp = base.addingTimeInterval(Double(d) * 2 * 86_400 + 9 * 3600)
+            events.append(HealthEvent(timestamp: exp, timezoneID: "UTC", category: .food,
+                                      subtype: "dairy", objectID: dairy.id, source: .manual))
+            events.append(HealthEvent(timestamp: exp.addingTimeInterval(6 * 3600), timezoneID: "UTC",
+                                      category: .symptom, subtype: "bloating", value: 6, source: .manual))
+        }
+        try await store.save(events)
+        _ = try await EvidenceEngine(database: db).recompute(asOf: now)
+        let bloating = try await GRDBRelationshipStore(database: db).all().first { $0.toSubtype == "bloating" }
+        #expect(bloating?.status == .decayed)
+    }
 }
 ```
 
@@ -1739,8 +1773,9 @@ public struct EvidenceEngine {
         }
 
         try await relationshipStore.save(toSave)
+        // toSave = fresh/merged upserts + reconciled decays; subtract the decays.
         return RecomputeReport(pairsEvaluated: candidates.count,
-                               relationshipsUpserted: computed.count,
+                               relationshipsUpserted: toSave.count - decayedCount,
                                relationshipsDecayed: decayedCount)
     }
 }
@@ -1892,10 +1927,20 @@ public struct DerivedScenarios: Sendable {
     public var pressureHeadache = false      // pressureDrop → headache
     public var stressSymptom = false         // high stress → tension
     public var lutealSymptom = false         // luteal window → cramps
-    public var protectiveSupplement = false  // magnesium → reduced headache base rate
-    public var confounderPair = false        // coffee always with dairy (>60%)
+    public var protectiveSupplement = false  // magnesium → reduced migraine rate
+    public var confounderPair = false        // espresso always with croissant (>60%)
     public var nullEffectSupplement = false  // vitaminX, ≥20 exposures/≥90d, no effect
-    public init() {}
+    // Full public init: an explicit `init(){}` would suppress the memberwise
+    // initializer AND be too `internal` to serve as SyntheticConfig's default.
+    public init(shortSleepFatigue: Bool = false, pressureHeadache: Bool = false,
+                stressSymptom: Bool = false, lutealSymptom: Bool = false,
+                protectiveSupplement: Bool = false, confounderPair: Bool = false,
+                nullEffectSupplement: Bool = false) {
+        self.shortSleepFatigue = shortSleepFatigue; self.pressureHeadache = pressureHeadache
+        self.stressSymptom = stressSymptom; self.lutealSymptom = lutealSymptom
+        self.protectiveSupplement = protectiveSupplement; self.confounderPair = confounderPair
+        self.nullEffectSupplement = nullEffectSupplement
+    }
 }
 ```
 
@@ -2089,7 +2134,11 @@ struct EvidenceEngineAcceptanceTests {
         #expect(outcomes.contains("headache"))   // pressure-drop
         #expect(outcomes.contains("tension"))    // stress
         #expect(outcomes.contains("cramps"))     // luteal
-        #expect(rels.contains { $0.type == .improves })  // protective supplement
+        #expect(rels.contains { $0.type == .improves })  // protective supplement (magnesium→migraine)
+        // ~correct lag (spec §8 #1): dairy→bloating was planted at 8h ± 3h jitter.
+        if let bloating = rels.first(where: { $0.toSubtype == "bloating" }) {
+            #expect((bloating.lagHours ?? 0) >= 4 && (bloating.lagHours ?? 0) <= 16)
+        }
     }
 
     @Test func precisionRejectsNoise() async throws {
@@ -2123,14 +2172,23 @@ struct EvidenceEngineAcceptanceTests {
     }
 
     @Test func deterministicAcrossRuns() async throws {
-        func keys() async throws -> Set<String> {
+        // The engine is deterministic, but the harness mints object UUIDs from the
+        // system CSPRNG (not the seed), so raw edgeKeys (which embed obj:UUID) differ
+        // across two independent DBs. Compare STRUCTURAL identity instead: the same
+        // seeded data must yield the same set of (fromCategory, toSubtype, type, status)
+        // edges. (Intra-DB idempotence is covered by Task 13's recomputeIsIdempotent.)
+        func signatures() async throws -> Set<String> {
             let db = try AppDatabase.inMemory()
             try await SyntheticDataGenerator.generate(config: fullConfig()).insert(into: db)
             _ = try await EvidenceEngine(database: db).recompute(asOf: now)
-            return Set(try await GRDBRelationshipStore(database: db).all().compactMap(\.edgeKey))
+            let all = try await GRDBRelationshipStore(database: db).all()
+            return Set(all.map {
+                "\($0.fromCategory ?? "")|\($0.toSubtype ?? "")|\($0.type.rawValue)|\($0.status.rawValue)"
+            })
         }
-        let a = try await keys(); let b = try await keys()
+        let a = try await signatures(); let b = try await signatures()
         #expect(a == b)
+        #expect(!a.isEmpty)
     }
 }
 ```
@@ -2178,12 +2236,13 @@ import Foundation
 struct EvidenceEnginePerformanceTests {
     @Test func recomputeOverLargeCorpusIsBounded() async throws {
         let now = Date(timeIntervalSince1970: 1_750_000_000)
+        // ~85k events (2500 days × ~30 noise + derived + patterns) — near the 100k NFR target.
         var cfg = SyntheticConfig(
-            startDate: now.addingTimeInterval(-1000 * 86_400), days: 1000, seed: 7,
+            startDate: now.addingTimeInterval(-2500 * 86_400), days: 2500, seed: 7,
             patterns: [PlantedPattern(exposureName: "dairy", exposureCategory: .food,
                                       outcomeSubtype: "bloating", lagHours: 8, lagJitterHours: 3,
                                       followProbability: 0.7, exposureProbabilityPerDay: 0.6)],
-            outcomeBaseRatePerDay: 0.05, noiseFoodsPerDay: 5...12)
+            outcomeBaseRatePerDay: 0.05, noiseFoodsPerDay: 20...40)
         cfg.derivedScenarios = DerivedScenarios(shortSleepFatigue: true, pressureHeadache: true,
                                                 stressSymptom: true, lutealSymptom: true)
         let db = try AppDatabase.inMemory()
@@ -2223,5 +2282,5 @@ Expected: PASS (whole package).
 - `swift test` passes for the whole `HealthGraphCore` package.
 - The engine mines the full §7 exposure set (objects + short-sleep + high-stress + pressure-drop + cycle-phase) into `relationships`, with `edgeKey` identity and idempotent upsert preserving `userDismissed` + `firstSeen`.
 - `evidence(for:)` returns per-exposure detail whose counts match the stored summary.
-- The acceptance suite (recall across all planted kinds + both directions, precision, confirmedNoEffect, 0.75 ceiling, determinism) is green, with weights tuned in `EvidenceConfig.default`.
+- The acceptance suite (recall across all planted kinds + both directions incl. ~correct lag, precision, confounder recorded, confirmedNoEffect, staleness decay, 0.75 ceiling, determinism/idempotence, evidence parity) is green, with weights tuned in `EvidenceConfig.default`.
 - No UI, scheduling, explanation copy, or surfacing cap — those are Phase 2B.
