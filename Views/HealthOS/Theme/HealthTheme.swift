@@ -26,9 +26,9 @@ enum HealthTheme {
     /// clinical palette: mild → sage, moderate → amber, severe → terracotta.
     static func severityColor(_ severity: Int) -> Color {
         switch severity {
-        case ..<4:  return dyn(light: 0x6E8B6A, dark: 0x84A67E)   // 1–3 mild
-        case 4...6: return amber                                   // 4–6 moderate (existing token)
-        default:    return dyn(light: 0xB5643F, dark: 0xC77A54)   // 7–10 severe
+        case ..<4:  return dyn(light: 0x5E8C5A, dark: 0x7CA877)   // 1–3 mild — sage green
+        case 4...6: return dyn(light: 0xE0A21E, dark: 0xE8B23E)   // 4–6 moderate — golden amber
+        default:    return dyn(light: 0xC0442E, dark: 0xD65C44)   // 7–10 severe — terracotta
         }
     }
 
