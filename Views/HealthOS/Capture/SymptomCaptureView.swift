@@ -70,7 +70,9 @@ struct SymptomCaptureView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(model.chipKeys, id: \.self) { key in
-                    chip(HealthGraphCore.SymptomCatalog.displayName(for: key)) { model.pendingKey = key }
+                    QuickLogChip(label: HealthGraphCore.SymptomCatalog.displayName(for: key)) {
+                        model.pendingKey = key
+                    }
                 }
             }
         }
@@ -150,17 +152,5 @@ struct SymptomCaptureView: View {
                 .buttonStyle(.borderedProminent).tint(HealthTheme.accent)
                 .foregroundStyle(HealthTheme.onAccent).frame(minHeight: 44)
         }
-    }
-
-    private func chip(_ label: String, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label).font(.footnote)
-                .padding(.horizontal, 12).padding(.vertical, 7)
-                .background(Capsule().fill(HealthTheme.card))
-                .overlay(Capsule().strokeBorder(HealthTheme.cardBorder, lineWidth: 1))
-                .foregroundStyle(HealthTheme.inkSecondary)
-                .frame(minHeight: 44).contentShape(Rectangle())
-        }
-        .accessibilityLabel(label)
     }
 }

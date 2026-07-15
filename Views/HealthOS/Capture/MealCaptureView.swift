@@ -35,17 +35,10 @@ struct MealCaptureView: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
                             ForEach(model.chips, id: \.self) { food in
-                                Button {            // chip tap logs immediately
+                                QuickLogChip(label: food, accessibilityLabel: "Log \(food)") {
+                                    // chip tap logs immediately
                                     Task { if let e = await model.log(name: food, at: timestamp) { onLogged(e) } }
-                                } label: {
-                                    Text(food).font(.footnote)
-                                        .padding(.horizontal, 12).padding(.vertical, 7)
-                                        .background(Capsule().fill(HealthTheme.card))
-                                        .overlay(Capsule().strokeBorder(HealthTheme.cardBorder, lineWidth: 1))
-                                        .foregroundStyle(HealthTheme.inkSecondary)
-                                        .frame(minHeight: 44).contentShape(Rectangle())
                                 }
-                                .accessibilityLabel("Log \(food)")
                             }
                         }
                     }

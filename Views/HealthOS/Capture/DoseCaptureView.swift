@@ -64,15 +64,10 @@ struct DoseCaptureView: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
                             ForEach(model.chips, id: \.self) { s in
-                                Button {            // chip tap logs at the last-used amount/unit
+                                QuickLogChip(label: s, accessibilityLabel: "Log \(s)") {
+                                    // chip tap logs at the last-used amount/unit
                                     Task { if let e = await model.logChip(substance: s, at: timestamp) { onLogged(e) } }
-                                } label: {
-                                    Text(s).font(.footnote).padding(.horizontal, 12).padding(.vertical, 7)
-                                        .background(Capsule().fill(HealthTheme.card))
-                                        .overlay(Capsule().strokeBorder(HealthTheme.cardBorder, lineWidth: 1))
-                                        .foregroundStyle(HealthTheme.inkSecondary)
-                                        .frame(minHeight: 44).contentShape(Rectangle())
-                                }.accessibilityLabel("Log \(s)")
+                                }
                             }
                         }
                     }
