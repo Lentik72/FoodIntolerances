@@ -13,10 +13,9 @@ public struct CyclePhaseExposureSource: ExposureSource {
     }
     public func occurrences(from events: [HealthEvent]) -> [ExposureOccurrence] {
         var cal = Calendar(identifier: .gregorian); cal.timeZone = timeZone
-        let starts = events
+        let starts = Array(Set(events
             .filter { $0.category == .cycle && $0.subtype == "periodStart" }
-            .map(\.timestamp)
-            .sorted()
+            .map { cal.startOfDay(for: $0.timestamp) })).sorted()
         guard starts.count >= 2 else { return [] }
         var out: [ExposureOccurrence] = []
         func occ(_ phase: CyclePhase, day: Date) -> ExposureOccurrence {
@@ -29,9 +28,11 @@ public struct CyclePhaseExposureSource: ExposureSource {
         for start in starts { out.append(occ(.menstrual, day: start)) }
         for i in 1..<starts.count {
             let nextStart = cal.startOfDay(for: starts[i])
-            for back in 1...config.lutealWindowDays {
-                if let day = cal.date(byAdding: .day, value: -back, to: nextStart) {
-                    out.append(occ(.luteal, day: day))
+            if config.lutealWindowDays >= 1 {
+                for back in 1...config.lutealWindowDays {
+                    if let day = cal.date(byAdding: .day, value: -back, to: nextStart) {
+                        out.append(occ(.luteal, day: day))
+                    }
                 }
             }
         }

@@ -97,9 +97,9 @@ struct DerivedEventExposureSourceTests {
 
 struct CyclePhaseExposureSourceTests {
     // Period starts (category .cycle, subtype "periodStart") 28 days apart.
-    func periodStart(dayOffset: Int) -> HealthEvent {
+    func periodStart(dayOffset: Int, hourOffset: Double = 0) -> HealthEvent {
         let base = 1_700_000_000.0
-        return HealthEvent(timestamp: Date(timeIntervalSince1970: base + Double(dayOffset) * 86_400),
+        return HealthEvent(timestamp: Date(timeIntervalSince1970: base + Double(dayOffset) * 86_400 + hourOffset * 3_600),
                            timezoneID: "UTC", category: .cycle, subtype: "periodStart", source: .manual)
     }
     @Test func derivesMenstrualAndLutealDays() {
@@ -113,5 +113,31 @@ struct CyclePhaseExposureSourceTests {
         // Menstrual = the start day itself (v1: 1 day per logged start that has a known day).
         let menstrual = occ.filter { $0.key == .derived(.cyclePhase(.menstrual)) }
         #expect(menstrual.count >= 1)
+    }
+    @Test func dedupesSameDayPeriodStarts() {
+        // Two period-start events on the SAME calendar day (e.g. a manual log
+        // plus a HealthKit re-sync) plus one distinct start 28 days later.
+        let events = [
+            periodStart(dayOffset: 0, hourOffset: 0),
+            periodStart(dayOffset: 0, hourOffset: 1),
+            periodStart(dayOffset: 28),
+        ]
+        let src = CyclePhaseExposureSource(config: .default, timeZone: TimeZone(identifier: "UTC")!)
+        let occ = src.occurrences(from: events)
+        // The same-day pair collapses to a single distinct day → 2 distinct
+        // start days total, so menstrual count reflects distinct days, not raw events.
+        let menstrual = occ.filter { $0.key == .derived(.cyclePhase(.menstrual)) }
+        #expect(menstrual.count == 2)
+        // Luteal = 5 days before the one non-first start.
+        let luteal = occ.filter { $0.key == .derived(.cyclePhase(.luteal)) }
+        #expect(luteal.count == 5)
+    }
+    @Test func singleDistinctStartYieldsNothing() {
+        // Two period-start events on the same day and no other distinct start:
+        // only one distinct day, can't bound a luteal window.
+        let events = [periodStart(dayOffset: 0, hourOffset: 0), periodStart(dayOffset: 0, hourOffset: 1)]
+        let src = CyclePhaseExposureSource(config: .default, timeZone: TimeZone(identifier: "UTC")!)
+        let occ = src.occurrences(from: events)
+        #expect(occ.isEmpty)
     }
 }
