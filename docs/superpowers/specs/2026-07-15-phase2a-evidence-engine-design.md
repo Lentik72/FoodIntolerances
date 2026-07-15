@@ -138,26 +138,28 @@ Output is a `PairStats` — exposure count, follow count, miss count, base rate,
 
 ## 6. Scoring, confounders, decay, negative-learning
 
-Confidence formula (§7, unchanged):
+Confidence formula — a **direction-symmetric** adaptation of §7. (§7's literal form — `w1·log(evidenceCount) + w2·consistency − w3·baseRate − …` where `evidenceCount`/`consistency` are *follows* — is trigger-biased: a protective `improves` edge has *few* follows and *low* P(Y\|X), so §7 would score it near zero and `improves` could never activate. Plan-writing surfaced this; the formula below scores both directions by **effect magnitude** instead.)
 
 ```
-confidence = sigmoid( w1·log(evidenceCount)
-                    + w2·consistency
-                    − w3·baseRate
-                    − w4·confounderPenalty
-                    − w5·staleness )
+signalStrength = min(1, |ln(ratio)| / ln(3))     // a 3× or ⅓× shift = full signal
+confidence = min(0.75, sigmoid( w1·log(exposureCount)
+                              + w2·signalStrength
+                              − w4·confounderPenalty
+                              − w5·staleness
+                              + bias ))
 ```
 
 | Term | Definition (v1) | Stored as |
 |---|---|---|
-| `evidenceCount` | **follows** — exposures where the outcome appeared in-window | `relationships.evidenceCount` → filled dots |
+| `exposureCount` | how much data — total exposure occurrences (direction-agnostic) | derivable from dots |
+| (follows) | exposures where the outcome appeared in-window | `relationships.evidenceCount` → filled dots |
 | (misses) | exposures with **no** outcome in-window | `relationships.contradictionCount` → hollow dots |
-| `consistency` | P(Y \| X) = follows / exposures | derivable |
-| `baseRate` | P(Y \| **no** X) — §7's "contradictionRate" penalty; the outcome happening anyway. **Distinct** from the stored miss count | recomputed |
+| `ratio` | P(Y \| X) / P(Y \| **no** X) — the base-rate comparison; drives both `signalStrength` and the type/direction | — (recomputed) |
+| `signalStrength` | `min(1, |ln(ratio)|/ln(3))` — symmetric effect magnitude, so `improves` (ratio<1) and `possibleTrigger` (ratio>1) score alike | — |
 | `confounderPenalty` | rises when another exposure co-occurs with X on **>60%** of X's occurrences. **Cycle-phase + illness always in the confounder set** | — |
 | `staleness` | (now − lastSeen) / 60d, clamped 0–1 — drives decay | — |
 
-`strength` = mean outcome severity among follows; `lagHours` = median observed lag among follows.
+The stored `evidenceCount`/`contradictionCount` (follows/misses) still power the UI dots — they are just no longer the *scoring* inputs. `strength` = mean outcome severity among follows; `lagHours` = median observed lag among follows.
 
 **Two hard rules baked into the scorer:**
 
