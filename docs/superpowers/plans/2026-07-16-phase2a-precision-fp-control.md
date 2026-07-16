@@ -382,9 +382,14 @@ git commit -m "feat(core): RelationshipClassifier — tailDirection helper + sig
             let conf = scorer.confidence(stats: stats, confounderPenalty: penalty, now: now)
             var p: Double? = nil
             if let dir = classifier.tailDirection(stats: stats) {
+                // Null rate MUST match the ratio's null (window-scaled), else a 48h-window
+                // intervention's real effect (e.g. magnesium→migraine) looks insignificant.
+                // windowDays mirrors CooccurrenceAnalyzer's ratio denominator exactly.
+                let windowDays = max((window.upperBound - window.lowerBound) / 24.0, 1e-9)
+                let nullRate = min(stats.baseRate * windowDays, 1 - 1e-9)
                 let pv = SignificanceTester.pValue(successes: stats.exposureDaysWithOutcome,
                                                    trials: stats.exposureDayCount,
-                                                   baseRate: stats.baseRate, direction: dir)
+                                                   baseRate: nullRate, direction: dir)
                 p = pv
                 pValues.append(pv)
             }
@@ -512,10 +517,113 @@ git commit -m "test(core): precision oracle — active edges ⊆ planted pairs (
 
 ---
 
+## Task P6: Effect-size activation floor + revert to conventional α
+
+**Context:** P5 found that significance+BH-FDR alone needs an unprincipled `fdrAlpha ≈ 5e-6` — dense data makes spurious day-level correlations genuinely significant. Fix: keep BH-FDR at conventional **0.05** and require a meaningful **effect-size floor** to activate (significance catches small-n noise; the ratio floor catches large-n small-lift noise). See spec §3.4/§3.5.
+
+**Files:**
+- Modify: `HealthGraphCore/Sources/HealthGraphCore/Evidence/EvidenceConfig.swift`
+- Modify: `HealthGraphCore/Sources/HealthGraphCore/Evidence/RelationshipClassifier.swift`
+- Modify: `HealthGraphCore/Tests/HealthGraphCoreTests/RelationshipClassifierTests.swift`
+
+**Interfaces:**
+- `EvidenceConfig`: `fdrAlpha` back to `0.05`; add `activationRatioTrigger = 2.0`, `activationRatioProtective = 0.55`.
+- `classify` activation now requires significance **AND** the effect-size floor. No signature change (reads `stats.ratio` + config). noEffect/decayed unaffected.
+
+- [ ] **Step 1: Add the failing tests** — append to `RelationshipClassifierTests.swift`:
+
+```swift
+@Test func significantButWeakTriggerIsCandidate() {
+    // ratio 1.6 ≥ 1.5 (type possibleTrigger) but < activationRatioTrigger (2.0) → not active.
+    let e = c.classify(stats: stats(ratio: 1.6, exposures: 10, spanDays: 30),
+                       confidence: 0.6, significant: true, now: now)
+    #expect(e?.type == .possibleTrigger)
+    #expect(e?.status == .candidate)
+}
+@Test func significantStrongTriggerActivates() {
+    let e = c.classify(stats: stats(ratio: 3, exposures: 10, spanDays: 30),
+                       confidence: 0.6, significant: true, now: now)
+    #expect(e?.status == .active)   // ratio 3 ≥ 2.0 floor
+}
+@Test func significantButWeakProtectiveIsCandidate() {
+    // ratio 0.6 ≤ 0.67 (type improves) but > activationRatioProtective (0.55) → not active.
+    let e = c.classify(stats: stats(ratio: 0.6, exposures: 10, spanDays: 30),
+                       confidence: 0.5, significant: true, now: now)
+    #expect(e?.type == .improves)
+    #expect(e?.status == .candidate)
+}
+@Test func significantStrongProtectiveActivates() {
+    let e = c.classify(stats: stats(ratio: 0.4, exposures: 10, spanDays: 30),
+                       confidence: 0.5, significant: true, now: now)
+    #expect(e?.status == .active)   // ratio 0.4 ≤ 0.55 floor
+}
+```
+
+(Note: `stats(ratio: 0.6, ...)` and `stats(ratio: 0.4, ...)` have `followCount = exposures/2 = 5 ≥ 1`, so `.improves` applies.)
+
+- [ ] **Step 2: Run to verify failure** — `cd HealthGraphCore && swift test --filter RelationshipClassifierTests`. Expected: the two "weak → candidate" tests FAIL (currently a significant weak edge still activates), plus config members undefined.
+
+- [ ] **Step 3: Add config members** — in `EvidenceConfig.swift`, set `fdrAlpha` to `0.05` and add:
+
+```swift
+    public var fdrAlpha = 0.05   // conventional Benjamini-Hochberg FDR for significance
+    public var activationRatioTrigger = 2.0      // trigger must ≥ double the base rate to activate
+    public var activationRatioProtective = 0.55  // protective must ≤ this fraction of base to activate
+```
+
+- [ ] **Step 4: Add the effect-size floor to `classify`** — in `RelationshipClassifier.swift`, replace the status computation:
+
+```swift
+        // Activation requires BOTH significance AND a meaningful effect size.
+        let meetsEffectFloor =
+            (type == .possibleTrigger && stats.ratio >= config.activationRatioTrigger) ||
+            (type == .improves && stats.ratio <= config.activationRatioProtective)
+        var status: RelStatus =
+            confidence >= config.activationThreshold ? .active
+            : confidence < config.decayThreshold ? .decayed
+            : .candidate
+        if status == .active && (!significant || !meetsEffectFloor) { status = .candidate }
+        return ClassifiedEdge(type: type, status: status)
+```
+
+- [ ] **Step 5: Run to verify pass** — `cd HealthGraphCore && swift test --filter RelationshipClassifierTests`. Expected: all pass (existing + 4 new).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add HealthGraphCore/Sources/HealthGraphCore/Evidence/EvidenceConfig.swift \
+        HealthGraphCore/Sources/HealthGraphCore/Evidence/RelationshipClassifier.swift \
+        HealthGraphCore/Tests/HealthGraphCoreTests/RelationshipClassifierTests.swift
+git commit -m "feat(core): effect-size activation floor + fdrAlpha back to conventional 0.05"
+```
+
+---
+
+## Task P7: Re-validate the acceptance oracle with conventional α + effect floors, tune the floors
+
+**Files:**
+- Possibly modify: `HealthGraphCore/Sources/HealthGraphCore/Evidence/EvidenceConfig.swift` (`activationRatioTrigger` / `activationRatioProtective` only, if tuning needed)
+- No test changes (the P5 acceptance oracle — planted-pairs precision + FU-2 — is unchanged).
+
+- [ ] **Step 1: Run the acceptance suite** — `cd HealthGraphCore && swift test --filter EvidenceEngineAcceptanceTests`. With `fdrAlpha = 0.05` and floors `2.0`/`0.55`, expected: recall (8 planted active), `precisionActiveEdgesAreOnlyPlantedPairs` (active ⊆ 8 planted), FU-2, ceiling, noEffect, determinism, espresso/croissant confounder — all PASS.
+
+- [ ] **Step 2: If precision or recall fails, tune the RATIO FLOORS only** (not α). Raise `activationRatioTrigger` (or lower `activationRatioProtective`) if a noise edge still activates; lower the trigger floor (or raise the protective floor) if a real planted edge is suppressed. The protective side is the tight one: `magnesium→migraine` sits at ratio ≈ 0.50 and `rice→cramps` at ≈ 0.64, so `activationRatioProtective` must land in `(0.50, 0.64)` (0.55 is centered). Document BEFORE→AFTER and which edge drove it. **Never** change α, the algorithm, or a test assertion. If no floor pair separates the 8 planted from the noise, STOP and report BLOCKED with the offending edges and their ratios.
+
+- [ ] **Step 3: Full regression** — `cd HealthGraphCore && swift test`. Expected: whole suite green.
+
+- [ ] **Step 4: Commit** (only if config changed in Step 2; otherwise note "no tuning needed" in the report and skip):
+
+```bash
+git add HealthGraphCore/Sources/HealthGraphCore/Evidence/EvidenceConfig.swift
+git commit -m "test(core): validate precision at conventional α=0.05 + effect-size floors (final tuning)"
+```
+
+---
+
 ## Definition of Done
 
 - `swift test` green for the whole `HealthGraphCore` package.
-- The engine gates activation on a binomial significance test + Benjamini-Hochberg FDR; non-significant directional edges are `candidate`, not `active`.
-- The strengthened precision test proves **active edges' (exposure, outcome) ⊆ the 8 planted pairs** at the default `fdrAlpha` — the ~10 prior false positives (chicken/rice/espresso/croissant→cramps, shortSleep→headache/migraine, pressureDrop→cramps/migraine, luteal→headache, menstrual→cramps) are now `candidate`.
+- The engine gates activation on **both** a binomial significance test (Benjamini-Hochberg FDR at conventional **0.05**) **and** an effect-size floor (`activationRatioTrigger`/`activationRatioProtective`); a directional edge failing either is `candidate`, not `active`.
+- The strengthened precision test proves **active edges' (exposure, outcome) ⊆ the 8 planted pairs** at conventional `fdrAlpha = 0.05` + the effect-size floors — the ~10 prior false positives (chicken/rice/espresso/croissant→cramps, shortSleep→headache/migraine, pressureDrop→cramps/migraine, luteal→headache, menstrual→cramps) are now `candidate`.
 - Recall (all 8 planted active), FU-2 (illness confounder), determinism, ceiling, and noEffect all still pass.
 - No change to extraction, lag windows, the confidence formula, decay, edge identity, or migrations.

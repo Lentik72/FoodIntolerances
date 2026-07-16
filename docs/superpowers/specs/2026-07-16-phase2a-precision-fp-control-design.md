@@ -24,12 +24,15 @@ The strengthened precision acceptance test (FU-1) surfaced a real defect: at see
 |---|---|
 | Mechanism | **One-sided binomial significance test per pair + Benjamini-Hochberg FDR** across all pairs in a recompute |
 | Significance test | **Binomial tail** of observed exposure-day follows vs the base-rate expectation, computed in **log-space via `lgamma`** (deterministic, exact for small n). Trigger = upper tail; improves = lower tail |
-| Correction | **Benjamini-Hochberg** at `fdrAlpha` (default **0.05**) — less conservative than Bonferroni, keeps weak-but-real signals |
-| Gate | Significant directional pair → eligible for `active`; **non-significant → stays `candidate`** (internal, may strengthen later). `noEffect`/`confirmedNoEffect` unchanged |
+| Correction | **Benjamini-Hochberg** at conventional `fdrAlpha` (**0.05**) — less conservative than Bonferroni, keeps weak-but-real signals |
+| **Effect-size floor** | Activation ALSO requires a meaningful lift: trigger `ratio ≥ activationRatioTrigger` (default **2.0**), protective `ratio ≤ activationRatioProtective` (default **0.55**) — higher bars than the direction gate (1.5 / 0.67). Significance alone can't separate here: with dense data, spurious day-level correlations (frequent foods × the *periodic* `cramps` outcome) are genuinely significant at any conventional α. Significance catches small-n noise; the effect floor catches large-n small-lift noise |
+| Gate | A directional pair is `active` only if **significant (BH-FDR @ 0.05) AND past the effect-size floor** (and `confidence ≥ activationThreshold`); otherwise **`candidate`** (internal, may strengthen later). `noEffect`/`confirmedNoEffect` unchanged |
 | Precision oracle | Strengthen the acceptance precision test to assert **active edges' (exposure, outcome) ⊆ the planted-pairs set** — a far stronger bar than "no noise-food outcome" |
 
+**Amended (2026-07-16, after P5 validation):** significance+BH-FDR *alone* needed an unprincipled `fdrAlpha ≈ 5e-6` to separate on the harness (dense data makes tiny spurious day-level correlations genuinely significant — statistical significance ≠ meaningful effect). So we keep BH-FDR at conventional 0.05 and **add the effect-size floor above**. The floor is on the **ratio** (lift), not on P(Y\|X): `luteal→cramps` has a *huge* ratio (cramps occur only in the luteal window → base rate ≈ 0), so it clears the floor easily — the earlier objection to a raw P(Y\|X) threshold doesn't apply. Significance handles the small-sample-size dimension; the ratio floor handles the effect-magnitude dimension; together they are robust to data density (a ratio threshold means the same at n=20 or n=200).
+
 **Rejected:**
-- **Min-consistency + higher ratio gate** (P(Y\|X) ≥ 0.35 AND ratio ≥ 2.0): arbitrary, blunt; `luteal→cramps` (P=0.41) sits on the cliff; silently drops real modest-effect triggers; doesn't scale with sample size.
+- **Effect-size floor ALONE** (no significance): a high ratio can arise by chance at small n (e.g. `menstrual→cramps`, n≈15) — significance is needed to catch that. Hence the two gates in combination, not either alone.
 - **Effect-size confidence interval:** comparable to the chosen approach but more knobs (margin + CI width + correction) and still needs multiple-comparison control.
 - **Fisher's exact test:** heavier (hypergeometric) for no real gain here; the binomial test directly asks the trigger question against a well-estimated base rate.
 - **Bonferroni:** too conservative — risks dropping the weak real `luteal→cramps`.
@@ -42,7 +45,7 @@ The analyzer's per-day counts are the test's inputs. Surface two existing interm
 - `exposureDayCount: Int` — distinct exposure days `n` (`exposureDays.count`).
 - `exposureDaysWithOutcome: Int` — `a` (already computed).
 
-`baseRate` (already on `PairStats`) is `p₀` = P(outcome \| non-exposure day). No new counting; these are `let`s the analyzer discards today.
+The null rate `p₀` is the **window-scaled** base rate — `min(baseRate × windowDays, 1−ε)` where `windowDays = (window.upperBound − window.lowerBound)/24` — **the same null the ratio divides by** (`ratio = pYgivenX / (baseRate × windowDays)`). This matters: a 48h-window intervention (e.g. `magnesium→migraine`) observes the outcome over ~2 days, so testing `a` follows against the raw per-day `baseRate` would understate the expected count and make a real ~50% reduction look insignificant. `baseRate` and the window both already exist at the call site; no new counting.
 
 ### 3.2 `SignificanceTester` (new pure stage, `Evidence/SignificanceTester.swift`)
 
@@ -65,7 +68,7 @@ public enum TailDirection { case upper, lower }   // upper = trigger, lower = im
 
 The engine already loops candidates producing a `Relationship` per surviving pair. Restructure into two passes:
 
-1. **Score pass:** for each candidate, compute `PairStats`, confounder penalty, and confidence. Determine the pair's **tail direction** via a small `RelationshipClassifier.tailDirection(stats:)` helper — `upper` when `ratio ≥ candidateRatioTrigger`, `lower` when `ratio ≤ candidateRatioProtective` and `followCount ≥ 1`, else `nil`. This reuses the classifier's exact direction thresholds (DRY, one source of truth), and returns `nil` for both `noEffect`-band and weak-undirected pairs — since a directional ratio (≥1.5 or ≤0.67) is by construction outside the `noEffect` band `[0.83, 1.2]`, directional and noEffect are mutually exclusive. Compute a p-value only for pairs with a non-nil direction (`SignificanceTester.pValue(..., direction:)`); those are the `m` tested hypotheses. Collect `(candidate, stats, confidence, pValue)` for them, and carry the nil-direction pairs straight to the classify pass unchanged.
+1. **Score pass:** for each candidate, compute `PairStats`, confounder penalty, and confidence. Determine the pair's **tail direction** via a small `RelationshipClassifier.tailDirection(stats:)` helper — `upper` when `ratio ≥ candidateRatioTrigger`, `lower` when `ratio ≤ candidateRatioProtective` and `followCount ≥ 1`, else `nil`. This reuses the classifier's exact direction thresholds (DRY, one source of truth), and returns `nil` for both `noEffect`-band and weak-undirected pairs — since a directional ratio (≥1.5 or ≤0.67) is by construction outside the `noEffect` band `[0.83, 1.2]`, directional and noEffect are mutually exclusive. Compute a p-value only for pairs with a non-nil direction (`SignificanceTester.pValue(successes: a, trials: n, baseRate: min(stats.baseRate × windowDays, 1−ε), direction:)` — the **window-scaled** null per §3.1); those are the `m` tested hypotheses. Collect `(candidate, stats, confidence, pValue)` for them, and carry the nil-direction pairs straight to the classify pass unchanged.
 2. **BH pass:** sort the collected p-values ascending; the BH threshold is the largest `p_(i)` with `p_(i) ≤ (i/m)·fdrAlpha` (m = number of tested directional pairs). Each pair is **significant** iff its `pValue ≤ threshold`.
 3. **Classify pass:** the classifier's direction/status logic is unchanged EXCEPT a directional pair that is **not significant** is capped at `candidate` (never `active`), regardless of confidence. Significant pairs follow the existing confidence ladder (`active`/`candidate`/`decayed`). Upsert/reconcile unchanged.
 
@@ -73,11 +76,11 @@ The engine already loops candidates producing a `Relationship` per surviving pai
 
 ### 3.4 Classifier change
 
-`RelationshipClassifier.classify` gains a `significant: Bool` parameter. The only behavior change: when `significant == false` and a directional type was assigned, the status is forced to `candidate` (the type is still recorded, for transparency/drill-down). Everything else — noEffect-first, direction thresholds, the `improves` `followCount ≥ 1` guard, the confidence ladder — is unchanged.
+`RelationshipClassifier.classify` gains a `significant: Bool` parameter. A directional edge is `active` only if **both** hold: `significant == true` **and** it clears the **effect-size floor** — `type == .possibleTrigger && ratio ≥ activationRatioTrigger`, or `type == .improves && ratio ≤ activationRatioProtective`. When either fails, the status is capped at `candidate` (the type is still recorded, for transparency/drill-down). The effect-floor check reads `stats.ratio` + config, which the classifier already has — no new parameter beyond `significant`. Everything else — noEffect-first, the *direction* thresholds (still 1.5 / 0.67, which assign the type / create the candidate), the `improves` `followCount ≥ 1` guard, the confidence ladder, and the rule that significance/floor never resurrect a `.decayed` edge — is unchanged.
 
 ### 3.5 Config
 
-`EvidenceConfig` gains `fdrAlpha: Double = 0.05`. Tuned against the acceptance suite (§4): raised only if a *real* planted edge is borderline-suppressed, lowered only if a noise edge survives — never to force a specific test past, and the change is documented.
+`EvidenceConfig` gains `fdrAlpha: Double = 0.05` (conventional), `activationRatioTrigger: Double = 2.0`, and `activationRatioProtective: Double = 0.55`. The two ratio floors are tuned against the acceptance suite (§4): raised/lowered only if a *real* planted edge is borderline-suppressed or a noise edge survives — never to force a specific test past, and the change is documented. `fdrAlpha` stays at the conventional 0.05.
 
 ## 4. Validation — the acceptance suite is the oracle
 
@@ -86,7 +89,7 @@ The engine already loops candidates producing a `Relationship` per surviving pai
 - **FU-2 (unchanged):** illness recorded as a confounder for an overlapping exposure.
 - **Determinism / ceiling / noEffect / confounder:** unchanged and must still pass.
 
-Margin check from the diagnostic: noise `chicken→cramps` (a=21 vs expected ≈ n·p0 ≈ 14) sits at uncorrected p ≈ 0.02; across ~78 pairs BH's threshold is far tighter, so it (and the other ~9 FPs) drop to `candidate`. The planted edges' p-values are many orders of magnitude smaller. If tuning reveals a genuinely borderline *real* edge, that is surfaced for a decision, not silently accommodated.
+What P5 actually found (why the effect-floor was needed): with 400 days of dense data the ~9 spurious edges are *genuinely significant* — noise `chicken→cramps` (a=21 over n≈153, base ≈ 0.09) reaches p ≈ 1e-5, well under any conventional BH threshold. Significance alone therefore could not separate them (it needed `fdrAlpha ≈ 5e-6`, an unprincipled effect-size proxy). The **effect-size floor** separates them cleanly at conventional α: the ~9 FPs are weak-lift (`chicken→cramps` ratio ≈ 1.5 < 2.0; `rice→cramps` ratio ≈ 0.64 > 0.55) → capped at `candidate`, while all 8 planted have either a huge ratio or a strong protective ratio and clear the floor. The two ratio floors (2.0 / 0.55) are what §4 tunes; `fdrAlpha` stays 0.05. If tuning reveals a genuinely borderline *real* edge (e.g. the harness's weak protective `magnesium→migraine` at ratio ≈ 0.50), that is surfaced for a decision, not silently accommodated.
 
 ## 5. Out of scope (unchanged from 2A)
 
@@ -98,7 +101,7 @@ Margin check from the diagnostic: noise `chicken→cramps` (a=21 vs expected ≈
 
 - Unit: `SignificanceTesterTests` — a strong lift over background yields a tiny p-value; `a` at the base-rate expectation yields p ≈ 0.5–1; `n = 0` → p = 1; upper vs lower direction symmetry; a hand-checked small table (e.g. `n=10, a=8, p0=0.2` upper tail).
 - Unit: a BH-FDR helper test — a known p-value vector yields the expected significance threshold/verdicts.
-- Unit: `RelationshipClassifier` — a directional, high-confidence pair with `significant: false` → `candidate` (not `active`); with `significant: true` → `active`.
+- Unit: `RelationshipClassifier` — a directional, high-confidence pair with `significant: false` → `candidate`; with `significant: true` AND a ratio past the effect-size floor → `active`; with `significant: true` but a ratio BELOW the floor (e.g. trigger ratio 1.6 < 2.0) → `candidate`.
 - Integration: the strengthened acceptance suite (§4) — recall + planted-pairs precision + FU-2, all green with `fdrAlpha` default.
 - Regression: full `HealthGraphCore` suite green; perf tripwire still comfortably under bound (BH adds an O(m log m) sort over a few dozen pairs — negligible).
 
@@ -109,7 +112,7 @@ Evidence/
   SignificanceTester.swift     // NEW — binomial tail (log-space) + TailDirection
   CooccurrenceAnalyzer.swift   // + exposureDayCount, exposureDaysWithOutcome on PairStats
   RelationshipClassifier.swift // + tailDirection(stats:) helper; + significant: Bool param → caps non-significant to candidate
-  EvidenceConfig.swift         // + fdrAlpha = 0.05
+  EvidenceConfig.swift         // + fdrAlpha = 0.05, activationRatioTrigger = 2.0, activationRatioProtective = 0.55
   EvidenceEngine.swift         // recompute: score → BH-FDR → classify; helper for BH threshold
 Tests/
   SignificanceTesterTests.swift          // NEW
