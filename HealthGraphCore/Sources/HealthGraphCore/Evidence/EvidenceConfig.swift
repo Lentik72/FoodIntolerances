@@ -36,6 +36,7 @@ public struct EvidenceConfig: Sendable {
     public var decayThreshold: Double = 0.3
     public var stalenessHalfLifeDays: Double = 60
     public var observationalCeiling: Double = 0.75
+    public var fdrAlpha: Double = 0.05   // Benjamini-Hochberg false-discovery rate for activation
 
     // Confidence weights (direction-symmetric): sigmoid(
     //   w1·log(exposureCount) + w2·signalStrength

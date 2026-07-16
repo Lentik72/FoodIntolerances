@@ -75,30 +75,51 @@ public struct EvidenceEngine {
         let scorer = ConfidenceScorer(config: config)
         let classifier = RelationshipClassifier(config: config)
 
-        var computed: [String: Relationship] = [:]   // by edgeKey
+        // Pass 1 — score every candidate; collect p-values for the directional ones.
+        var scored: [(cand: Candidate, stats: PairStats, conf: Double, pValue: Double?)] = []
+        var pValues: [Double] = []
         for cand in candidates {
             guard let exp = exposures[cand.exposure], let out = outcomes[cand.outcome] else { continue }
             let window = config.lagWindow(for: cand.exposure)
-            guard let stats = analyzer.analyze(exposure: exp, outcome: out, window: window, observation: observation)
-            else { continue }
-
-            // Others = every other exposure's day-set (cycle-phase keys are already
-            // in daySets, so they flow in automatically), plus illness (always).
+            guard let stats = analyzer.analyze(exposure: exp, outcome: out,
+                                               window: window, observation: observation) else { continue }
             var others = daySets.filter { $0.key != cand.exposure }
             if !illness.isEmpty { others[Self.illnessConfounderKey] = illness }
             let (penalty, _) = confounder.penalty(targetDays: daySets[cand.exposure] ?? [], others: others)
-
             let conf = scorer.confidence(stats: stats, confounderPenalty: penalty, now: now)
-            guard let edge = classifier.classify(stats: stats, confidence: conf, now: now) else { continue }
+            var p: Double? = nil
+            if let dir = classifier.tailDirection(stats: stats) {
+                // Null rate MUST match the ratio's null (window-scaled), else a 48h-window
+                // intervention's real effect (e.g. magnesium→migraine) looks insignificant.
+                // windowDays mirrors CooccurrenceAnalyzer's ratio denominator exactly.
+                let windowDays = max((window.upperBound - window.lowerBound) / 24.0, 1e-9)
+                let nullRate = min(stats.baseRate * windowDays, 1 - 1e-9)
+                let pv = SignificanceTester.pValue(successes: stats.exposureDaysWithOutcome,
+                                                   trials: stats.exposureDayCount,
+                                                   baseRate: nullRate, direction: dir)
+                p = pv
+                pValues.append(pv)
+            }
+            scored.append((cand, stats, conf, p))
+        }
 
-            let key = EdgeIdentity.edgeKey(from: cand.exposure, to: cand.outcome, type: edge.type)
-            let cols = EdgeIdentity.columns(from: cand.exposure, to: cand.outcome)
+        // Multiple-comparison control across all directional pairs this run.
+        let bhThreshold = SignificanceTester.benjaminiHochbergThreshold(pValues: pValues, alpha: config.fdrAlpha)
+
+        // Pass 2 — classify with the significance verdict, build edges.
+        var computed: [String: Relationship] = [:]
+        for s in scored {
+            let significant = s.pValue.map { $0 <= bhThreshold } ?? false
+            guard let edge = classifier.classify(stats: s.stats, confidence: s.conf,
+                                                 significant: significant, now: now) else { continue }
+            let key = EdgeIdentity.edgeKey(from: s.cand.exposure, to: s.cand.outcome, type: edge.type)
+            let cols = EdgeIdentity.columns(from: s.cand.exposure, to: s.cand.outcome)
             let rel = Relationship(
                 fromObjectID: cols.fromObjectID, fromCategory: cols.fromCategory,
                 toCategory: cols.toCategory, type: edge.type,
-                evidenceCount: stats.followCount, contradictionCount: stats.missCount,
-                confidence: conf, strength: stats.avgEffect, lagHours: stats.medianLagHours,
-                firstSeen: now, lastSeen: stats.lastExposure, lastRecomputed: now,
+                evidenceCount: s.stats.followCount, contradictionCount: s.stats.missCount,
+                confidence: s.conf, strength: s.stats.avgEffect, lagHours: s.stats.medianLagHours,
+                firstSeen: now, lastSeen: s.stats.lastExposure, lastRecomputed: now,
                 status: edge.status, edgeKey: key, toSubtype: cols.toSubtype)
             computed[key] = rel
         }
