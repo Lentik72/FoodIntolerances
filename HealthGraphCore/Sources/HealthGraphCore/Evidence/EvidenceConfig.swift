@@ -43,6 +43,7 @@ public struct EvidenceConfig: Sendable {
     public var fdrAlpha = 0.05   // conventional Benjamini-Hochberg FDR for significance
     public var activationRatioTrigger = 2.0      // trigger must ≥ double the base rate to activate
     public var activationRatioProtective = 0.55  // protective must ≤ this fraction of base to activate
+    public var stabilityMinExposuresPerHalf = 5   // each temporal half must carry this much evidence
 
     // Confidence weights (direction-symmetric): sigmoid(
     //   w1·log(exposureCount) + w2·signalStrength
