@@ -66,8 +66,11 @@ struct EvidenceEngineAcceptanceTests {
         //    association). Perfect precision is impossible on observational data — chicken→cramps is
         //    statistically indistinguishable from a weak real signal (stability-gate design §4).
         let allowed = planted.union(["cyclePhase.menstrual|cramps"])   // genuine cycle correlation
+        // The one documented irreducible residual is chicken→cramps specifically; pin its
+        // identity (not just the count) so a *different* new FP can't slip through green.
         let residual = activePairs.subtracting(allowed)
-        #expect(residual.count <= 1, "unexpected active associations beyond the documented residual: \(residual)")
+        #expect(residual.isSubset(of: ["chicken|cramps"]),
+                "unexpected active associations beyond the documented residual: \(residual)")
     }
 
     @Test func illnessRecordedAsConfounderForOverlappingExposure() async throws {
