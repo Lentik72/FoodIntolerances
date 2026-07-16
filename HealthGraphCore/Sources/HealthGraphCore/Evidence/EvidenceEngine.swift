@@ -136,3 +136,44 @@ public struct EvidenceEngine {
                                relationshipsDecayed: decayedCount)
     }
 }
+
+public struct RelationshipEvidence: Sendable, Equatable {
+    public let relationshipID: UUID
+    public let exposures: [ExposurePairDetail]
+    public let followCount: Int
+    public let missCount: Int
+    public let confounders: [ExposureKey]   // exposures that shadow this one (design doc §3)
+}
+
+extension EvidenceEngine {
+    public func evidence(for relationship: Relationship, asOf now: Date) async throws -> RelationshipEvidence {
+        func empty() -> RelationshipEvidence {
+            RelationshipEvidence(relationshipID: relationship.id, exposures: [],
+                                 followCount: 0, missCount: 0, confounders: [])
+        }
+        guard let (expKey, outKey) = EdgeIdentity.parse(relationship) else { return empty() }
+        let events = try await eventStore.events(
+            in: DateInterval(start: .distantPast, end: .distantFuture), category: nil)
+        let (exposures, outcomes) = extract(events)
+        guard let exp = exposures[expKey], let out = outcomes[outKey], !exp.isEmpty else { return empty() }
+        let times = events.map(\.timestamp)
+        guard let lo = times.min(), let hi = times.max() else { return empty() }
+        let window = config.lagWindow(for: expKey)
+        guard let stats = CooccurrenceAnalyzer(config: config)
+            .analyze(exposure: exp, outcome: out, window: window,
+                     observation: DateInterval(start: lo, end: hi)) else { return empty() }
+
+        // Recompute the confounder set for this one edge (same logic as recompute()).
+        let cal = Self.utc
+        var daySets: [ExposureKey: Set<Date>] = [:]
+        for (key, occ) in exposures { daySets[key] = Set(occ.map { cal.startOfDay(for: $0.timestamp) }) }
+        var others = daySets.filter { $0.key != expKey }
+        let illness = illnessDays(events)
+        if !illness.isEmpty { others[Self.illnessConfounderKey] = illness }
+        let (_, confounders) = ConfounderAnalyzer().penalty(targetDays: daySets[expKey] ?? [], others: others)
+
+        return RelationshipEvidence(relationshipID: relationship.id, exposures: stats.pairs,
+                                    followCount: stats.followCount, missCount: stats.missCount,
+                                    confounders: confounders)
+    }
+}

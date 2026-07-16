@@ -95,4 +95,17 @@ struct EvidenceEngineTests {
         let bloating = try await GRDBRelationshipStore(database: db).all().first { $0.toSubtype == "bloating" }
         #expect(bloating?.status == .decayed)
     }
+
+    @Test func evidenceForParityWithStoredCounts() async throws {
+        let db = try AppDatabase.inMemory()
+        try await seedDairyBloating(into: db)
+        let engine = EvidenceEngine(database: db)
+        _ = try await engine.recompute(asOf: now)
+        let rel = try await GRDBRelationshipStore(database: db).all().first { $0.toSubtype == "bloating" }!
+        let ev = try await engine.evidence(for: rel, asOf: now)
+        #expect(ev.followCount == rel.evidenceCount)
+        #expect(ev.missCount == rel.contradictionCount)
+        #expect(ev.exposures.count == rel.evidenceCount + rel.contradictionCount)
+        #expect(ev.exposures.contains { $0.outcomeFollowed })
+    }
 }
