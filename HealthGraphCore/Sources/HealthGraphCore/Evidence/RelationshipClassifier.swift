@@ -11,7 +11,16 @@ public struct RelationshipClassifier {
     let config: EvidenceConfig
     public init(config: EvidenceConfig) { self.config = config }
 
-    public func classify(stats: PairStats, confidence: Double, now: Date) -> ClassifiedEdge? {
+    /// The tail to test for significance, mirroring the activation direction.
+    /// nil for noEffect-band / weak-undirected pairs (which are never significance-gated).
+    public func tailDirection(stats: PairStats) -> TailDirection? {
+        if stats.ratio >= config.candidateRatioTrigger { return .upper }
+        if stats.ratio <= config.candidateRatioProtective && stats.followCount >= 1 { return .lower }
+        return nil
+    }
+
+    public func classify(stats: PairStats, confidence: Double,
+                         significant: Bool, now: Date) -> ClassifiedEdge? {
         let spanDays = stats.lastExposure.timeIntervalSince(stats.firstExposure) / 86_400
         if stats.exposureCount >= config.noEffectMinExposures,
            spanDays >= config.noEffectMinSpanDays,
@@ -30,10 +39,12 @@ public struct RelationshipClassifier {
             type = nil
         }
         guard let type else { return nil }
-        let status: RelStatus =
+        var status: RelStatus =
             confidence >= config.activationThreshold ? .active
             : confidence < config.decayThreshold ? .decayed
             : .candidate
+        // Significance gates activation only: a non-significant edge may not be active.
+        if !significant && status == .active { status = .candidate }
         return ClassifiedEdge(type: type, status: status)
     }
 }
