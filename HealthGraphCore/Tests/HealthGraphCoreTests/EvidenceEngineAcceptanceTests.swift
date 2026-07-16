@@ -41,12 +41,49 @@ struct EvidenceEngineAcceptanceTests {
         }
     }
 
-    @Test func precisionRejectsNoise() async throws {
-        let rels = try await GRDBRelationshipStore(database: minedDB()).relationships(status: .active)
-        // Noise foods (rice/chicken/…) are logged daily but drive nothing, so no
-        // active edge should point at an outcome we never planted.
-        let planted: Set<String> = ["bloating", "fatigue", "headache", "tension", "cramps", "jitters", "migraine"]
-        #expect(rels.allSatisfy { planted.contains($0.toSubtype ?? "") })
+    @Test func precisionActiveEdgesAreOnlyPlantedPairs() async throws {
+        let db = try await minedDB()
+        let objects = GRDBObjectStore(database: db)
+        let active = try await GRDBRelationshipStore(database: db).relationships(status: .active)
+        // (exposure-label, outcome-subtype) pairs the harness actually plants.
+        let planted: Set<String> = [
+            "dairy|bloating", "shortSleep|fatigue", "pressureDrop|headache",
+            "highStress|tension", "cyclePhase.luteal|cramps", "magnesium|migraine",
+            "espresso|jitters", "croissant|jitters",
+        ]
+        for r in active {
+            var exposure = r.fromCategory ?? "?"           // derived edges carry the kind here
+            if let oid = r.fromObjectID, let o = try await objects.object(id: oid) { exposure = o.name }
+            let pair = "\(exposure)|\(r.toSubtype ?? "?")"
+            #expect(planted.contains(pair), "unplanted active edge: \(pair) [conf \(r.confidence)]")
+        }
+        #expect(!active.isEmpty)
+    }
+
+    @Test func illnessRecordedAsConfounderForOverlappingExposure() async throws {
+        let db = try AppDatabase.inMemory()
+        let store = GRDBEventStore(database: db)
+        let gluten = try await GRDBObjectStore(database: db).findOrCreate(name: "gluten", kind: .food, metadata: nil)
+        var events: [HealthEvent] = []
+        let base = now.addingTimeInterval(-40 * 86_400)
+        for d in 0..<20 {
+            let day = base.addingTimeInterval(Double(d) * 86_400)
+            events.append(HealthEvent(timestamp: day.addingTimeInterval(9 * 3600), timezoneID: "UTC",
+                                      category: .food, subtype: "gluten", objectID: gluten.id, source: .manual))
+            events.append(HealthEvent(timestamp: day.addingTimeInterval(15 * 3600), timezoneID: "UTC",
+                                      category: .symptom, subtype: "nausea", value: 5, source: .manual))
+            if d < 18 {  // illness on 18/20 = 90% of gluten days ( > 60% )
+                events.append(HealthEvent(timestamp: day.addingTimeInterval(8 * 3600), timezoneID: "UTC",
+                                          category: .illness, subtype: "cold", source: .manual))
+            }
+        }
+        try await store.save(events)
+        let engine = EvidenceEngine(database: db)
+        _ = try await engine.recompute(asOf: now)
+        let edge = try await GRDBRelationshipStore(database: db).all().first { $0.toSubtype == "nausea" }
+        #expect(edge != nil)
+        let ev = try await engine.evidence(for: edge!, asOf: now)
+        #expect(!ev.confounders.isEmpty)   // illness shadows gluten
     }
 
     @Test func confounderIsRecordedForInseparablePair() async throws {
