@@ -50,4 +50,38 @@ struct RelationshipStoreTests {
         let forDairy = try await store.relationships(fromObjectID: dairy.id)
         #expect(forDairy.count == 1)
     }
+
+    @Test func batchSaveAndAllRoundTrips() async throws {
+        let db = try AppDatabase.inMemory()
+        let store = GRDBRelationshipStore(database: db)
+        let now = Date(timeIntervalSince1970: 1_750_000_000)
+        let a = Relationship(fromCategory: "food", toCategory: "symptom",
+                             type: .possibleTrigger, confidence: 0.6,
+                             firstSeen: now, lastSeen: now, lastRecomputed: now,
+                             status: .active, edgeKey: "obj:a|symptom:bloating|possibleTrigger",
+                             toSubtype: "bloating")
+        let b = Relationship(fromCategory: "shortSleep", toCategory: "symptom",
+                             type: .possibleTrigger, confidence: 0.5,
+                             firstSeen: now, lastSeen: now, lastRecomputed: now,
+                             status: .active, edgeKey: "derived:shortSleep|symptom:fatigue|possibleTrigger",
+                             toSubtype: "fatigue")
+        try await store.save([a, b])
+        let all = try await store.all()
+        #expect(all.count == 2)
+        #expect(Set(all.compactMap(\.edgeKey)).count == 2)
+        #expect(all.first(where: { $0.edgeKey == a.edgeKey })?.toSubtype == "bloating")
+    }
+
+    @Test func duplicateEdgeKeyIsRejectedByUniqueIndex() async throws {
+        let db = try AppDatabase.inMemory()
+        let store = GRDBRelationshipStore(database: db)
+        let now = Date(timeIntervalSince1970: 1_750_000_000)
+        func edge(_ id: UUID) -> Relationship {
+            Relationship(id: id, fromCategory: "food", toCategory: "symptom",
+                         type: .possibleTrigger, firstSeen: now, lastSeen: now,
+                         lastRecomputed: now, status: .active, edgeKey: "same-key", toSubtype: "x")
+        }
+        try await store.save(edge(UUID()))
+        await #expect(throws: (any Error).self) { try await store.save(edge(UUID())) }
+    }
 }

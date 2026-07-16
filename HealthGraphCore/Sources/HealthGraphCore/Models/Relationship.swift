@@ -23,6 +23,8 @@ public struct Relationship: Codable, Identifiable, Equatable,
     public var lastRecomputed: Date
     public var status: RelStatus
     public var aiExplanation: String?
+    public var edgeKey: String?     // deterministic edge identity; unique (migration v5)
+    public var toSubtype: String?   // outcome subtype for labelling (e.g. "bloating")
 
     public init(
         id: UUID = UUID(),
@@ -40,7 +42,9 @@ public struct Relationship: Codable, Identifiable, Equatable,
         lastSeen: Date,
         lastRecomputed: Date,
         status: RelStatus = .candidate,
-        aiExplanation: String? = nil
+        aiExplanation: String? = nil,
+        edgeKey: String? = nil,
+        toSubtype: String? = nil
     ) {
         self.id = id
         self.fromObjectID = fromObjectID
@@ -58,5 +62,7 @@ public struct Relationship: Codable, Identifiable, Equatable,
         self.lastRecomputed = lastRecomputed
         self.status = status
         self.aiExplanation = aiExplanation
+        self.edgeKey = edgeKey
+        self.toSubtype = toSubtype
     }
 }

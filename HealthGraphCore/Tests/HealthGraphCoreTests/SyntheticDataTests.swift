@@ -69,4 +69,15 @@ struct SyntheticDataTests {
         let objectCount = try await GRDBObjectStore(database: db).count()
         #expect(objectCount == data.objects.count)
     }
+
+    @Test func emitsDerivedExposureEvents() {
+        var cfg = config
+        cfg.derivedScenarios = DerivedScenarios(
+            shortSleepFatigue: true, pressureHeadache: true, stressSymptom: true, lutealSymptom: true)
+        let data = SyntheticDataGenerator.generate(config: cfg)
+        #expect(data.events.contains { $0.category == .sleep && $0.endTimestamp != nil })
+        #expect(data.events.contains { $0.category == .environment && $0.subtype == "pressureDrop" })
+        #expect(data.events.contains { $0.category == .stress && ($0.value ?? 0) >= 7 })
+        #expect(data.events.contains { $0.category == .cycle && $0.subtype == "periodStart" })
+    }
 }
