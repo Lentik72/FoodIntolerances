@@ -22,6 +22,8 @@ public struct PairStats: Sendable, Equatable {
     public let firstExposure: Date
     public let lastExposure: Date
     public let pairs: [ExposurePairDetail]
+    public let exposureDayCount: Int          // distinct exposure days (n for the significance test)
+    public let exposureDaysWithOutcome: Int   // exposure days with the outcome in-window (a)
 }
 
 public struct CooccurrenceAnalyzer {
@@ -93,6 +95,8 @@ public struct CooccurrenceAnalyzer {
         return PairStats(exposureCount: exposure.count, followCount: followCount,
                          missCount: exposure.count - followCount, baseRate: baseRate, ratio: ratio,
                          avgEffect: avgEffect, medianLagHours: medianLag,
-                         firstExposure: times.first!, lastExposure: times.last!, pairs: pairs)
+                         firstExposure: times.first!, lastExposure: times.last!, pairs: pairs,
+                         exposureDayCount: exposureDays.count,
+                         exposureDaysWithOutcome: exposureDaysWithOutcome)
     }
 }

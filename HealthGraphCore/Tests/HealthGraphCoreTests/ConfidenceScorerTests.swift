@@ -6,7 +6,8 @@ struct ConfidenceScorerTests {
     func stats(follows: Int, exposures: Int, baseRate: Double, lastExposure: Date) -> PairStats {
         PairStats(exposureCount: exposures, followCount: follows, missCount: exposures - follows,
                   baseRate: baseRate, ratio: 3, avgEffect: 5, medianLagHours: 6,
-                  firstExposure: Date(timeIntervalSince1970: 0), lastExposure: lastExposure, pairs: [])
+                  firstExposure: Date(timeIntervalSince1970: 0), lastExposure: lastExposure, pairs: [],
+                  exposureDayCount: exposures, exposureDaysWithOutcome: follows)
     }
     let now = Date(timeIntervalSince1970: 1_750_000_000)
 

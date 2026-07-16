@@ -40,4 +40,27 @@ struct CooccurrenceAnalyzerTests {
                                                end: Date(timeIntervalSince1970: base + day)))
         #expect(stats == nil)
     }
+
+    @Test func surfacesPerDayContingency() {
+        let day = 86_400.0, base = 1_700_000_000.0
+        let exposures = [0, 1, 2].map {
+            ExposureOccurrence(key: .object(UUID(), .food),
+                               timestamp: Date(timeIntervalSince1970: base + Double($0) * day + 9 * 3600),
+                               timezoneID: "UTC", sourceEventID: UUID())
+        }
+        let outcomes = [
+            OutcomeOccurrence(key: .symptom("bloating"),
+                              timestamp: Date(timeIntervalSince1970: base + 0 * day + 15 * 3600),
+                              value: 5, sourceEventID: UUID()),
+            OutcomeOccurrence(key: .symptom("bloating"),
+                              timestamp: Date(timeIntervalSince1970: base + 2 * day + 11 * 3600),
+                              value: 7, sourceEventID: UUID()),
+        ]
+        let obs = DateInterval(start: Date(timeIntervalSince1970: base),
+                               end: Date(timeIntervalSince1970: base + 3 * day))
+        let stats = CooccurrenceAnalyzer(config: .default)
+            .analyze(exposure: exposures, outcome: outcomes, window: 0...24, observation: obs)
+        #expect(stats?.exposureDayCount == 3)          // 3 distinct exposure days
+        #expect(stats?.exposureDaysWithOutcome == 2)   // days 0 and 2 had the outcome in-window
+    }
 }

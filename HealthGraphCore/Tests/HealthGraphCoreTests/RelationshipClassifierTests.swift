@@ -9,7 +9,8 @@ struct RelationshipClassifierTests {
         let first = now.addingTimeInterval(-spanDays * 86_400)
         return PairStats(exposureCount: exposures, followCount: exposures / 2, missCount: exposures / 2,
                          baseRate: 0.1, ratio: ratio, avgEffect: 5, medianLagHours: 6,
-                         firstExposure: first, lastExposure: last, pairs: [])
+                         firstExposure: first, lastExposure: last, pairs: [],
+                         exposureDayCount: exposures, exposureDaysWithOutcome: exposures / 2)
     }
     let c = RelationshipClassifier(config: .default)
 
