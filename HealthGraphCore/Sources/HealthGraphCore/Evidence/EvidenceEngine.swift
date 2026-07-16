@@ -110,8 +110,15 @@ public struct EvidenceEngine {
         var computed: [String: Relationship] = [:]
         for s in scored {
             let significant = s.pValue.map { $0 <= bhThreshold } ?? false
+            var stable = false
+            if significant, let dir = classifier.tailDirection(stats: s.stats),
+               let exp = exposures[s.cand.exposure], let out = outcomes[s.cand.outcome] {
+                let window = config.lagWindow(for: s.cand.exposure)
+                stable = StabilityValidator.isStable(exposure: exp, outcome: out, window: window,
+                                                     fullDirection: dir, config: config)
+            }
             guard let edge = classifier.classify(stats: s.stats, confidence: s.conf,
-                                                 significant: significant, now: now) else { continue }
+                                                 significant: significant, stable: stable, now: now) else { continue }
             let key = EdgeIdentity.edgeKey(from: s.cand.exposure, to: s.cand.outcome, type: edge.type)
             let cols = EdgeIdentity.columns(from: s.cand.exposure, to: s.cand.outcome)
             let rel = Relationship(

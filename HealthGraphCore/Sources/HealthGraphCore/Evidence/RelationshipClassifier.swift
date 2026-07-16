@@ -20,7 +20,7 @@ public struct RelationshipClassifier {
     }
 
     public func classify(stats: PairStats, confidence: Double,
-                         significant: Bool, now: Date) -> ClassifiedEdge? {
+                         significant: Bool, stable: Bool, now: Date) -> ClassifiedEdge? {
         let spanDays = stats.lastExposure.timeIntervalSince(stats.firstExposure) / 86_400
         if stats.exposureCount >= config.noEffectMinExposures,
            spanDays >= config.noEffectMinSpanDays,
@@ -47,7 +47,7 @@ public struct RelationshipClassifier {
             confidence >= config.activationThreshold ? .active
             : confidence < config.decayThreshold ? .decayed
             : .candidate
-        if status == .active && (!significant || !meetsEffectFloor) { status = .candidate }
+        if status == .active && (!significant || !meetsEffectFloor || !stable) { status = .candidate }
         return ClassifiedEdge(type: type, status: status)
     }
 }
