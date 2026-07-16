@@ -54,22 +54,34 @@ struct InsightPhrasingTests {
                      strength: strength, lagHours: lagHours, firstSeen: now, lastSeen: now,
                      lastRecomputed: now, status: .active, edgeKey: "k", toSubtype: toSubtype)
     }
-    func resolved(_ r: Relationship, exposure: String = "Dairy", outcome: String = "bloating") -> ResolvedRelationship {
-        ResolvedRelationship(relationship: r, exposureLabel: exposure, outcomeLabel: outcome, exposureCategory: .food)
+    func resolved(_ r: Relationship, exposure: String = "Dairy", outcome: String = "bloating",
+                  recent: [Bool] = []) -> ResolvedRelationship {
+        ResolvedRelationship(relationship: r, exposureLabel: exposure, outcomeLabel: outcome,
+                             exposureCategory: .food, recentOutcomes: recent)
     }
 
-    @Test func triggerClaimAndBadgeAndSubline() {
-        let rr = resolved(rel(type: .possibleTrigger, confidence: 0.6, toSubtype: "bloating"))
+    @Test func triggerClaimBadgeSublineCountLine() {
+        let rr = resolved(rel(type: .possibleTrigger, confidence: 0.6, toSubtype: "bloating"),
+                          recent: [true, true, false, true, true, true, false, true])   // 6 of 8
         #expect(InsightPhrasing.claim(rr) == "Dairy → bloating")
         #expect(InsightPhrasing.badge(confidence: 0.6) == .moderate)
-        let sub = InsightPhrasing.subline(rr)
-        #expect(sub.contains("~12h"))
-        #expect(sub.contains("severity"))
+        let sub = InsightPhrasing.subline(rr)!
+        #expect(sub.contains("~12h") && sub.contains("severity"))
+        #expect(InsightPhrasing.countLine(rr) == "In 6 of your last 8 Dairy logs, bloating followed")
     }
-    @Test func improvesPhrasesProtectively() {
+    @Test func improvesPhrasesProtectivelyNoSubline() {
         let rr = resolved(rel(type: .improves, confidence: 0.6, toSubtype: "migraine"),
-                          exposure: "Magnesium", outcome: "migraine")
+                          exposure: "Magnesium", outcome: "migraine", recent: [false, true, false])
         #expect(InsightPhrasing.claim(rr) == "Magnesium → fewer migraine")
+        #expect(InsightPhrasing.subline(rr) == nil)       // no "+severity" on a protective card
+    }
+    @Test func noEffectClaimIsNullToneNoSubline() {
+        let rr = resolved(rel(type: .noEffect, confidence: 0.55, toSubtype: "fatigue"),
+                          exposure: "Vitamin D", outcome: "fatigue")
+        #expect(InsightPhrasing.claim(rr) == "No measurable effect of Vitamin D on fatigue")
+        #expect(!InsightPhrasing.claim(rr).contains("→"))   // not directional
+        #expect(InsightPhrasing.subline(rr) == nil)
+        #expect(InsightPhrasing.countLine(rr) == nil)       // no dot line for a null result
     }
     @Test func badgeTiers() {
         #expect(InsightPhrasing.badge(confidence: 0.4) == .earlySignal)
@@ -85,8 +97,9 @@ struct InsightPhrasingTests {
     @Test func noCausalLanguage() {
         let forbidden = ["cause", "causes", "triggers ", "makes you", "guarantee"]
         for type in [RelationshipType.possibleTrigger, .improves, .noEffect] {
-            let rr = resolved(rel(type: type, confidence: 0.6, toSubtype: "bloating"))
-            let text = (InsightPhrasing.claim(rr) + " " + InsightPhrasing.subline(rr)).lowercased()
+            let rr = resolved(rel(type: type, confidence: 0.6, toSubtype: "bloating"), recent: [true, false, true])
+            let text = (InsightPhrasing.claim(rr) + " " + (InsightPhrasing.subline(rr) ?? "")
+                        + " " + (InsightPhrasing.countLine(rr) ?? "")).lowercased()
             for word in forbidden { #expect(!text.contains(word), "phrasing must avoid causal word '\(word)'") }
         }
     }
@@ -102,31 +115,40 @@ import Foundation
 
 public enum BadgeTier: String, Sendable, Equatable { case earlySignal, moderate, strong }
 
-/// A mined relationship plus its resolved human labels (object name / derived phrase,
-/// outcome subtype) and a representative category for the exposure's icon.
+/// A mined relationship plus its resolved human labels, a representative category for the
+/// exposure's icon, and (for ACTIVE edges) the last-N chronological "followed" flags.
 public struct ResolvedRelationship: Sendable, Equatable {
     public let relationship: Relationship
     public let exposureLabel: String
     public let outcomeLabel: String
     public let exposureCategory: EventCategory
-    public init(relationship: Relationship, exposureLabel: String,
-                outcomeLabel: String, exposureCategory: EventCategory) {
+    public let recentOutcomes: [Bool]     // last-~N exposures, chronological; empty for non-active
+    public init(relationship: Relationship, exposureLabel: String, outcomeLabel: String,
+                exposureCategory: EventCategory, recentOutcomes: [Bool] = []) {
         self.relationship = relationship; self.exposureLabel = exposureLabel
         self.outcomeLabel = outcomeLabel; self.exposureCategory = exposureCategory
+        self.recentOutcomes = recentOutcomes
     }
 }
 
-/// One card's display data. Dots come straight from the stored counts (no query).
+/// One card's display data. `recentDots` is the last-~8 chronological hit/miss sequence
+/// (empty for noEffect/archive); NOT the lifetime total.
 public struct InsightCardModel: Sendable, Equatable, Identifiable {
-    public let id: UUID              // relationship id
+    public let id: UUID
     public let claim: String
     public let exposureCategory: EventCategory
     public let badge: BadgeTier
-    public let filledDots: Int       // evidenceCount
-    public let hollowDots: Int       // contradictionCount
-    public let subline: String
+    public let countLine: String?     // "In 6 of your last 8 Dairy logs, bloating followed" (active)
+    public let recentDots: [Bool]     // last-~8 followed flags, chronological
+    public let subline: String?       // lag+severity (trigger only)
     public let isNew: Bool
     public let kind: RelationshipType
+    public init(id: UUID, claim: String, exposureCategory: EventCategory, badge: BadgeTier,
+                countLine: String?, recentDots: [Bool], subline: String?, isNew: Bool, kind: RelationshipType) {
+        self.id = id; self.claim = claim; self.exposureCategory = exposureCategory; self.badge = badge
+        self.countLine = countLine; self.recentDots = recentDots; self.subline = subline
+        self.isNew = isNew; self.kind = kind
+    }
 }
 
 public enum InsightSectionKind: Sendable, Equatable { case active, noEffect, archive }
@@ -134,14 +156,17 @@ public struct InsightSection: Sendable, Equatable, Identifiable {
     public var id: InsightSectionKind { kind }
     public let kind: InsightSectionKind
     public let cards: [InsightCardModel]
+    public init(kind: InsightSectionKind, cards: [InsightCardModel]) { self.kind = kind; self.cards = cards }
 }
 public struct InsightsFeedModel: Sendable, Equatable {
     public let sections: [InsightSection]   // active, noEffect, archive (empties omitted)
+    public init(sections: [InsightSection]) { self.sections = sections }
 }
 
 public struct InsightsConfig: Sendable {
     public var newPerWeek = 3
     public var newWindowDays = 7.0
+    public var recentDotCount = 8
     public var earlyMax = 0.5
     public var strongMin = 0.75
     public init() {}
@@ -159,6 +184,7 @@ public enum InsightPhrasing {
     public static func claim(_ rr: ResolvedRelationship) -> String {
         switch rr.relationship.type {
         case .improves: return "\(rr.exposureLabel) → fewer \(rr.outcomeLabel)"
+        case .noEffect: return "No measurable effect of \(rr.exposureLabel) on \(rr.outcomeLabel)"
         default:        return "\(rr.exposureLabel) → \(rr.outcomeLabel)"
         }
     }
@@ -169,12 +195,23 @@ public enum InsightPhrasing {
         return .earlySignal
     }
 
-    public static func subline(_ rr: ResolvedRelationship) -> String {
+    /// Lag + severity — for triggers only; nil for improves / noEffect (protective/even-tone).
+    public static func subline(_ rr: ResolvedRelationship) -> String? {
+        guard rr.relationship.type == .possibleTrigger else { return nil }
         let r = rr.relationship
         var parts: [String] = []
         if let lag = r.lagHours { parts.append("usually within ~\(Int(lag.rounded()))h") }
         if let s = r.strength { parts.append(String(format: "avg severity +%.1f", s)) }
-        return parts.joined(separator: " · ")
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// "In K of your last N <exposure> logs, <outcome> followed" from the recent window;
+    /// nil when there's no window (noEffect/archive) or it's empty.
+    public static func countLine(_ rr: ResolvedRelationship) -> String? {
+        let recent = rr.recentOutcomes
+        guard !recent.isEmpty, rr.relationship.type != .noEffect else { return nil }
+        let k = recent.filter { $0 }.count
+        return "In \(k) of your last \(recent.count) \(rr.exposureLabel) logs, \(rr.outcomeLabel) followed"
     }
 
     /// Human phrase for a derived-exposure `fromCategory` token; nil for object edges
@@ -287,9 +324,11 @@ public enum InsightsFeed {
             return max(0, 1 - ageDays / config.newWindowDays)
         }
         let recent = active.filter { now.timeIntervalSince($0.relationship.firstSeen) / 86_400 <= config.newWindowDays }
+        func score(_ r: Relationship) -> Double { r.confidence * novelty(r) }
         let newIDs = Set(recent
-            .sorted { $0.relationship.confidence * novelty($0.relationship)
-                    > $1.relationship.confidence * novelty($1.relationship) }
+            .sorted { score($0.relationship) != score($1.relationship)
+                    ? score($0.relationship) > score($1.relationship)
+                    : $0.relationship.id.uuidString < $1.relationship.id.uuidString }   // stable tiebreak
             .prefix(config.newPerWeek)
             .map { $0.relationship.id })
 
@@ -298,8 +337,11 @@ public enum InsightsFeed {
             return InsightCardModel(
                 id: r.id, claim: InsightPhrasing.claim(rr), exposureCategory: rr.exposureCategory,
                 badge: InsightPhrasing.badge(confidence: r.confidence),
-                filledDots: r.evidenceCount, hollowDots: r.contradictionCount,
+                countLine: InsightPhrasing.countLine(rr), recentDots: rr.recentOutcomes,
                 subline: InsightPhrasing.subline(rr), isNew: newIDs.contains(r.id), kind: r.type)
+        }
+        func idTiebreak(_ a: ResolvedRelationship, _ b: ResolvedRelationship) -> Bool {
+            a.relationship.id.uuidString < b.relationship.id.uuidString
         }
 
         let activeCards = active
@@ -309,10 +351,17 @@ public enum InsightsFeed {
                 if lhs.relationship.confidence != rhs.relationship.confidence {
                     return lhs.relationship.confidence > rhs.relationship.confidence
                 }
-                return lhs.relationship.lastSeen > rhs.relationship.lastSeen
+                if lhs.relationship.lastSeen != rhs.relationship.lastSeen {
+                    return lhs.relationship.lastSeen > rhs.relationship.lastSeen
+                }
+                return idTiebreak(lhs, rhs)
             }.map(card)
-        let noEffectCards = noEffect.sorted { $0.relationship.lastSeen > $1.relationship.lastSeen }.map(card)
-        let archiveCards = archive.sorted { $0.relationship.lastRecomputed > $1.relationship.lastRecomputed }.map(card)
+        let noEffectCards = noEffect.sorted {
+            $0.relationship.lastSeen != $1.relationship.lastSeen
+                ? $0.relationship.lastSeen > $1.relationship.lastSeen : idTiebreak($0, $1) }.map(card)
+        let archiveCards = archive.sorted {
+            $0.relationship.lastRecomputed != $1.relationship.lastRecomputed
+                ? $0.relationship.lastRecomputed > $1.relationship.lastRecomputed : idTiebreak($0, $1) }.map(card)
 
         var sections: [InsightSection] = []
         if !activeCards.isEmpty { sections.append(InsightSection(kind: .active, cards: activeCards)) }
@@ -471,13 +520,15 @@ final class InsightsRefreshCoordinator: ObservableObject {
     }
 
     func refreshIfNeeded() async {
+        // Set the flag SYNCHRONOUSLY after the guard (no await between), so concurrent
+        // @MainActor triggers (appear + foreground + post-capture) can't overlap recomputes.
         guard !isRunning else { return }
+        isRunning = true
+        defer { isRunning = false }
         let watermark = (try? await GRDBEventStore(database: database).count()) ?? lastWatermark
         guard RecomputePolicy.shouldRecompute(lastRunAt: lastRecomputeAt, lastWatermark: lastWatermark,
                                               now: now(), currentWatermark: watermark, minInterval: minInterval)
-        else { return }
-        isRunning = true
-        defer { isRunning = false }
+        else { return }   // defer resets isRunning
         _ = try? await EvidenceEngine(database: database).recompute(asOf: now())
         lastWatermark = watermark
         lastRecomputeAt = now()
@@ -531,12 +582,16 @@ struct InsightsViewModelTests {
         return db
     }
 
-    @Test func loadsActiveDairyBloatingCard() async throws {
+    @Test func loadsActiveDairyBloatingCardWithRecentWindow() async throws {
         let db = try await seedMinedDB()
         let vm = InsightsViewModel(database: db, now: { Date(timeIntervalSince1970: 1_713_000_000) })
         await vm.load()
-        let active = vm.feed.sections.first { $0.kind == .active }
-        #expect(active?.cards.contains { $0.claim.lowercased().contains("dairy") && $0.claim.contains("bloating") } == true)
+        let dairy = vm.feed.sections.first { $0.kind == .active }?.cards
+            .first { $0.claim.lowercased().contains("dairy") && $0.claim.contains("bloating") }
+        #expect(dairy != nil)
+        #expect(dairy?.recentDots.isEmpty == false)        // last-N window loaded (not lifetime totals)
+        #expect((dairy?.recentDots.count ?? 99) <= 8)      // capped at recentDotCount
+        #expect(dairy?.countLine != nil)                   // "In K of your last N Dairy logs, bloating followed"
     }
 
     @Test func dismissMovesCardToArchive() async throws {
@@ -549,6 +604,18 @@ struct InsightsViewModelTests {
         let inArchive = vm.feed.sections.first { $0.kind == .archive }?.cards.contains { $0.id == card.id } ?? false
         #expect(!stillActive)
         #expect(inArchive)
+    }
+
+    @Test func undoRestoresDismissedCard() async throws {
+        let db = try await seedMinedDB()
+        let vm = InsightsViewModel(database: db, now: { Date(timeIntervalSince1970: 1_713_000_000) })
+        await vm.load()
+        let card = vm.feed.sections.first { $0.kind == .active }!.cards.first!
+        await vm.dismiss(card)
+        #expect(vm.pendingUndo?.id == card.id)
+        await vm.undoDismiss()
+        #expect(vm.feed.sections.first { $0.kind == .active }?.cards.contains { $0.id == card.id } == true)
+        #expect(vm.pendingUndo == nil)
     }
 }
 ```
@@ -564,16 +631,21 @@ import HealthGraphCore
 @MainActor
 final class InsightsViewModel: ObservableObject {
     @Published private(set) var feed = InsightsFeedModel(sections: [])
+    @Published var pendingUndo: PendingUndo?
+    struct PendingUndo: Equatable { let id: UUID; let priorStatus: RelStatus }
 
     private let database: AppDatabase
     private let now: () -> Date
     private let relStore: GRDBRelationshipStore
     private let objectStore: GRDBObjectStore
+    private let engine: EvidenceEngine
+    private let config = InsightsConfig.default
 
     init(database: AppDatabase = HealthGraphProvider.shared, now: @escaping () -> Date = { Date() }) {
         self.database = database; self.now = now
         self.relStore = GRDBRelationshipStore(database: database)
         self.objectStore = GRDBObjectStore(database: database)
+        self.engine = EvidenceEngine(database: database)
     }
 
     func load() async {
@@ -581,16 +653,30 @@ final class InsightsViewModel: ObservableObject {
         var resolved: [ResolvedRelationship] = []
         for r in rels {
             let (label, category) = await exposure(for: r)
+            var recent: [Bool] = []
+            if r.status == .active, let ev = try? await engine.evidence(for: r, asOf: now()) {
+                recent = ev.exposures.suffix(config.recentDotCount).map(\.outcomeFollowed)   // last-N chronological
+            }
             resolved.append(ResolvedRelationship(relationship: r, exposureLabel: label,
-                                                 outcomeLabel: r.toSubtype ?? "outcome", exposureCategory: category))
+                                                 outcomeLabel: r.toSubtype ?? "outcome",
+                                                 exposureCategory: category, recentOutcomes: recent))
         }
         feed = InsightsFeed.build(resolved, now: now())
     }
 
     func dismiss(_ card: InsightCardModel) async {
         guard var r = try? await relStore.relationship(id: card.id) else { return }
+        pendingUndo = PendingUndo(id: r.id, priorStatus: r.status)   // capture for undo
         r.status = .userDismissed
         try? await relStore.save(r)
+        await load()
+    }
+
+    func undoDismiss() async {
+        guard let undo = pendingUndo, var r = try? await relStore.relationship(id: undo.id) else { return }
+        r.status = undo.priorStatus
+        try? await relStore.save(r)
+        pendingUndo = nil
         await load()
     }
 
@@ -632,26 +718,25 @@ git commit -m "feat(app): InsightsViewModel — resolve relationships → feed m
 
 **Interfaces:**
 - Consumes: `InsightsViewModel`, `InsightCardModel`, `BadgeTier`, `HealthTheme`, `CategoryStyle`, the existing `InsightsPlaceholderView` coverage content (moved into the empty state).
-- Produces: `InsightsView()` (replaces `InsightsPlaceholderView()` in the shell), `InsightCardView(card:onDismiss:)`, `InsightBadgeView(tier:)`, `EvidenceDotsView(filled:hollow:)`.
+- Produces: `InsightsView()` (replaces `InsightsPlaceholderView()` in the shell), `InsightCardView(card:onDismiss:)`, `InsightBadgeView(tier:)`, `EvidenceDotsView(outcomes:)`.
 
 - [ ] **Step 1: `EvidenceDotsView.swift`** — a wrapping row of dots; filled = `HealthTheme.amber`, hollow = `HealthTheme.dotMiss`; VoiceOver label "N of M followed":
 
 ```swift
 import SwiftUI
 
+/// The last-~8 exposures in chronological order: filled (amber) = outcome followed,
+/// hollow (dotMiss) = not. ≤ recentDotCount, so it never overflows the row.
 struct EvidenceDotsView: View {
-    let filled: Int
-    let hollow: Int
+    let outcomes: [Bool]
     var body: some View {
         HStack(spacing: 4) {
-            ForEach(0..<max(0, filled), id: \.self) { _ in dot(HealthTheme.amber) }
-            ForEach(0..<max(0, hollow), id: \.self) { _ in dot(HealthTheme.dotMiss) }
+            ForEach(Array(outcomes.enumerated()), id: \.offset) { _, followed in
+                Circle().fill(followed ? HealthTheme.amber : HealthTheme.dotMiss).frame(width: 9, height: 9)
+            }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(filled) of \(filled + hollow) followed")
-    }
-    private func dot(_ color: Color) -> some View {
-        Circle().fill(color).frame(width: 9, height: 9)
+        .accessibilityLabel("\(outcomes.filter { $0 }.count) of \(outcomes.count) followed")
     }
 }
 ```
@@ -660,6 +745,7 @@ struct EvidenceDotsView: View {
 
 ```swift
 import SwiftUI
+import HealthGraphCore   // BadgeTier
 
 struct InsightBadgeView: View {
     let tier: BadgeTier
@@ -705,9 +791,12 @@ struct InsightCardView: View {
                             .font(.system(.title3, design: .serif, weight: .semibold))
                             .foregroundStyle(HealthTheme.ink)
                     }
-                    EvidenceDotsView(filled: card.filledDots, hollow: card.hollowDots)
-                    if !card.subline.isEmpty {
-                        Text(card.subline).font(.footnote).foregroundStyle(HealthTheme.inkSecondary)
+                    if let countLine = card.countLine {
+                        Text(countLine).font(.subheadline).foregroundStyle(HealthTheme.ink)
+                    }
+                    if !card.recentDots.isEmpty { EvidenceDotsView(outcomes: card.recentDots) }
+                    if let sub = card.subline {
+                        Text(sub).font(.footnote).foregroundStyle(HealthTheme.inkSecondary)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -730,13 +819,15 @@ struct InsightCardView: View {
     NavigationStack {
         InsightCardView(card: InsightCardModel(
             id: UUID(), claim: "Dairy → bloating", exposureCategory: .food, badge: .moderate,
-            filledDots: 6, hollowDots: 2, subline: "usually within ~12h · avg severity +2.1",
-            isNew: true, kind: .possibleTrigger), onDismiss: {}).padding()
+            countLine: "In 6 of your last 8 Dairy logs, bloating followed",
+            recentDots: [true, true, false, true, true, true, false, true],
+            subline: "usually within ~12h · avg severity +2.1", isNew: true, kind: .possibleTrigger),
+            onDismiss: {}).padding()
     }
 }
 ```
 
-- [ ] **Step 4: `InsightsView.swift`** — `@StateObject private var vm`, `@StateObject private var refresh = InsightsRefreshCoordinator()`, `@EnvironmentObject captureCoordinator`. `ScrollView` of sections (`InsightSectionKind` → header via `HealthTheme.sectionHeader()`; "No effect" section header framed as wins; "Archive" collapsible). Empty state when `vm.feed.sections.isEmpty`: render the per-category coverage strip currently in `InsightsPlaceholderView` + the honest line. `.task { await refresh.refreshIfNeeded(); await vm.load() }`, `.refreshable`, `.onChange(of: scenePhase == .active)` and `.onChange(of: captureCoordinator.lastCaptureAt)` → `await refresh.refreshIfNeeded(); await vm.load()`, and `.onChange(of: refresh.lastRecomputeAt)` → `await vm.load()`. Background `HealthTheme.paper`. Wrap the `ScrollView` in a `NavigationStack` carrying `.navigationDestination(for: UUID.self) { InsightDetailView(relationshipID: $0) }` (this is what the cards' `NavigationLink(value: card.id)` resolves to). Each card's `onDismiss` = `{ Task { await vm.dismiss(card) } }`, surfaced with the app's existing undo-toast convention.
+- [ ] **Step 4: `InsightsView.swift`** — `@StateObject private var vm`, `@StateObject private var refresh = InsightsRefreshCoordinator()`, `@EnvironmentObject captureCoordinator`. `ScrollView` of sections (`InsightSectionKind` → header via `HealthTheme.sectionHeader()`; "No effect" section header framed as wins; "Archive" collapsible). **Empty state** when `vm.feed.sections.isEmpty`: render **`InsightsPlaceholderView()` directly** (it already loads and shows the per-category coverage strip + honest line — keep that file, reuse it whole, no duplication; Step 5 only swaps the *tab* to `InsightsView`). `.task { await refresh.refreshIfNeeded(); await vm.load() }`, `.refreshable`, `.onChange(of: scenePhase == .active)` and `.onChange(of: captureCoordinator.lastCaptureAt)` → `await refresh.refreshIfNeeded(); await vm.load()`, and `.onChange(of: refresh.lastRecomputeAt)` → `await vm.load()`. Background `HealthTheme.paper`. Wrap the `ScrollView` in a `NavigationStack` carrying `.navigationDestination(for: UUID.self) { InsightDetailView(relationshipID: $0) }` (what the cards' `NavigationLink(value: card.id)` resolves to). Each card's `onDismiss` = `{ Task { await vm.dismiss(card) } }`. **Undo toast:** an overlay shown while `vm.pendingUndo != nil` ("Insight dismissed — Undo"); the Undo button calls `{ Task { await vm.undoDismiss() } }`; auto-clears after a few seconds (`.task(id: vm.pendingUndo)` sleeping then setting `vm.pendingUndo = nil` — or the existing app toast helper if one is shared). This is the app's undo-not-confirm convention.
 
 - [ ] **Step 5: Wire into the shell** — in `HealthOSRootView.swift`, replace `tab(.insights) { InsightsPlaceholderView() }` with `tab(.insights) { InsightsView() }`.
 
@@ -765,7 +856,7 @@ git commit -m "feat(app): Insights tab — sectioned cards (badge + dots), empty
 
 - [ ] **Step 1: Build `InsightDetailView.swift`:**
   - `let relationshipID: UUID`; `@State private var relationship: Relationship?`; `@State private var evidence: RelationshipEvidence?`; `.task { let db = HealthGraphProvider.shared; relationship = try? await GRDBRelationshipStore(database: db).relationship(id: relationshipID); if let r = relationship { evidence = try? await EvidenceEngine(database: db).evidence(for: r, asOf: Date()) } }`.
-  - **Itemized list:** for each `ExposurePairDetail`, a row — date (`exposureTime`, formatted), a filled/hollow dot (`outcomeFollowed`), and `outcomeValue` if present. Each row is a `NavigationLink` that resolves the event: fetch `EventStore.event(id: pair.outcomeEventID ?? pair.exposureEventID)` and push `EventDetailView(event:)`.
+  - **Itemized list:** for each `ExposurePairDetail`, a row — date (`exposureTime`, formatted), a filled/hollow dot (`outcomeFollowed`), and `outcomeValue` if present. Tapping resolves the event and pushes the existing detail: `if let ev = try? await GRDBEventStore(database: HealthGraphProvider.shared).event(id: pair.outcomeEventID ?? pair.exposureEventID) { EventDetailView(event: ev, viewModel: TimelineViewModel(store: GRDBEventStore(database: HealthGraphProvider.shared))) }` (the detail falls back to the passed `event` when the id isn't in that VM's loaded slice). Since the fetch is async, do it on tap into a `@State var pushedEvent: HealthEvent?` + `.navigationDestination(item:)`, not inside a plain `NavigationLink`.
   - **Confounder warnings:** if `!evidence.confounders.isEmpty`, a callout: "Another exposure was often present on these days — can't tell them apart yet; try one without the other." (Resolve confounder labels via the same exposure-label logic as the VM, or show a generic phrase — generic is acceptable for 2B.)
   - **Raw numbers** (bottom, `SF Mono` per §6): confidence %, evidence/contradiction counts, median lag (`relationship.lagHours`), avg effect (`relationship.strength`).
   - A `#Preview` seeded from a mined in-memory DB.
@@ -788,8 +879,9 @@ git commit -m "feat(app): InsightDetailView — evidence(for:) drill-down (rows�
 **Files:** none (verification task).
 
 - [ ] **Step 1:** Use the project `verify` / `run` skill to launch the app against a store seeded with the synthetic harness (or real backfilled data) so the engine produces edges. Drive the Insights tab and confirm:
-  - Cards render in **Active / No-effect / Archive** sections with correct badges; dot counts match `evidenceCount`/`contradictionCount`.
+  - Cards render in **Active / No-effect / Archive** sections with correct badges. Active cards show the **last ~8 exposures as chronological dots** + the "In K of your last N `<exposure>` logs, `<outcome>` followed" line (NOT hundreds of lifetime dots). **No-effect cards are null-tone** ("No measurable effect of …"), with no dots and no severity.
   - At most 3 cards show the **New** badge; all active edges are visible.
+  - **Undo:** dismissing shows an "Undo" toast; Undo restores the card to its section.
   - **Empty state** shows the coverage strip when there are no active/no-effect edges.
   - **Drill-down** opens, lists pairs incl. misses, shows confounder callout + raw numbers, and a row taps through to `EventDetailView`.
   - **Dismiss** moves a card to Archive with an undo toast; undo restores it.
@@ -801,7 +893,7 @@ git commit -m "feat(app): InsightDetailView — evidence(for:) drill-down (rows�
 
 ## Definition of Done
 
-- Insights tab shows sectioned cards (Active / No-effect / Archive) with word-scale badges + stored-count dots, an honest empty state, and the ≤3/week New throttle (never hiding active edges).
+- Insights tab shows sectioned cards (Active / No-effect / Archive) with word-scale badges, the **last-~8 chronological dots + "In K of your last N …" count line** on active cards, **null-tone no-effect cards** (no dots), an honest empty state, and the ≤3/week New throttle (never hiding active edges).
 - `evidence(for:)` drill-down lists every pair incl. misses, confounder warnings, and raw numbers; rows open `EventDetailView`.
 - Dismiss → Archive with undo; recompute is scheduled by the single debounced `InsightsRefreshCoordinator` (foreground / open / post-capture), decided by the pure `RecomputePolicy`.
 - All core logic (phrasing, feed/New selection, policy) is unit-tested; ViewModel + coordinator tested against an in-memory mined corpus; the tab verified end-to-end.
