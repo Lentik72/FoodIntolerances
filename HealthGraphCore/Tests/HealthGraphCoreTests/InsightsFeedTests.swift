@@ -44,4 +44,16 @@ struct InsightsFeedTests {
         // New cards sort ahead of non-New.
         #expect(active.prefix(3).allSatisfy { $0.isNew })
     }
+
+    @Test func badgeTieringHonorsCustomConfig() {
+        // Default earlyMax = 0.5 would put 0.55 confidence at .moderate; a custom
+        // earlyMax = 0.6 must push it down to .earlySignal — proving `build` threads
+        // `config` into InsightPhrasing.badge instead of always using `.default`.
+        var c = InsightsConfig(); c.earlyMax = 0.6
+        let feed = InsightsFeed.build([
+            rr(.active, conf: 0.55, firstSeenDaysAgo: 30, outcome: "bloating"),
+        ], now: now, config: c)
+        let card = feed.sections.first { $0.kind == .active }!.cards.first!
+        #expect(card.badge == .earlySignal)
+    }
 }

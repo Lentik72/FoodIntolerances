@@ -25,7 +25,7 @@ public enum InsightsFeed {
             let r = rr.relationship
             return InsightCardModel(
                 id: r.id, claim: InsightPhrasing.claim(rr), exposureCategory: rr.exposureCategory,
-                badge: InsightPhrasing.badge(confidence: r.confidence),
+                badge: InsightPhrasing.badge(confidence: r.confidence, config: config),
                 countLine: InsightPhrasing.countLine(rr), recentDots: rr.recentOutcomes,
                 subline: InsightPhrasing.subline(rr), isNew: newIDs.contains(r.id), kind: r.type)
         }
