@@ -39,12 +39,15 @@ public struct RelationshipClassifier {
             type = nil
         }
         guard let type else { return nil }
+        // Activation requires BOTH significance AND a meaningful effect size.
+        let meetsEffectFloor =
+            (type == .possibleTrigger && stats.ratio >= config.activationRatioTrigger) ||
+            (type == .improves && stats.ratio <= config.activationRatioProtective)
         var status: RelStatus =
             confidence >= config.activationThreshold ? .active
             : confidence < config.decayThreshold ? .decayed
             : .candidate
-        // Significance gates activation only: a non-significant edge may not be active.
-        if !significant && status == .active { status = .candidate }
+        if status == .active && (!significant || !meetsEffectFloor) { status = .candidate }
         return ClassifiedEdge(type: type, status: status)
     }
 }

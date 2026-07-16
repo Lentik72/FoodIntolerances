@@ -68,4 +68,28 @@ struct RelationshipClassifierTests {
         #expect(c.tailDirection(stats: stats(ratio: 0.4, exposures: 10, spanDays: 30)) == .lower)
         #expect(c.tailDirection(stats: stats(ratio: 1.0, exposures: 10, spanDays: 30)) == nil)
     }
+    @Test func significantButWeakTriggerIsCandidate() {
+        // ratio 1.6 ≥ 1.5 (type possibleTrigger) but < activationRatioTrigger (2.0) → not active.
+        let e = c.classify(stats: stats(ratio: 1.6, exposures: 10, spanDays: 30),
+                           confidence: 0.6, significant: true, now: now)
+        #expect(e?.type == .possibleTrigger)
+        #expect(e?.status == .candidate)
+    }
+    @Test func significantStrongTriggerActivates() {
+        let e = c.classify(stats: stats(ratio: 3, exposures: 10, spanDays: 30),
+                           confidence: 0.6, significant: true, now: now)
+        #expect(e?.status == .active)   // ratio 3 ≥ 2.0 floor
+    }
+    @Test func significantButWeakProtectiveIsCandidate() {
+        // ratio 0.6 ≤ 0.67 (type improves) but > activationRatioProtective (0.55) → not active.
+        let e = c.classify(stats: stats(ratio: 0.6, exposures: 10, spanDays: 30),
+                           confidence: 0.5, significant: true, now: now)
+        #expect(e?.type == .improves)
+        #expect(e?.status == .candidate)
+    }
+    @Test func significantStrongProtectiveActivates() {
+        let e = c.classify(stats: stats(ratio: 0.4, exposures: 10, spanDays: 30),
+                           confidence: 0.5, significant: true, now: now)
+        #expect(e?.status == .active)   // ratio 0.4 ≤ 0.55 floor
+    }
 }
