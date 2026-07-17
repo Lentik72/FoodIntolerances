@@ -13,7 +13,7 @@ struct HealthOSRootView: View {
             ZStack {
                 tab(.home) { HomeView() }
                 tab(.timeline) { TimelineView() }
-                tab(.insights) { InsightsPlaceholderView() }
+                tab(.insights) { InsightsView() }
                 tab(.health) { NavigationStack { HealthTabView() } }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
