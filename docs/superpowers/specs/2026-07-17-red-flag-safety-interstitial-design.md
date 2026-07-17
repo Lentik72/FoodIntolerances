@@ -169,9 +169,13 @@ symptom saves (HealthEvent returned)
 
 Voice can parse several symptoms at once; the presenter holds **one** pending match, so co-occurring red-flags show the first and every log still captures. **No hook in the edit path.**
 
-*Integration note:* presenting a full-screen cover exactly as the capture sheet dismisses can race in SwiftUI. Drive the cover from the root off `presenter.pending` so sheet-dismiss and cover-present sequence cleanly; verify on device.
+*Integration note:* presenting a full-screen cover from the same view that owns the capture `.sheet` races in SwiftUI ("present while dismissing"). Present the cover from a **different anchor** — the app scene, wrapping the root — driven by `presenter.pending`, while a root-level `onChange` closes the capture sheet; verify on device.
 
-### 7.2 Data / telemetry
+### 7.2 Closing the legacy bypass
+
+The three-lens plan audit found that the pre-pivot **legacy app** (reachable via "Open legacy app" in the Health tab) has its own symptom logger that writes SwiftData `LogEntry`s directly, never through `CaptureService`/`HealthEvent` — so it would skip the safety net entirely. Decision (Leo): **gate the entry point** — wrap the "Open legacy app" control behind `#if DEBUG`, so release builds have no user-reachable path to the legacy logger. (Chosen over hooking the deprecated path or leaving it documented-but-open, since the legacy app is on its way out.)
+
+### 7.3 Data / telemetry
 
 None added. The symptom log is already the record; mute state is local preference. No "interstitial shown" event, no analytics — consistent with the on-device, minimal-footprint ethos. Easy to add later if a doctor report wants it.
 

@@ -19,6 +19,8 @@
 - **No causal / diagnostic language.** The interstitial says symptoms "can be" serious and "this isn't a diagnosis." Never asserts the user has a condition.
 - **Emergency number is one regionalizable constant** (`EmergencyContact.emergencyNumber = "911"`), never hardcoded at call sites.
 - **Fire only on live, interactive symptom logs** — the hook lives in `CaptureSheet.logged(_:)` (UI layer), filtered to `event.category == .symptom`. Never in `EventStore.save` / import / backfill / HealthKit sync / edits.
+- **Close the legacy bypass:** gate the "Open legacy app" entry in `HealthTabView` behind `#if DEBUG`. The legacy app's own symptom logger writes SwiftData `LogEntry`s without touching `CaptureService`/`HealthEvent`, so in release builds it would otherwise skip the safety net entirely.
+- **Qualify `HealthGraphCore.SymptomCatalog`** in every app-target source and dual-import test — the app target has its own legacy top-level `SymptomCatalog` that silently shadows an unqualified reference (and is *ambiguous* in a `import HealthGraphCore` + `@testable import Food_Intolerances` test). Package-only tests (single `@testable import HealthGraphCore`) use the bare name.
 - **Mute state is app preference (UserDefaults), never health-graph data.** It never enters the event graph, never syncs, never appears in a report.
 - **Visual language:** reuse `HealthTheme` tokens + `hgCard()`; the interstitial adds one new `HealthTheme.danger` token (red primary action). 44pt tap targets, Dynamic Type, VoiceOver, light + dark; never color alone.
 - **App simulator:** iPhone 17 Pro (iOS 26.5); iPhone 16 Pro is not installed.
@@ -45,6 +47,7 @@
 - Create: `HealthGraphCore/Sources/HealthGraphCore/Safety/RedFlagCatalog.swift`
 - Create: `HealthGraphCore/Sources/HealthGraphCore/Safety/RedFlagEvaluator.swift`
 - Modify: `HealthGraphCore/Sources/HealthGraphCore/Capture/SymptomCatalog.swift` (add one `raw` entry)
+- Modify (test): `HealthGraphCore/Tests/HealthGraphCoreTests/SymptomCatalogTests.swift` (pin the new literal key)
 - Test: `HealthGraphCore/Tests/HealthGraphCoreTests/RedFlagEvaluatorTests.swift`
 - Test: `HealthGraphCore/Tests/HealthGraphCoreTests/RedFlagCatalogTests.swift`
 
@@ -61,7 +64,15 @@
         ("Severe Allergic Reaction", "torso"),
 ```
 
-(Use `"torso"` — the existing catch-all region for whole-body symptoms like "Fatigue"/"Other"; no new region id, so the body-map UI needs no changes.)
+(Use `"torso"` — the existing catch-all region for whole-body symptoms like "Fatigue"/"Other". Note: the HealthOS capture UI is search/chip-based, not a body map, so the entry is reachable by typing "severe/allergic"; `regionId` only matters to the legacy app. No new region id.)
+
+Then pin the derived key in the **existing** `SymptomCatalogTests.swift` (it already asserts literal keys like `canonicalKey(for: "Headache") == "headache"`), adding a stable-literal assertion (not self-referential — a hardcoded expected string):
+
+```swift
+    @Test func severeAllergicReactionKeyIsStable() {
+        #expect(SymptomCatalog.canonicalKey(for: "Severe Allergic Reaction") == "severeAllergicReaction")
+    }
+```
 
 - [ ] **Step 2: Write the failing evaluator + catalog tests.**
 
@@ -73,6 +84,7 @@ import Testing
 struct RedFlagCatalogTests {
     @Test func everyRuleKeyResolvesToARealSymptom() {
         // Drift guard: if a display name is renamed, its derived key must still exist in the catalog.
+        #expect(!RedFlagCatalog.allSymptomKeys.isEmpty)   // non-vacuous: the loop must run
         let catalogKeys = Set(SymptomCatalog.all.map(\.canonicalKey))
         for key in RedFlagCatalog.allSymptomKeys {
             #expect(catalogKeys.contains(key), "red-flag key \(key) is not in SymptomCatalog")
@@ -83,12 +95,15 @@ struct RedFlagCatalogTests {
         let key = SymptomCatalog.canonicalKey(for: "Severe Allergic Reaction")
         #expect(SymptomCatalog.all.contains { $0.canonicalKey == key })
         let rule = RedFlagCatalog.rule(forSymptomKey: key)
+        #expect(rule != nil)
         #expect(rule?.extraGuidance?.contains("epinephrine") == true)
     }
 
     @Test func cardiacRespiratoryRulesHaveNoExtraGuidance() {
         let key = SymptomCatalog.canonicalKey(for: "Chest Pain")
-        #expect(RedFlagCatalog.rule(forSymptomKey: key)?.extraGuidance == nil)
+        let rule = RedFlagCatalog.rule(forSymptomKey: key)
+        #expect(rule != nil)                              // not vacuous if the rule were missing
+        #expect(rule?.extraGuidance == nil)
     }
 }
 ```
@@ -105,6 +120,17 @@ struct RedFlagEvaluatorTests {
         let match = RedFlagEvaluator.evaluate(symptomKey: chestPain, mutedKeys: [])
         #expect(match?.symptomKey == chestPain)
         #expect(match?.category == .medicalEmergency)
+    }
+
+    @Test func allCardiacRespiratorySymptomsMatch() {
+        // Guards against a copy/paste slip dropping one of the six from the rule's array —
+        // the drift guard only checks whatever IS present resolves, not that all six are present.
+        for name in ["Chest Pain", "Lower Chest Pain", "Chest Tightness",
+                     "Upper Chest Tightness", "Breathing Difficulty", "Shortness of Breath"] {
+            let key = SymptomCatalog.canonicalKey(for: name)
+            #expect(RedFlagEvaluator.evaluate(symptomKey: key, mutedKeys: [])?.category == .medicalEmergency,
+                    "\(name) should be a red flag")
+        }
     }
 
     @Test func nonRedFlagKeyDoesNotMatch() {
@@ -219,7 +245,8 @@ git add "HealthGraphCore/Sources/HealthGraphCore/Safety/RedFlagCatalog.swift" \
         "HealthGraphCore/Sources/HealthGraphCore/Safety/RedFlagEvaluator.swift" \
         "HealthGraphCore/Sources/HealthGraphCore/Capture/SymptomCatalog.swift" \
         "HealthGraphCore/Tests/HealthGraphCoreTests/RedFlagEvaluatorTests.swift" \
-        "HealthGraphCore/Tests/HealthGraphCoreTests/RedFlagCatalogTests.swift"
+        "HealthGraphCore/Tests/HealthGraphCoreTests/RedFlagCatalogTests.swift" \
+        "HealthGraphCore/Tests/HealthGraphCoreTests/SymptomCatalogTests.swift"
 git commit -m "feat(core): red-flag catalog + severity-independent evaluator + anaphylaxis symptom"
 ```
 
@@ -341,21 +368,34 @@ import HealthGraphCore
 
 @MainActor
 struct RedFlagPresenterTests {
+    // `SymptomCatalog` is qualified `HealthGraphCore.SymptomCatalog` throughout — the app
+    // target has its own legacy `SymptomCatalog`, so an unqualified reference is AMBIGUOUS
+    // in this dual-import (`import HealthGraphCore` + `@testable import Food_Intolerances`) module.
     private func presenter(mutedKeys: [String] = []) -> RedFlagPresenter {
         let store = RedFlagMuteStore(defaults: UserDefaults(suiteName: "rf-\(UUID().uuidString)")!)
         mutedKeys.forEach(store.mute)
         return RedFlagPresenter(muteStore: store)
     }
-    private func symptom(_ displayName: String) -> HealthEvent {
+    private func key(_ name: String) -> String { HealthGraphCore.SymptomCatalog.canonicalKey(for: name) }
+    private func symptom(_ displayName: String, severity: Double? = nil) -> HealthEvent {
         HealthEvent(timestamp: Date(timeIntervalSince1970: 1_700_000_000),
-                    category: .symptom, subtype: SymptomCatalog.canonicalKey(for: displayName),
-                    source: .manual)
+                    category: .symptom, subtype: key(displayName), value: severity, source: .manual)
     }
 
     @Test func redFlagSymptomSetsPending() {
         let p = presenter()
         p.consider(symptom("Chest Pain"))
-        #expect(p.pending?.symptomKey == SymptomCatalog.canonicalKey(for: "Chest Pain"))
+        #expect(p.pending?.symptomKey == key("Chest Pain"))
+    }
+
+    @Test func firesRegardlessOfSeverity() {
+        // Decision 1 (central): severity-independent. A low, EXPLICIT severity must still fire —
+        // this is the layer where a future dev could wrongly add a severity gate.
+        for severity in [1.0, 5.0, 10.0] {
+            let p = presenter()
+            p.consider(symptom("Chest Pain", severity: severity))
+            #expect(p.pending?.symptomKey == key("Chest Pain"), "severity \(severity) must still fire")
+        }
     }
 
     @Test func nonRedFlagSymptomLeavesPendingNil() {
@@ -365,7 +405,7 @@ struct RedFlagPresenterTests {
     }
 
     @Test func mutedRedFlagLeavesPendingNil() {
-        let p = presenter(mutedKeys: [SymptomCatalog.canonicalKey(for: "Chest Pain")])
+        let p = presenter(mutedKeys: [key("Chest Pain")])
         p.consider(symptom("Chest Pain"))
         #expect(p.pending == nil)
     }
@@ -377,12 +417,31 @@ struct RedFlagPresenterTests {
         #expect(p.pending == nil)
     }
 
-    @Test func muteClearsPendingAndPersists() {
+    @Test func firstCoOccurringRedFlagWins() {
+        // Spec §7.1: co-occurring red-flags show the FIRST; a second consider() before
+        // dismiss must not overwrite the pending match.
         let p = presenter()
         p.consider(symptom("Chest Pain"))
-        p.mute(SymptomCatalog.canonicalKey(for: "Chest Pain"))
+        p.consider(symptom("Severe Allergic Reaction"))
+        #expect(p.pending?.symptomKey == key("Chest Pain"))
+    }
+
+    @Test func firesAgainOnRepeatLogAfterDismiss() {
+        // Decision 4: no hidden throttle — the same symptom fires again after a dismiss.
+        let p = presenter()
+        p.consider(symptom("Chest Pain")); p.dismiss()
+        p.consider(symptom("Chest Pain"))
+        #expect(p.pending != nil)
+    }
+
+    @Test func muteClearsPendingAndSuppressesRepeat() {
+        let p = presenter()
+        p.consider(symptom("Chest Pain"))
+        p.mute(key("Chest Pain"))
         #expect(p.pending == nil)
-        #expect(p.muteStore.isMuted(SymptomCatalog.canonicalKey(for: "Chest Pain")) == true)
+        #expect(p.muteStore.isMuted(key("Chest Pain")) == true)
+        p.consider(symptom("Chest Pain"))          // same instance, now muted → suppressed
+        #expect(p.pending == nil)
     }
 }
 ```
@@ -408,9 +467,11 @@ final class RedFlagPresenter: ObservableObject {
 
     init(muteStore: RedFlagMuteStore) { self.muteStore = muteStore }
 
-    /// Evaluate a just-saved event. Sets `pending` only on a fresh, unmuted red-flag
-    /// symptom; never clears an already-showing takeover.
+    /// Evaluate a just-saved event. Sets `pending` only on a fresh, unmuted red-flag symptom.
+    /// If a takeover is already showing, does nothing — the FIRST co-occurring red-flag wins
+    /// (spec §7.1); an already-visible screen is never overwritten.
     func consider(_ event: HealthEvent) {
+        guard pending == nil else { return }
         guard event.category == .symptom, let key = event.subtype else { return }
         if let match = RedFlagEvaluator.evaluate(symptomKey: key, mutedKeys: muteStore.mutedKeys) {
             pending = match
@@ -522,6 +583,7 @@ git commit -m "feat(app): EmergencyContact (tel/maps URLs) + HealthTheme.danger 
 
 ```swift
 import SwiftUI
+import UIKit
 import HealthGraphCore
 
 /// Full-screen "seek care now" takeover. Non-diagnostic. Presented from the root
@@ -532,7 +594,8 @@ struct RedFlagInterstitialView: View {
     @Environment(\.openURL) private var openURL
     @State private var confirmingMute = false
 
-    private var symptomName: String { SymptomCatalog.displayName(for: match.symptomKey) }
+    // Qualified: the app target has a legacy `SymptomCatalog` that would otherwise shadow this.
+    private var symptomName: String { HealthGraphCore.SymptomCatalog.displayName(for: match.symptomKey) }
 
     var body: some View {
         ScrollView {
@@ -585,6 +648,12 @@ struct RedFlagInterstitialView: View {
             .padding(24)
         }
         .background(HealthTheme.paper.ignoresSafeArea())
+        .onAppear {
+            // Spec §5.4: announce the takeover to VoiceOver (the modal transition may not
+            // auto-announce reliably given the sheet→cover handoff).
+            UIAccessibility.post(notification: .screenChanged,
+                                 argument: "This could be serious. You logged \(symptomName). Consider calling 911.")
+        }
         .alert("Turn off the seek-care reminder for \(symptomName)?", isPresented: $confirmingMute) {
             Button("Turn it off", role: .destructive) { presenter.mute(match.symptomKey) }
             Button("Cancel", role: .cancel) { }
@@ -595,14 +664,14 @@ struct RedFlagInterstitialView: View {
 }
 
 #Preview("Cardiac — light") {
-    RedFlagInterstitialView(match: RedFlagMatch(symptomKey: SymptomCatalog.canonicalKey(for: "Chest Pain"),
+    RedFlagInterstitialView(match: RedFlagMatch(symptomKey: HealthGraphCore.SymptomCatalog.canonicalKey(for: "Chest Pain"),
                                                 category: .medicalEmergency, extraGuidance: nil))
         .environmentObject(RedFlagPresenter(muteStore: RedFlagMuteStore()))
         .preferredColorScheme(.light)
 }
 
 #Preview("Anaphylaxis — dark") {
-    RedFlagInterstitialView(match: RedFlagMatch(symptomKey: SymptomCatalog.canonicalKey(for: "Severe Allergic Reaction"),
+    RedFlagInterstitialView(match: RedFlagMatch(symptomKey: HealthGraphCore.SymptomCatalog.canonicalKey(for: "Severe Allergic Reaction"),
                                                 category: .medicalEmergency,
                                                 extraGuidance: "If you have an epinephrine auto-injector (EpiPen), use it now, then call 911."))
         .environmentObject(RedFlagPresenter(muteStore: RedFlagMuteStore()))
@@ -648,9 +717,11 @@ import HealthGraphCore
 struct RedFlagRemindersView: View {
     @EnvironmentObject private var muteStore: RedFlagMuteStore
 
+    // Qualified: the app target has a legacy `SymptomCatalog` that would otherwise shadow this.
+    private func name(_ key: String) -> String { HealthGraphCore.SymptomCatalog.displayName(for: key) }
     private var keys: [String] {
         RedFlagCatalog.allSymptomKeys.sorted {
-            SymptomCatalog.displayName(for: $0).localizedCaseInsensitiveCompare(SymptomCatalog.displayName(for: $1)) == .orderedAscending
+            name($0).localizedCaseInsensitiveCompare(name($1)) == .orderedAscending
         }
     }
 
@@ -658,7 +729,7 @@ struct RedFlagRemindersView: View {
         List {
             Section {
                 ForEach(keys, id: \.self) { key in
-                    Toggle(SymptomCatalog.displayName(for: key), isOn: Binding(
+                    Toggle(name(key), isOn: Binding(
                         get: { !muteStore.isMuted(key) },
                         set: { on in on ? muteStore.unmute(key) : muteStore.mute(key) }
                     ))
@@ -676,15 +747,25 @@ struct RedFlagRemindersView: View {
 }
 ```
 
-- [ ] **Step 2: Add the "Safety reminders" row to `HealthTabView.swift`.** Read the file first; add, next to the existing "Open legacy app" / "Health Graph Debug" rows (a normal, non-`#if DEBUG` row), matching the file's existing row style:
+- [ ] **Step 2: Add the "Safety reminders" row AND gate the legacy bypass in `HealthTabView.swift`.** Two changes — the second closes the bypass the audit found (a user could reach the legacy symptom logger via "Open legacy app," and that path never fires the interstitial).
+
+  **(a) Add "Safety reminders"** as the FIRST row of the `.hgCard()`'d `VStack(spacing: 0)` (the one currently holding "Open legacy app" + the `#if DEBUG` "Health Graph Debug" row), followed by a `Divider().padding(.leading, 16)`, matching that file's row idiom:
 
 ```swift
-NavigationLink(destination: RedFlagRemindersView()) {
-    Label("Safety reminders", systemImage: "exclamationmark.shield")
+NavigationLink {
+    RedFlagRemindersView()
+} label: {
+    HStack {
+        Image(systemName: "exclamationmark.shield").foregroundStyle(HealthTheme.accent)
+        Text("Safety reminders").foregroundStyle(HealthTheme.ink)
+        Spacer()
+        Image(systemName: "chevron.right").font(.footnote).foregroundStyle(HealthTheme.inkMuted)
+    }
+    .padding(16).contentShape(Rectangle())
 }
 ```
 
-(If the file's rows use a different wrapper — e.g. a custom row view — match that instead; the goal is a tapping row that pushes `RedFlagRemindersView`.)
+  **(b) Gate "Open legacy app" behind `#if DEBUG`** so release builds have no user-reachable path to the legacy symptom logger (the chosen "gate the entry point" decision). Wrap **all three** in `#if DEBUG` / `#endif`: the `@State private var showingLegacyApp = false` declaration (line 4), the "Open legacy app" `Button { showingLegacyApp = true } label: { ... }` (lines ~50–66), and the `.fullScreenCover(isPresented: $showingLegacyApp) { MainTabView()... }` (lines ~93–110). It stays available in DEBUG for development (beside the existing `#if DEBUG` "Health Graph Debug" row); in release it's gone. Fix the surrounding `Divider()`s so neither build config leaves a dangling separator.
 
 - [ ] **Step 3: Build and confirm.**
 
@@ -694,7 +775,7 @@ Run: `xcodebuild build -project "Food Intolerances.xcodeproj" -scheme "Food Into
 
 ```bash
 git add "Views/HealthOS/Safety/RedFlagRemindersView.swift" "Views/HealthOS/Health/HealthTabView.swift"
-git commit -m "feat(app): Safety reminders settings — per-symptom red-flag mute toggles"
+git commit -m "feat(app): Safety reminders settings + gate legacy-app bypass behind #if DEBUG"
 ```
 
 ---
@@ -711,19 +792,21 @@ git commit -m "feat(app): Safety reminders settings — per-symptom red-flag mut
 
 *Integration — no new unit test (behavior verified end-to-end in Task 8). Build-verified here.*
 
-> **Voice note (spec §5):** there is no voice-parsed symptom-capture pipeline today — the only voice code is a legacy dictation-to-notes field (`VoiceInputView.swift`), unused by the HealthOS capture flow. All interactive symptom entry funnels through `CaptureSheet.logged` (this hook) and `CaptureService.logSymptom`, so the single hook covers every present modality. The spec's "voice" firing is therefore covered vacuously; any future voice symptom capture must route through this same choke point to inherit the check. Not a gap.
+> **Coverage note (spec §5):** there is no voice-parsed symptom-capture pipeline today — the only voice code is a legacy dictation-to-notes field (`VoiceInputView.swift`), unused by the HealthOS capture flow — so the spec's "voice" firing is covered vacuously; any future voice symptom capture must route through `CaptureSheet.logged` / `CaptureService.logSymptom` to inherit the check. **The one real bypass** the audit found — the legacy app's own symptom logger (reachable via "Open legacy app" → the old "+"), which writes SwiftData `LogEntry`s without ever touching `CaptureService`/`HealthEvent` — is closed this cycle by gating its entry point behind `#if DEBUG` (Task 6 Step 2b), so release builds have no user-reachable path that skips the safety net.
 
-- [ ] **Step 1: Inject at the app root.** In `FoodIntolerancesApp.swift`, add an `init()` that constructs one shared `RedFlagMuteStore` and hands it to a `RedFlagPresenter` (so Settings and the presenter mutate the same instance). Add the two `@StateObject` declarations (without inline initializers) alongside the existing ones, and add an `init`:
+- [ ] **Step 1: Inject at the app root.** `FoodIntolerancesApp` **already defines an `init()`** (registers value transformers, requests notifications, etc.) — do NOT add a second `init` (that is an "invalid redeclaration of 'init()'"). Declare the two new `@StateObject`s **without** inline initializers, alongside the existing ones:
 
 ```swift
     @StateObject private var redFlagMuteStore: RedFlagMuteStore
     @StateObject private var redFlagPresenter: RedFlagPresenter
+```
 
-    init() {
+and add these three lines **into the existing `init()` body** (one shared `RedFlagMuteStore`, so Settings and the presenter mutate the same instance):
+
+```swift
         let muteStore = RedFlagMuteStore()
         _redFlagMuteStore = StateObject(wrappedValue: muteStore)
         _redFlagPresenter = StateObject(wrappedValue: RedFlagPresenter(muteStore: muteStore))
-    }
 ```
 
 Then add both into the existing `.environmentObject(...)` chain on `HealthOSRootView()` (next to `.environmentObject(captureCoordinator)`):
@@ -733,7 +816,16 @@ Then add both into the existing `.environmentObject(...)` chain on `HealthOSRoot
                     .environmentObject(redFlagPresenter)
 ```
 
-(The other `@StateObject`s keep their inline initializers; only the two new ones are set in `init`.)
+(The other `@StateObject`s keep their inline initializers — they don't need to be set in `init`. `App.init` runs on the MainActor, so constructing the `@MainActor` stores there is fine.)
+
+Finally, attach the takeover cover to `HealthOSRootView()` **here at the app level** — NOT inside `HealthOSRootView`. The capture `.sheet` lives inside `HealthOSRootView`; presenting the cover from a *different* anchor (the app scene) avoids the same-anchor "attempt to present while a presentation is in progress" race that dropping the cover would cause. Add, after the `.environmentObject(...)` chain and before `.modelContainer(...)`:
+
+```swift
+                    .fullScreenCover(item: $redFlagPresenter.pending) { match in
+                        RedFlagInterstitialView(match: match)
+                            .environmentObject(redFlagPresenter)   // insurance vs env-inheritance edge cases
+                    }
+```
 
 - [ ] **Step 2: Hook the capture choke point.** In `CaptureSheet.swift`, add the presenter env object next to the coordinator:
 
@@ -753,24 +845,21 @@ and call it at the end of `logged(_:)` (after `coordinator.saveCompleted()`):
     }
 ```
 
-- [ ] **Step 3: Present the takeover from the root.** In `HealthOSRootView.swift`, add the presenter env object:
+- [ ] **Step 3: Close the capture sheet when a red flag fires.** The cover itself is presented at the app level (Step 1); this step only makes the capture sheet get out of the way. In `HealthOSRootView.swift`, add the presenter env object:
 
 ```swift
     @EnvironmentObject private var redFlagPresenter: RedFlagPresenter
 ```
 
-and, on the body's `VStack` (beside the existing `.sheet` modifier), dismiss the capture sheet when a red flag arrives, then present the cover above everything:
+and, on the body's `VStack` (beside the existing `.sheet` modifier), close the capture sheet whenever a red flag arrives:
 
 ```swift
         .onChange(of: redFlagPresenter.pending) { _, match in
-            if match != nil { showingCapture = false }   // let the sheet close, then the cover shows
-        }
-        .fullScreenCover(item: $redFlagPresenter.pending) { match in
-            RedFlagInterstitialView(match: match)
+            if match != nil { showingCapture = false }   // symptom saved; dismiss capture, app-level cover takes over
         }
 ```
 
-(`RedFlagInterstitialView` reads `RedFlagPresenter` from the environment, which the cover inherits.)
+(`consider(_:)` is only ever called from `CaptureSheet.logged`, so the capture sheet is always open when `pending` becomes non-nil — this reliably closes it, and the app-level cover then sits above the root.)
 
 - [ ] **Step 4: Build.**
 
@@ -802,14 +891,19 @@ git commit -m "feat(app): wire red-flag takeover — root injection + capture ho
   - App build succeeds.
 
 - [ ] **Step 2: On-device / simulator behavior check** (device preferred, given simulator gesture-automation limits). Drive the capture flow and confirm:
-  - Log **Chest Pain** (any severity) → the "seek care now" takeover appears above the tab bar; **Call 911** is the red primary; **Find nearest ER** opens Maps; **Dismiss** returns to the app. The symptom was still saved (visible in Timeline).
+  - Log **Chest Pain** at a **low** severity (e.g. 2/10) → the "seek care now" takeover still appears above the tab bar (severity-independence); **Call 911** is the red primary; **Find nearest ER** opens Maps; **Dismiss** returns to the app. The symptom was still saved (visible in Timeline).
+  - The takeover appears **cleanly** as the capture sheet closes — no flicker, no dropped/tap-again presentation (the sheet→cover handoff spec §7.1 flagged as a race).
+  - With **VoiceOver on**, the takeover is announced on appear (spec §5.4) — not silent.
   - Log **Severe Allergic Reaction** → takeover shows the epinephrine line.
   - Log **Headache** → no takeover (saves normally).
   - On the takeover, **Stop reminding me about Chest Pain** → confirm → dismiss; log Chest Pain again → **no** takeover.
   - **Settings → Safety reminders** → Chest Pain toggle is OFF; turn it back ON → log Chest Pain → takeover returns.
+  - **Backfill / import** a historical Chest Pain (HealthKit backfill via the debug view, or a legacy/CSV import) → **no** takeover (decision 5 — only live interactive logs fire).
   - Light + dark both correct; XXL Dynamic Type doesn't clip (actions scroll).
 
-- [ ] **Step 3: Record observed behavior** in the review notes / ledger.
+- [ ] **Step 3: Verify the legacy bypass is gated out of release.** The device runs a DEBUG build where "Open legacy app" is intentionally still present (dev access), so confirm the gate two ways: (a) code review that the "Open legacy app" button + `showingLegacyApp` state + its `.fullScreenCover` in `HealthTabView.swift` are wrapped in `#if DEBUG`; (b) a Release build — `xcodebuild build -project "Food Intolerances.xcodeproj" -scheme "Food Intolerances" -configuration Release -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -quiet` — the Health tab has no "Open legacy app" row, so no user-reachable path to the legacy symptom logger exists.
+
+- [ ] **Step 4: Record observed behavior** in the review notes / ledger.
 
 ---
 
@@ -818,6 +912,6 @@ git commit -m "feat(app): wire red-flag takeover — root injection + capture ho
 - Logging a red-flag symptom (severity-independent) via live capture triggers a full-screen, non-diagnostic "seek care now" takeover above all UI, with **Call 911** (regionalizable constant), **Find nearest ER**, and **Dismiss**; the symptom is saved first.
 - Anaphylaxis ("Severe Allergic Reaction," a new catalog entry) adds the epinephrine-first guidance line.
 - Opt-in per-symptom muting: guarded from the interstitial, directly toggleable in **Settings → Safety reminders**; muted symptoms don't fire; one shared source of truth (`RedFlagMuteStore`, UserDefaults, never health-graph data).
-- Fires only on interactive symptom capture — never import/backfill/HealthKit sync/edits.
+- Fires only on interactive symptom capture — never import/backfill/HealthKit sync/edits. The legacy app's symptom logger (a real bypass) is gated behind `#if DEBUG`, so release builds have no user-reachable path around the safety net.
 - Pure evaluator + catalog unit-tested (incl. the rename drift guard); mute store + presenter unit-tested; views build + preview verified; end-to-end confirmed on device.
 - No self-harm/mental-health crisis flow (future round); no telemetry; no changes to the evidence engine, extraction, scoring, migrations, or the Insights surface.
