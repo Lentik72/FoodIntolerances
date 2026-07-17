@@ -39,6 +39,12 @@ final class InsightsViewModel: ObservableObject {
 
     func dismiss(_ card: InsightCardModel) async {
         guard var r = try? await relStore.relationship(id: card.id) else { return }
+        // Only active/no-effect edges are dismissable (mirrors InsightsFeed.build's section
+        // split) — belt-and-suspenders against re-suppressing an already-archived edge
+        // (e.g. .decayed → .userDismissed would permanently hide a signal that could
+        // otherwise re-activate on a future recompute). The hidden Dismiss button on
+        // archive cards is the primary fix; this guard is defense in depth.
+        guard r.status == .active || r.status == .confirmedNoEffect else { return }
         pendingUndo = PendingUndo(id: r.id, priorStatus: r.status)   // capture for undo
         r.status = .userDismissed
         try? await relStore.save(r)

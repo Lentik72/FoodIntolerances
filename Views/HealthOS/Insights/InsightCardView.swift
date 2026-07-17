@@ -3,7 +3,7 @@ import HealthGraphCore
 
 struct InsightCardView: View {
     let card: InsightCardModel
-    let onDismiss: () -> Void
+    let onDismiss: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -41,11 +41,13 @@ struct InsightCardView: View {
                     Text("All evidence →").font(.subheadline.weight(.medium)).foregroundStyle(HealthTheme.accent)
                 }
                 Spacer()
-                Button("Dismiss", action: onDismiss)
-                    .font(.subheadline)
-                    .foregroundStyle(HealthTheme.inkMuted)
-                    .frame(minWidth: 44, minHeight: 44)
-                    .contentShape(Rectangle())
+                if let onDismiss {
+                    Button("Dismiss", action: onDismiss)
+                        .font(.subheadline)
+                        .foregroundStyle(HealthTheme.inkMuted)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
+                }
             }
         }
         .padding(16).frame(maxWidth: .infinity, alignment: .leading).hgCard()

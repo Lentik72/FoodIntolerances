@@ -95,12 +95,12 @@ struct InsightsView: View {
         }
     }
 
-    private func cardsStack(_ cards: [InsightCardModel]) -> some View {
+    private func cardsStack(_ cards: [InsightCardModel], dismissable: Bool = true) -> some View {
         VStack(spacing: 12) {
             ForEach(cards) { card in
-                InsightCardView(card: card) {
+                InsightCardView(card: card, onDismiss: dismissable ? {
                     Task { await vm.dismiss(card) }
-                }
+                } : nil)
             }
         }
     }
@@ -131,7 +131,7 @@ struct InsightsView: View {
             .accessibilityValue(archiveExpanded ? "Expanded" : "Collapsed")
             .accessibilityAddTraits(.isButton)
             if archiveExpanded {
-                cardsStack(cards)
+                cardsStack(cards, dismissable: false)
             }
         }
     }
