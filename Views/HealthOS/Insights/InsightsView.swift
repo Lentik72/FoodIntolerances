@@ -164,19 +164,6 @@ struct InsightsView: View {
     }
 }
 
-// Task 7 builds this out — full evidence(for:) drill-down (itemized rows incl. misses,
-// confounder warnings, raw numbers). Minimal stub here only so InsightsView's
-// `.navigationDestination(for: UUID.self)` compiles.
-struct InsightDetailView: View {
-    let relationshipID: UUID
-    var body: some View {
-        Text("Evidence detail coming soon.")
-            .font(.subheadline)
-            .foregroundStyle(HealthTheme.inkSecondary)
-            .navigationTitle("Evidence")
-    }
-}
-
 #Preview("Insights — light") {
     InsightsView()
         .environmentObject(CaptureCoordinator())
