@@ -183,6 +183,7 @@ public enum SymptomCatalog {
 
         // Other
         ("Other", "torso"),
+        ("Severe Allergic Reaction", "torso"),
     ]
 
     public static let all: [SymptomDefinition] = {

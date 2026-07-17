@@ -23,4 +23,7 @@ struct SymptomCatalogTests {
         #expect(SymptomCatalog.displayName(for: "headache") == "Headache")
         #expect(SymptomCatalog.displayName(for: "sinusPain") == "Sinus Pain")
     }
+    @Test func severeAllergicReactionKeyIsStable() {
+        #expect(SymptomCatalog.canonicalKey(for: "Severe Allergic Reaction") == "severeAllergicReaction")
+    }
 }
