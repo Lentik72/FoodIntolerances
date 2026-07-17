@@ -33,15 +33,36 @@ struct InsightCardView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(cardAccessibilityLabel)
+            .accessibilityHint("Opens details")
             HStack {
                 NavigationLink(value: card.id) {
                     Text("All evidence →").font(.subheadline.weight(.medium)).foregroundStyle(HealthTheme.accent)
                 }
                 Spacer()
-                Button("Dismiss", action: onDismiss).font(.subheadline).foregroundStyle(HealthTheme.inkMuted)
+                Button("Dismiss", action: onDismiss)
+                    .font(.subheadline)
+                    .foregroundStyle(HealthTheme.inkMuted)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
             }
         }
         .padding(16).frame(maxWidth: .infinity, alignment: .leading).hgCard()
+    }
+
+    /// Combined VoiceOver stop for the card's NavigationLink label (icon + claim +
+    /// countLine + dots + subline) — mirrors TimelineEventRow/SleepSessionRow's
+    /// single-element-per-row convention instead of exposing each subview separately.
+    private var cardAccessibilityLabel: String {
+        var parts = [card.claim]
+        if let countLine = card.countLine { parts.append(countLine) }
+        if !card.recentDots.isEmpty {
+            let followed = card.recentDots.filter { $0 }.count
+            parts.append("\(followed) of \(card.recentDots.count) followed")
+        }
+        if let sub = card.subline { parts.append(sub) }
+        return parts.joined(separator: ", ")
     }
 }
 
