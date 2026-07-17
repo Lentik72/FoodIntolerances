@@ -2,6 +2,7 @@ import Foundation
 
 /// Which red-flag reminders the user has turned off. App preference state — never
 /// health-graph data, never synced, never in a report.
+@MainActor
 protocol RedFlagMuteStoring: AnyObject {
     var mutedKeys: Set<String> { get }
     func mute(_ key: String)
