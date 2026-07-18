@@ -135,7 +135,7 @@ Add the accessor (next to `allSymptomKeys`):
 - [ ] **Step 5: Run to verify they pass, then the full package suite.**
 
 Run: `cd HealthGraphCore && swift test --filter "RedFlag|SymptomCatalog" 2>&1 | tail -6` → PASS.
-Run: `cd HealthGraphCore && swift test 2>&1 | tail -3` → full suite passes (was 213; +4 new).
+Run: `cd HealthGraphCore && swift test 2>&1 | tail -3` → full suite passes (was 213; **+5 new** → 218: 1 in SymptomCatalogTests, 3 in RedFlagCatalogTests, 1 in RedFlagEvaluatorTests).
 
 - [ ] **Step 6: Commit.**
 
@@ -247,7 +247,7 @@ struct CrisisSupportView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 Text("You're not alone")
-                    .font(.system(.largeTitle, design: .serif, weight: .bold))
+                    .font(.system(.largeTitle, design: .serif, weight: .semibold))  // softer than the medical screen's bold — this one is calm
                     .foregroundStyle(HealthTheme.ink)
 
                 Text("Thank you for noticing this and writing it down — that takes real strength. If you're thinking about harming yourself, talking to someone can help, and hard moments can pass. The **988 Suicide & Crisis Lifeline** has trained counselors, free and confidential, any time.")
@@ -321,17 +321,33 @@ git commit -m "feat(app): CrisisSupportView — warm 988 crisis-support takeover
 
 ---
 
-### Task 4: Route the cover on category
+### Task 4: Prove the crisis category flows, then route the cover
 
 **Files:**
-- Modify: `FoodIntolerancesApp.swift:100-101`
+- Modify (test): `Food IntolerancesTests/RedFlagPresenterTests.swift`
+- Modify: `FoodIntolerancesApp.swift:100-103`
 
 **Interfaces:**
-- Consumes: `RedFlagInterstitialView` (existing), `CrisisSupportView` (Task 3), `RedFlagMatch.category`.
+- Consumes: `RedFlagPresenter.consider`/`pending` (existing), `RedFlagInterstitialView` (existing), `CrisisSupportView` (Task 3), `RedFlagMatch.category`.
 
-*Integration — build + regression verified; behavior in Task 5.*
+*Integration. Step 1's presenter test locks the safety-critical crisis→category seam the cover switch depends on (which safety screen a suicidal user sees); the view routing is build- and device-verified.*
 
-- [ ] **Step 1: Branch the app-level cover on `match.category`.** Replace the current cover closure (`FoodIntolerancesApp.swift:100-103`):
+- [ ] **Step 1: Lock the crisis→category seam (safety-critical).** Add to the existing `Food IntolerancesTests/RedFlagPresenterTests.swift` (dual-import → `SymptomCatalog` must be `HealthGraphCore.SymptomCatalog`; reuses the file's existing `presenter()` / `symptom(_:)` / `key(_:)` helpers) a regression test proving a crisis-symptom log produces a `.mentalHealthCrisis` match — the exact fact the cover switch (Step 2) routes on:
+
+```swift
+    @Test func crisisSymptomSetsPendingWithMentalHealthCrisisCategory() {
+        let p = presenter()
+        p.consider(symptom("Thoughts of self-harm or suicide"))
+        #expect(p.pending?.symptomKey == key("Thoughts of self-harm or suicide"))
+        #expect(p.pending?.category == .mentalHealthCrisis)
+    }
+```
+
+This **passes as soon as Task 1's crisis rule exists** (the presenter is category-agnostic — it copies the evaluator's match into `pending`), so it is a *regression lock*: a future `consider()` edit that reconstructed the match or dropped the category would silently route a crisis log to the 911 medical screen, and this test — not just manual QA — would catch it.
+
+Run: `xcodebuild test -project "Food Intolerances.xcodeproj" -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/RedFlagPresenterTests" -parallel-testing-enabled NO 2>&1 | grep -E "Test run with|✘ Test|TEST (SUCCEEDED|FAILED)" | tail -4` → `** TEST SUCCEEDED **`, all `RedFlagPresenterTests` pass (the existing ones + the new crisis case).
+
+- [ ] **Step 2: Branch the app-level cover on `match.category`.** Replace the current cover closure (`FoodIntolerancesApp.swift:100-103`):
 
 ```swift
                 .fullScreenCover(item: $redFlagPresenter.pending) { match in
@@ -346,21 +362,21 @@ git commit -m "feat(app): CrisisSupportView — warm 988 crisis-support takeover
                 }
 ```
 
-- [ ] **Step 2: Build.**
+- [ ] **Step 3: Build.**
 
 Run: `xcodebuild build -project "Food Intolerances.xcodeproj" -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -quiet 2>&1 | tail -8`
 Expected: build succeeds (the `switch` is now exhaustive over both categories).
 
-- [ ] **Step 3: Confirm no regression.**
+- [ ] **Step 4: Confirm no regression.**
 
 Run: `cd HealthGraphCore && swift test 2>&1 | tail -3` → package suite green.
 Run: `xcodebuild test -project "Food Intolerances.xcodeproj" -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/RedFlagPresenterTests" -only-testing:"Food IntolerancesTests/RedFlagMuteStoreTests" -only-testing:"Food IntolerancesTests/CrisisContactTests" -parallel-testing-enabled NO 2>&1 | grep -E "Test run with|TEST (SUCCEEDED|FAILED)" | tail -3` → all green.
 
-- [ ] **Step 4: Commit.**
+- [ ] **Step 5: Commit.**
 
 ```bash
-git add "FoodIntolerancesApp.swift"
-git commit -m "feat(app): route red-flag cover on category — crisis → CrisisSupportView"
+git add "FoodIntolerancesApp.swift" "Food IntolerancesTests/RedFlagPresenterTests.swift"
+git commit -m "feat(app): route red-flag cover on category — crisis → CrisisSupportView (+ presenter crisis-path lock)"
 ```
 
 ---
