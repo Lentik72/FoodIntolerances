@@ -74,7 +74,7 @@ struct RedFlagInterstitialView: View {
             Button("Turn it off", role: .destructive) { presenter.mute(match.symptomKey) }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("You'll still be able to log it — you just won't see this screen. You can turn it back on anytime in Settings → Safety reminders.")
+            Text("You'll still be able to log it — you just won't see this screen. You can turn it back on anytime in Health → Safety reminders.")
         }
     }
 }
