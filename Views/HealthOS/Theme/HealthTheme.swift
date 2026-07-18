@@ -17,6 +17,10 @@ enum HealthTheme {
     static let dotMiss     = dyn(light: 0xD8D2C6, dark: 0x4A463C)
     /// Content drawn on top of the accent fill (buttons, the capture [+]).
     static let onAccent = dyn(light: 0xFFFFFF, dark: 0xFFFFFF)
+    /// Urgent/emergency action fill — the red-flag "Call 911" primary. Reuses the
+    /// severe-severity terracotta for palette consistency. Emergencies ONLY.
+    static let danger   = dyn(light: 0xC0442E, dark: 0xD65C44)
+    static let onDanger = dyn(light: 0xFFFFFF, dark: 0xFFFFFF)
 
     // MARK: type — semantic styles only, so Dynamic Type scales everything
     static func screenTitle() -> Font { .system(.largeTitle, design: .serif, weight: .semibold) }
