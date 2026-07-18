@@ -10,7 +10,7 @@ struct RedFlagRemindersView: View {
     // Qualified: the app target has a legacy `SymptomCatalog` that would otherwise shadow this.
     private func name(_ key: String) -> String { HealthGraphCore.SymptomCatalog.displayName(for: key) }
     private var keys: [String] {
-        RedFlagCatalog.allSymptomKeys.sorted {
+        RedFlagCatalog.mutableSymptomKeys.sorted {
             name($0).localizedCaseInsensitiveCompare(name($1)) == .orderedAscending
         }
     }
