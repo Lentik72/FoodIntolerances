@@ -40,4 +40,11 @@ struct RedFlagEvaluatorTests {
         let match = RedFlagEvaluator.evaluate(symptomKey: key, mutedKeys: [])
         #expect(match?.category == .mentalHealthCrisis)
     }
+
+    @Test func crisisSymptomFiresEvenIfSomehowMuted() {
+        // Structural guarantee: a crisis prompt is un-suppressible at the evaluator level.
+        let key = SymptomCatalog.canonicalKey(for: "Thoughts of self-harm or suicide")
+        let match = RedFlagEvaluator.evaluate(symptomKey: key, mutedKeys: [key])
+        #expect(match?.category == .mentalHealthCrisis)
+    }
 }
