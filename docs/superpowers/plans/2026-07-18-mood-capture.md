@@ -59,6 +59,7 @@
 - [ ] **Step 1: Write the failing tests.** `MoodScaleTests.swift`:
 
 ```swift
+import Foundation
 import Testing
 @testable import HealthGraphCore
 
@@ -85,6 +86,8 @@ Add a `logMood` test to `MoodScaleTests.swift` (package, in-memory DB):
         #expect(event.subtype == "mood")
         #expect(event.value == 4)
         #expect(event.source == .manual)
+        let dict = try JSONDecoder().decode([String: String].self, from: #require(event.metadata))
+        #expect(dict["note"] == "sunny walk")   // note round-trips into metadata
         let all = try await GRDBEventStore(database: db).recentEvents(limit: 10)
         #expect(all.contains { $0.id == event.id })
     }
@@ -253,6 +256,7 @@ git commit -m "feat(core): EventDisplay renders mood events as 'Mood: <level>'"
 - Modify: `Views/HealthOS/Capture/CaptureType.swift` (add `.mood`)
 - Modify: `Views/HealthOS/Capture/CaptureSheet.swift` (add the `.mood` switch arm)
 - Create: `Views/HealthOS/Capture/MoodCaptureView.swift`
+- Modify (test): `Food IntolerancesTests/RedFlagPresenterTests.swift` (lock mood ≠ red-flag)
 
 **Interfaces:**
 - Consumes: `MoodLevel`, `CaptureService.logMood` (Task 1); the sheet's `onLogged`/`$timestamp`.
@@ -335,17 +339,31 @@ struct MoodCaptureView: View {
                 case .mood: MoodCaptureView(timestamp: $timestamp, onLogged: logged)
 ```
 
-- [ ] **Step 4: Build + confirm.**
+- [ ] **Step 4: Lock the "mood never fires a red flag" guarantee.** The Mood tab routes through `CaptureSheet.logged`, which calls `redFlagPresenter.consider(event)` for every capture type. `consider` guards on `event.category == .symptom`, so a mood event is a no-op — add a regression test to the existing `Food IntolerancesTests/RedFlagPresenterTests.swift` (reuses its `presenter()` helper) locking that:
+
+```swift
+    @Test func moodEventNeverTriggersRedFlag() {
+        let p = presenter()
+        p.consider(HealthEvent(timestamp: Date(timeIntervalSince1970: 1_700_000_000),
+                               category: .mood, subtype: "mood", value: 1, source: .manual))
+        #expect(p.pending == nil)
+    }
+```
+
+It passes immediately (regression lock — a future `consider` change can't route "Awful" mood to a crisis screen).
+
+- [ ] **Step 5: Build + confirm.**
 
 Run: `xcodebuild build -project "Food Intolerances.xcodeproj" -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -quiet 2>&1 | tail -8`
 Expected: build succeeds; the sheet now has a Mood tab; the preview renders five faces + note field.
+Run the safety test: `xcodebuild test -project "Food Intolerances.xcodeproj" -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/RedFlagPresenterTests" -parallel-testing-enabled NO 2>&1 | grep -E "Test run with|TEST (SUCCEEDED|FAILED)" | tail -3` → all pass (incl. the new mood case).
 
-- [ ] **Step 5: Commit.**
+- [ ] **Step 6: Commit.**
 
 ```bash
 git add "Views/HealthOS/Capture/CaptureType.swift" "Views/HealthOS/Capture/CaptureSheet.swift" \
-        "Views/HealthOS/Capture/MoodCaptureView.swift"
-git commit -m "feat(app): Mood capture-sheet tab — five-level picker + optional note"
+        "Views/HealthOS/Capture/MoodCaptureView.swift" "Food IntolerancesTests/RedFlagPresenterTests.swift"
+git commit -m "feat(app): Mood capture-sheet tab — five-level picker + optional note (+ mood≠red-flag lock)"
 ```
 
 ---
@@ -371,22 +389,42 @@ import HealthGraphCore
 
 @MainActor
 struct MoodCheckInModelTests {
+    private var utcCal: Calendar {
+        var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "UTC")!; return c
+    }
+    // A fixed "today" at 12:00 UTC — the +1h/+2h offsets below stay within the same UTC day.
+    private var noon: Date { utcCal.date(from: DateComponents(year: 2024, month: 6, day: 1, hour: 12))! }
     private func model(_ db: AppDatabase, at t: Date) -> MoodCheckInModel {
         MoodCheckInModel(database: db,
                          defaults: UserDefaults(suiteName: "mood-\(UUID().uuidString)")!,
-                         now: { t })
+                         calendar: utcCal, now: { t })
     }
-    private let noon = Date(timeIntervalSince1970: 1_700_000_000)   // fixed "today"
 
     @Test func logThenLoadShowsTodaysMood() async throws {
         let db = try AppDatabase.inMemory()
         let m = model(db, at: noon)
         await m.log(.good)
         #expect(m.todaysMood?.level == .good)
-        // A fresh model on the same DB/day loads it back:
-        let m2 = model(db, at: noon)
+        let m2 = model(db, at: noon)         // a fresh model on the same DB/day loads it back
         await m2.load()
         #expect(m2.todaysMood?.level == .good)
+    }
+
+    @Test func latestOfMultipleLogsTodayWins() async throws {
+        let db = try AppDatabase.inMemory()
+        await model(db, at: noon).log(.awful)
+        await model(db, at: noon.addingTimeInterval(3600)).log(.good)   // later, same day
+        let fresh = model(db, at: noon.addingTimeInterval(7200))
+        await fresh.load()
+        #expect(fresh.todaysMood?.level == .good)   // latest by timestamp, not first-logged
+    }
+
+    @Test func previousDaysMoodDoesNotCountAsToday() async throws {
+        let db = try AppDatabase.inMemory()
+        await model(db, at: noon).log(.good)
+        let tomorrow = model(db, at: noon.addingTimeInterval(24 * 3600))
+        await tomorrow.load()
+        #expect(tomorrow.todaysMood == nil)
     }
 
     @Test func undoRemovesTodaysMood() async throws {
@@ -399,17 +437,16 @@ struct MoodCheckInModelTests {
 
     @Test func dismissForTodayPersistsPerDay() {
         let db = try AppDatabase.inMemory()
-        let suite = "mood-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        let m = MoodCheckInModel(database: db, defaults: defaults, now: { noon })
+        let defaults = UserDefaults(suiteName: "mood-\(UUID().uuidString)")!
+        func mk(_ t: Date) -> MoodCheckInModel {
+            MoodCheckInModel(database: db, defaults: defaults, calendar: utcCal, now: { t })
+        }
+        let m = mk(noon)
         #expect(m.dismissedToday == false)
         m.dismissForToday()
         #expect(m.dismissedToday == true)
-        // A new model instance on the same day sees the dismissal…
-        #expect(MoodCheckInModel(database: db, defaults: defaults, now: { noon }).dismissedToday == true)
-        // …but the next day it's cleared:
-        let tomorrow = noon.addingTimeInterval(24 * 3600)
-        #expect(MoodCheckInModel(database: db, defaults: defaults, now: { tomorrow }).dismissedToday == false)
+        #expect(mk(noon).dismissedToday == true)                                // same day sees it
+        #expect(mk(noon.addingTimeInterval(24 * 3600)).dismissedToday == false)  // next day cleared
     }
 }
 ```
@@ -433,30 +470,34 @@ final class MoodCheckInModel: ObservableObject {
     private let capture: CaptureService
     private let store: GRDBEventStore
     private let defaults: UserDefaults
+    private let calendar: Calendar   // injectable so "today" is timezone-deterministic in tests
     private let now: () -> Date
     private var lastLoggedID: UUID?
     private static let dismissKey = "hg.home.moodDismissedDay"
 
-    init(database: AppDatabase, defaults: UserDefaults = .standard, now: @escaping () -> Date = Date.init) {
+    init(database: AppDatabase, defaults: UserDefaults = .standard,
+         calendar: Calendar = .current, now: @escaping () -> Date = Date.init) {
         self.capture = CaptureService(database: database)
         self.store = GRDBEventStore(database: database)
         self.defaults = defaults
+        self.calendar = calendar
         self.now = now
-        self.dismissedToday = (defaults.string(forKey: Self.dismissKey) == Self.dayKey(now()))
+        self.dismissedToday = (defaults.string(forKey: Self.dismissKey) == Self.dayKey(now(), calendar))
     }
 
-    private static func dayKey(_ date: Date) -> String {
-        let c = Calendar.current.dateComponents([.year, .month, .day], from: date)
+    // Static (takes the calendar) so it's callable while `self` is still initializing.
+    private static func dayKey(_ date: Date, _ calendar: Calendar) -> String {
+        let c = calendar.dateComponents([.year, .month, .day], from: date)
         return "\(c.year ?? 0)-\(c.month ?? 0)-\(c.day ?? 0)"
     }
     private var todayInterval: DateInterval {
-        let start = Calendar.current.startOfDay(for: now())
+        let start = calendar.startOfDay(for: now())
         return DateInterval(start: start, end: start.addingTimeInterval(24 * 3600))
     }
 
     /// Load the latest mood logged today (so the confirmed state survives app relaunch within the day).
     func load() async {
-        dismissedToday = (defaults.string(forKey: Self.dismissKey) == Self.dayKey(now()))
+        dismissedToday = (defaults.string(forKey: Self.dismissKey) == Self.dayKey(now(), calendar))
         let events = (try? await store.events(in: todayInterval, category: .mood)) ?? []
         if let latest = events.max(by: { $0.timestamp < $1.timestamp }),
            let v = latest.value, let level = MoodLevel(rawValue: Int(v)) {
@@ -481,7 +522,7 @@ final class MoodCheckInModel: ObservableObject {
     }
 
     func dismissForToday() {
-        defaults.set(Self.dayKey(now()), forKey: Self.dismissKey)
+        defaults.set(Self.dayKey(now(), calendar), forKey: Self.dismissKey)
         dismissedToday = true
     }
 }
@@ -580,19 +621,32 @@ git commit -m "feat(app): Home 'How are you feeling?' quick-check — one-tap mo
 
 - [ ] **Step 1: Write the failing test.** Add to `InsightsFeedTests.swift` (read the file first to reuse its `ResolvedRelationship` fixture helper; construct one symptom edge + one mood edge):
 
-Build two `.active` `ResolvedRelationship`s with **distinct exposure labels** (so cards are identifiable) — one a symptom edge (`relationship.toCategory = "symptom"`, exposure "Dairy"), one a mood edge (`relationship.toCategory = "mood"`, `toSubtype = "low"`, exposure "Coffee"). A low-mood claim renders its subtype "low" (never the word "mood"), so identify the cards by their **exposure label**, not "mood":
+The existing `rr()` helper in `InsightsFeedTests.swift` **hardcodes** `toCategory: "symptom"` / `exposureLabel: "Food"`, so it can't produce a mood edge — construct the two edges **inline** (both types have public inits). One symptom edge (survives) + one mood edge (`toCategory: "mood"`, suppressed), with distinct exposure labels so cards are identifiable (a low-mood claim renders its subtype "low", never the word "mood"):
 
 ```swift
     @Test func moodOutcomeEdgesAreSuppressed() {
-        let feed = InsightsFeed.build([resolvedDairySymptom, resolvedCoffeeMood], now: refNow)
-        let claims = feed.sections.flatMap(\.cards).map { $0.claim.lowercased() }
-        #expect(claims.contains { $0.contains("dairy") })      // the symptom edge survives
-        #expect(!claims.contains { $0.contains("coffee") })    // the mood edge is suppressed
-        #expect(claims.count == 1)                             // exactly one card, not the mood one
+        let refNow = Date(timeIntervalSince1970: 1_700_000_000)
+        func rel(toCategory: String, toSubtype: String, key: String) -> Relationship {
+            Relationship(fromCategory: "food", toCategory: toCategory, type: .possibleTrigger,
+                         evidenceCount: 6, contradictionCount: 2, confidence: 0.6, strength: 5, lagHours: 12,
+                         firstSeen: refNow.addingTimeInterval(-5 * 86_400), lastSeen: refNow,
+                         lastRecomputed: refNow, status: .active, edgeKey: key, toSubtype: toSubtype)
+        }
+        let dairy = ResolvedRelationship(
+            relationship: rel(toCategory: "symptom", toSubtype: "bloating", key: "k-dairy"),
+            exposureLabel: "Dairy", outcomeLabel: "bloating", exposureCategory: .food, recentOutcomes: [])
+        let coffeeMood = ResolvedRelationship(
+            relationship: rel(toCategory: "mood", toSubtype: "low", key: "k-coffee-mood"),
+            exposureLabel: "Coffee", outcomeLabel: "low", exposureCategory: .food, recentOutcomes: [])
+        let claims = InsightsFeed.build([dairy, coffeeMood], now: refNow)
+            .sections.flatMap(\.cards).map { $0.claim.lowercased() }
+        #expect(claims.contains { $0.contains("dairy") })    // the symptom edge survives
+        #expect(!claims.contains { $0.contains("coffee") })  // the mood edge is suppressed
+        #expect(claims.count == 1)                           // exactly one card (guards vacuity)
     }
 ```
 
-(Read `InsightsFeedTests.swift` first and match its existing `ResolvedRelationship`/`Relationship` construction style — set `exposureLabel: "Dairy"`/`"Coffee"` and the `relationship.toCategory` as above. The `count == 1` guards against a vacuous pass.)
+(Verify the `Relationship`/`ResolvedRelationship` init argument labels against the real types before running — the integration audit confirmed both have public inits and `InsightCardModel.claim` is public. Match any label/order differences you find, and drop `recentOutcomes:` if that field isn't on the init.)
 
 - [ ] **Step 2: Run to verify it fails.**
 

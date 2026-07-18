@@ -37,7 +37,7 @@ public enum MoodLevel: Int, CaseIterable, Sendable {
 
 Every surface reads the scale from here — the emoji, labels, and stored values live in exactly one place.
 
-**The mood event.** A mood log is a normal `HealthEvent`: `category: .mood`, `value: Double(level.rawValue)` (1–5), `subtype: level.label` (for Timeline display), `source: .manual`, optional note in metadata. A new method writes it, parallel to `logSymptom`:
+**The mood event.** A mood log is a normal `HealthEvent`: `category: .mood`, `value: Double(level.rawValue)` (1–5), `subtype: "mood"` (matching the existing `OutcomeSource`/`ExposureSourceTests` convention — `.mood` events key off category + value, not subtype), `source: .manual`, optional note in metadata. The Timeline label ("Mood: Good") is derived from `value` via `MoodLevel` in `EventDisplay` (§6). A new method writes it, parallel to `logSymptom`:
 
 ```swift
 // CaptureService
