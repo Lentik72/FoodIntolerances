@@ -11,6 +11,7 @@ struct HomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 greeting
+                MoodCheckInView()
                 passiveStrip
                 if let summary = viewModel.backfillSummary {
                     backfillCard(summary)
