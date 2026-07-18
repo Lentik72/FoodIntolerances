@@ -1,9 +1,9 @@
 import Foundation
 
-/// The category of a red flag — determines the guidance surfaced. This cycle is
-/// physical medical emergencies only; the enum leaves room for `.mentalHealthCrisis`.
+/// The category of a red flag — determines the guidance surfaced.
 public enum RedFlagCategory: Sendable, Equatable {
     case medicalEmergency
+    case mentalHealthCrisis
 }
 
 public struct RedFlagRule: Sendable, Equatable {
@@ -47,6 +47,10 @@ public enum RedFlagCatalog {
             symptomKeys: [key("Severe Allergic Reaction")],
             category: .medicalEmergency,
             extraGuidance: "If you have an epinephrine auto-injector (EpiPen), use it now, then call 911."),
+        RedFlagRule(
+            symptomKeys: [key("Thoughts of self-harm or suicide")],
+            category: .mentalHealthCrisis,
+            extraGuidance: nil),
     ]
 
     public static func rule(forSymptomKey symptomKey: String) -> RedFlagRule? {
@@ -55,4 +59,10 @@ public enum RedFlagCatalog {
 
     /// Every red-flag symptom key, across all rules — used by the Settings list.
     public static var allSymptomKeys: [String] { rules.flatMap(\.symptomKeys) }
+
+    /// Red-flag keys that MAY be muted in Settings — excludes `.mentalHealthCrisis`.
+    /// A crisis prompt is never suppressible (design §6); it must not appear as a toggle.
+    public static var mutableSymptomKeys: [String] {
+        rules.filter { $0.category != .mentalHealthCrisis }.flatMap(\.symptomKeys)
+    }
 }

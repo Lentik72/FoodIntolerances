@@ -27,6 +27,7 @@ public enum SymptomCatalog {
         ("Depression", "head"),
         ("Mental Fatigue", "head"),
         ("Cognitive Fog", "head"),
+        ("Thoughts of self-harm or suicide", "head"),
 
         // Neck region
         ("Neck Pain", "neck"),

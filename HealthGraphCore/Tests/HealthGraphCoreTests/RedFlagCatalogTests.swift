@@ -25,4 +25,22 @@ struct RedFlagCatalogTests {
         #expect(rule != nil)                              // not vacuous if the rule were missing
         #expect(rule?.extraGuidance == nil)
     }
+
+    @Test func selfHarmRuleIsMentalHealthCrisis() {
+        let key = SymptomCatalog.canonicalKey(for: "Thoughts of self-harm or suicide")
+        let rule = RedFlagCatalog.rule(forSymptomKey: key)
+        #expect(rule != nil)
+        #expect(rule?.category == .mentalHealthCrisis)
+    }
+
+    @Test func crisisKeyIsNotMutableButIsARedFlag() {
+        let key = SymptomCatalog.canonicalKey(for: "Thoughts of self-harm or suicide")
+        #expect(RedFlagCatalog.allSymptomKeys.contains(key))       // it IS a red flag
+        #expect(!RedFlagCatalog.mutableSymptomKeys.contains(key))  // but NEVER offered as a mute toggle
+    }
+
+    @Test func medicalKeysStayMutable() {
+        let chestPain = SymptomCatalog.canonicalKey(for: "Chest Pain")
+        #expect(RedFlagCatalog.mutableSymptomKeys.contains(chestPain))
+    }
 }

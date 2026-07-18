@@ -26,4 +26,7 @@ struct SymptomCatalogTests {
     @Test func severeAllergicReactionKeyIsStable() {
         #expect(SymptomCatalog.canonicalKey(for: "Severe Allergic Reaction") == "severeAllergicReaction")
     }
+    @Test func selfHarmCrisisKeyIsStable() {
+        #expect(SymptomCatalog.canonicalKey(for: "Thoughts of self-harm or suicide") == "thoughtsOfSelfHarmOrSuicide")
+    }
 }

@@ -34,4 +34,10 @@ struct RedFlagEvaluatorTests {
         let key = SymptomCatalog.canonicalKey(for: "Severe Allergic Reaction")
         #expect(RedFlagEvaluator.evaluate(symptomKey: key, mutedKeys: [])?.extraGuidance?.contains("EpiPen") == true)
     }
+
+    @Test func selfHarmSymptomIsAMentalHealthCrisisMatch() {
+        let key = SymptomCatalog.canonicalKey(for: "Thoughts of self-harm or suicide")
+        let match = RedFlagEvaluator.evaluate(symptomKey: key, mutedKeys: [])
+        #expect(match?.category == .mentalHealthCrisis)
+    }
 }
