@@ -7,6 +7,7 @@ import UIKit
 struct HealthOSRootView: View {
     @State private var selection: HealthOSTab = .home
     @State private var showingCapture = false
+    @EnvironmentObject private var redFlagPresenter: RedFlagPresenter
 
     var body: some View {
         VStack(spacing: 0) {
@@ -27,6 +28,9 @@ struct HealthOSRootView: View {
         }
         .onChange(of: selection) { _, _ in
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        }
+        .onChange(of: redFlagPresenter.pending) { _, match in
+            if match != nil { showingCapture = false }   // symptom saved; dismiss capture, app-level cover takes over
         }
     }
 
@@ -51,10 +55,12 @@ struct HealthOSRootView: View {
 #Preview("Shell — light") {
     HealthOSRootView()
         .environmentObject(CaptureCoordinator())
+        .environmentObject(RedFlagPresenter(muteStore: RedFlagMuteStore()))
 }
 
 #Preview("Shell — dark") {
     HealthOSRootView()
         .environmentObject(CaptureCoordinator())
+        .environmentObject(RedFlagPresenter(muteStore: RedFlagMuteStore()))
         .preferredColorScheme(.dark)
 }

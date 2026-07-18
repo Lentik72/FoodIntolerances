@@ -15,6 +15,8 @@ struct FoodIntolerancesApp: App {
     @StateObject private var healthKitManager = HealthKitManager()
     @StateObject private var healthKitIngestor = HealthKitIngestor()
     @StateObject private var captureCoordinator = CaptureCoordinator()
+    @StateObject private var redFlagMuteStore: RedFlagMuteStore
+    @StateObject private var redFlagPresenter: RedFlagPresenter
     @AppStorage("enableDiagnostics") private var enableDiagnostics = false
     @AppStorage("debugMode") private var debugMode = false
     @Environment(\.scenePhase) private var scenePhase
@@ -28,6 +30,12 @@ struct FoodIntolerancesApp: App {
 
         // Initialize proactive alert settings
         ProactiveAlertService.shared.initializeDefaultSettings()
+
+        // Must be assigned before any instance-method call below (setupGlobalErrorHandling
+        // captures self, which requires every stored property to be initialized first).
+        let muteStore = RedFlagMuteStore()
+        _redFlagMuteStore = StateObject(wrappedValue: muteStore)
+        _redFlagPresenter = StateObject(wrappedValue: RedFlagPresenter(muteStore: muteStore))
 
         setupGlobalErrorHandling()
     }
@@ -87,6 +95,12 @@ struct FoodIntolerancesApp: App {
                 .environmentObject(logItemViewModel)
                 .environmentObject(tabManager)
                 .environmentObject(captureCoordinator)
+                .environmentObject(redFlagMuteStore)
+                .environmentObject(redFlagPresenter)
+                .fullScreenCover(item: $redFlagPresenter.pending) { match in
+                    RedFlagInterstitialView(match: match)
+                        .environmentObject(redFlagPresenter)   // insurance vs env-inheritance edge cases
+                }
                 .modelContainer(for: [
                     LogEntry.self,
                     TrackedItem.self,

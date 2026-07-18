@@ -3,6 +3,7 @@ import HealthGraphCore
 
 struct CaptureSheet: View {
     @EnvironmentObject private var coordinator: CaptureCoordinator
+    @EnvironmentObject private var redFlagPresenter: RedFlagPresenter
     @State private var type: CaptureType = .symptom
     @State private var timestamp = Date()
     @State private var lastLogged: HealthEvent?
@@ -47,6 +48,7 @@ struct CaptureSheet: View {
     /// Called by every subview after a successful write: refresh the tabs + arm the undo toast.
     private func logged(_ event: HealthEvent) {
         coordinator.saveCompleted()
+        redFlagPresenter.consider(event)     // fires the takeover iff a red-flag symptom
         lastLogged = event
         toastTask?.cancel()
         toastTask = Task { try? await Task.sleep(for: .seconds(4)); guard !Task.isCancelled else { return }; lastLogged = nil }
