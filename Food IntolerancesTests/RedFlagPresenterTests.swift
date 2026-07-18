@@ -80,4 +80,11 @@ struct RedFlagPresenterTests {
         p.consider(symptom("Chest Pain"))          // same instance, now muted → suppressed
         #expect(p.pending == nil)
     }
+
+    @Test func crisisSymptomSetsPendingWithMentalHealthCrisisCategory() {
+        let p = presenter()
+        p.consider(symptom("Thoughts of self-harm or suicide"))
+        #expect(p.pending?.symptomKey == key("Thoughts of self-harm or suicide"))
+        #expect(p.pending?.category == .mentalHealthCrisis)
+    }
 }

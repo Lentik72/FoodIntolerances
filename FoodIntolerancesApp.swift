@@ -98,8 +98,14 @@ struct FoodIntolerancesApp: App {
                 .environmentObject(redFlagMuteStore)
                 .environmentObject(redFlagPresenter)
                 .fullScreenCover(item: $redFlagPresenter.pending) { match in
-                    RedFlagInterstitialView(match: match)
-                        .environmentObject(redFlagPresenter)   // insurance vs env-inheritance edge cases
+                    switch match.category {
+                    case .medicalEmergency:
+                        RedFlagInterstitialView(match: match)
+                            .environmentObject(redFlagPresenter)   // insurance vs env-inheritance edge cases
+                    case .mentalHealthCrisis:
+                        CrisisSupportView()
+                            .environmentObject(redFlagPresenter)
+                    }
                 }
                 .modelContainer(for: [
                     LogEntry.self,
