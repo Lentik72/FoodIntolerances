@@ -52,6 +52,21 @@ public struct CaptureService: Sendable {
     }
 
     @discardableResult
+    public func logMood(level: MoodLevel, at timestamp: Date, note: String?) async throws -> HealthEvent {
+        var meta: [String: String] = [:]
+        if let note, !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            meta["note"] = note
+        }
+        let event = HealthEvent(
+            timestamp: timestamp, category: .mood,
+            subtype: "mood",
+            value: Double(level.rawValue),
+            source: .manual, metadata: Self.metadata(meta), dedupKey: nil)
+        try await eventStore.save(event)
+        return event
+    }
+
+    @discardableResult
     public func logMeal(name: String, at timestamp: Date) async throws -> HealthEvent {
         let object = try await objectStore.findOrCreate(name: name, kind: .food, metadata: nil)
         let event = HealthEvent(

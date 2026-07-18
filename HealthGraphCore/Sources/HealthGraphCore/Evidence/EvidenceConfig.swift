@@ -15,7 +15,7 @@ public struct EvidenceConfig: Sendable {
     // Derived-exposure thresholds.
     public var shortSleepThresholdMinutes: Double = 360   // < 6h asleep
     public var highStressThreshold: Double = 7            // value ≥ 7 on 1–10
-    public var lowMoodThreshold: Double = 3               // mood value ≤ 3 → low mood
+    public var lowMoodThreshold: Double = 2               // mood value ≤ 2 (Awful/Low on the 1–5 scale) → low mood
     public var lutealWindowDays: Int = 5                  // days before next period start
 
     // Candidate evaluation gate.
