@@ -87,4 +87,11 @@ struct RedFlagPresenterTests {
         #expect(p.pending?.symptomKey == key("Thoughts of self-harm or suicide"))
         #expect(p.pending?.category == .mentalHealthCrisis)
     }
+
+    @Test func moodEventNeverTriggersRedFlag() {
+        let p = presenter()
+        p.consider(HealthEvent(timestamp: Date(timeIntervalSince1970: 1_700_000_000),
+                               category: .mood, subtype: "mood", value: 1, source: .manual))
+        #expect(p.pending == nil)
+    }
 }

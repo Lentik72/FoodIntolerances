@@ -35,6 +35,7 @@ struct CaptureSheet: View {
                 case .meal: MealCaptureView(timestamp: $timestamp, onLogged: logged)
                 case .dose: DoseCaptureView(timestamp: $timestamp, onLogged: logged)
                 case .note: NoteCaptureView(timestamp: $timestamp, onLogged: logged)
+                case .mood: MoodCaptureView(timestamp: $timestamp, onLogged: logged)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
