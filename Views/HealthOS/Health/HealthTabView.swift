@@ -1,7 +1,9 @@
 import SwiftUI
 
 struct HealthTabView: View {
+    #if DEBUG
     @State private var showingLegacyApp = false
+    #endif
 
     private let comingRows: [(icon: String, name: String, detail: String)] = [
         ("cabinet", "Cabinet", "meds, supplements, peptides — stock and refills"),
@@ -47,6 +49,24 @@ struct HealthTabView: View {
                 .hgCard()
 
                 VStack(spacing: 0) {
+                    NavigationLink {
+                        RedFlagRemindersView()
+                    } label: {
+                        HStack {
+                            Image(systemName: "exclamationmark.shield")
+                                .foregroundStyle(HealthTheme.accent)
+                            Text("Safety reminders")
+                                .foregroundStyle(HealthTheme.ink)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.footnote)
+                                .foregroundStyle(HealthTheme.inkMuted)
+                        }
+                        .padding(16)
+                        .contentShape(Rectangle())
+                    }
+                    #if DEBUG
+                    Divider().padding(.leading, 16)
                     Button {
                         showingLegacyApp = true
                     } label: {
@@ -64,7 +84,6 @@ struct HealthTabView: View {
                         .contentShape(Rectangle())
                     }
                     .accessibilityHint("Opens the previous app interface")
-                    #if DEBUG
                     Divider().padding(.leading, 16)
                     NavigationLink {
                         HealthGraphDebugView()
@@ -90,6 +109,7 @@ struct HealthTabView: View {
             .padding(.horizontal, 16)
         }
         .background(HealthTheme.paper)
+        #if DEBUG
         .fullScreenCover(isPresented: $showingLegacyApp) {
             // MainTabView already hosts its OWN NavigationStack (MainTabView.swift).
             // Present it bare — a second NavigationStack would stack an empty nav bar
@@ -108,5 +128,6 @@ struct HealthTabView: View {
                         .accessibilityLabel("Close legacy app")
                 }
         }
+        #endif
     }
 }
