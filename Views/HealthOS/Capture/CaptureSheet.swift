@@ -61,14 +61,21 @@ struct CaptureSheet: View {
     }
 
     private func toast(_ event: HealthEvent) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.title3)
+                .foregroundStyle(HealthTheme.accent)
+                .accessibilityHidden(true)
             Text("Logged \(EventDisplay.title(for: event))")
-                .font(.subheadline).foregroundStyle(HealthTheme.ink).lineLimit(1)
+                .font(.headline).foregroundStyle(HealthTheme.ink).lineLimit(1)
+            Spacer(minLength: 8)
             Button("Undo") { undo(event) }
-                .font(.subheadline.weight(.semibold)).foregroundStyle(HealthTheme.accent)
+                .font(.headline.weight(.semibold)).foregroundStyle(HealthTheme.accent)
                 .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
         }
-        .padding(.horizontal, 20).padding(.vertical, 8).hgCard().padding(.bottom, 12)
+        .padding(.leading, 18).padding(.trailing, 8).padding(.vertical, 10)
+        .hgCard()
+        .padding(.horizontal, 16).padding(.bottom, 14)
         .transition(.move(edge: .bottom).combined(with: .opacity))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Logged \(EventDisplay.title(for: event))")
