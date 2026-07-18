@@ -56,11 +56,13 @@ struct HealthOSRootView: View {
     HealthOSRootView()
         .environmentObject(CaptureCoordinator())
         .environmentObject(RedFlagPresenter(muteStore: RedFlagMuteStore()))
+        .environmentObject(RedFlagMuteStore())
 }
 
 #Preview("Shell — dark") {
     HealthOSRootView()
         .environmentObject(CaptureCoordinator())
         .environmentObject(RedFlagPresenter(muteStore: RedFlagMuteStore()))
+        .environmentObject(RedFlagMuteStore())
         .preferredColorScheme(.dark)
 }

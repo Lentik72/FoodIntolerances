@@ -3,7 +3,7 @@ import Testing
 
 struct EmergencyContactTests {
     @Test func callURLUsesTheEmergencyNumberConstant() {
-        #expect(EmergencyContact.callURL?.absoluteString == "tel://\(EmergencyContact.emergencyNumber)")
+        #expect(EmergencyContact.callURL?.absoluteString == "tel:\(EmergencyContact.emergencyNumber)")
         #expect(EmergencyContact.emergencyNumber == "911")
     }
 

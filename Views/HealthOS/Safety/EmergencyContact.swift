@@ -4,6 +4,6 @@ import Foundation
 /// regionalize later — never hardcode a number at a call site.
 enum EmergencyContact {
     static let emergencyNumber = "911"          // US. Regionalize here.
-    static var callURL: URL? { URL(string: "tel://\(emergencyNumber)") }
+    static var callURL: URL? { URL(string: "tel:\(emergencyNumber)") }
     static var nearestERURL: URL? { URL(string: "https://maps.apple.com/?q=emergency+room") }
 }
