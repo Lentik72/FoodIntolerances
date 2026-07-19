@@ -5,15 +5,17 @@ import HealthGraphCore
 
 @MainActor
 struct MoodCheckInModelTests {
-    private var utcCal: Calendar {
-        var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "UTC")!; return c
+    // Fixed at a clearly-non-default offset (UTC+13) — not UTC — so a future regression to
+    // `Calendar.current` fails on any CI runner regardless of its local timezone.
+    private var fixedOffsetCal: Calendar {
+        var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(secondsFromGMT: 13 * 3600)!; return c
     }
-    // A fixed "today" at 12:00 UTC — the +1h/+2h offsets below stay within the same UTC day.
-    private var noon: Date { utcCal.date(from: DateComponents(year: 2024, month: 6, day: 1, hour: 12))! }
+    // A fixed "today" at 12:00 in the fixed-offset zone — the +1h/+2h offsets below stay within the same day.
+    private var noon: Date { fixedOffsetCal.date(from: DateComponents(year: 2024, month: 6, day: 1, hour: 12))! }
     private func model(_ db: AppDatabase, at t: Date) -> MoodCheckInModel {
         MoodCheckInModel(database: db,
                          defaults: UserDefaults(suiteName: "mood-\(UUID().uuidString)")!,
-                         calendar: utcCal, now: { t })
+                         calendar: fixedOffsetCal, now: { t })
     }
 
     @Test func logThenLoadShowsTodaysMood() async throws {
@@ -55,7 +57,7 @@ struct MoodCheckInModelTests {
         let db = try AppDatabase.inMemory()
         let defaults = UserDefaults(suiteName: "mood-\(UUID().uuidString)")!
         func mk(_ t: Date) -> MoodCheckInModel {
-            MoodCheckInModel(database: db, defaults: defaults, calendar: utcCal, now: { t })
+            MoodCheckInModel(database: db, defaults: defaults, calendar: fixedOffsetCal, now: { t })
         }
         let m = mk(noon)
         #expect(m.dismissedToday == false)

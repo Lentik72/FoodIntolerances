@@ -30,8 +30,9 @@ final class MoodCheckInModel: ObservableObject {
         return "\(c.year ?? 0)-\(c.month ?? 0)-\(c.day ?? 0)"
     }
     private var todayInterval: DateInterval {
-        let start = calendar.startOfDay(for: now())
-        return DateInterval(start: start, end: start.addingTimeInterval(24 * 3600))
+        let n = now()
+        return calendar.dateInterval(of: .day, for: n)
+            ?? DateInterval(start: calendar.startOfDay(for: n), end: n)
     }
 
     /// Load the latest mood logged today (so the confirmed state survives app relaunch within the day).
@@ -70,6 +71,7 @@ final class MoodCheckInModel: ObservableObject {
 /// One tap logs; never nags; "not now" tucks it away for the day.
 struct MoodCheckInView: View {
     @StateObject private var model = MoodCheckInModel(database: HealthGraphProvider.shared)
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var captureCoordinator: CaptureCoordinator
 
     var body: some View {
@@ -93,7 +95,7 @@ struct MoodCheckInView: View {
                             Spacer()
                             Button("Undo") { Task { await model.undo(); captureCoordinator.saveCompleted() } }
                                 .font(.subheadline.weight(.semibold)).foregroundStyle(HealthTheme.accent)
-                                .frame(minHeight: 44)
+                                .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
                         }
                     }
                     HStack(spacing: 6) {
@@ -109,8 +111,14 @@ struct MoodCheckInView: View {
                     }
                 }
                 .padding(16).hgCard()
-                .task { await model.load() }
             }
+        }
+        .task { await model.load() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await model.load() } }
+        }
+        .onChange(of: captureCoordinator.lastCaptureAt) { _, _ in
+            Task { await model.load() }
         }
     }
 }
