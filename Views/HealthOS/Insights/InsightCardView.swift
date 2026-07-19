@@ -63,6 +63,7 @@ struct InsightCardView: View {
     /// single-element-per-row convention instead of exposing each subview separately.
     private var cardAccessibilityLabel: String {
         var parts = [card.claim]
+        if card.tier == .contested { parts.append("unproven mechanism, your pattern") }
         if let countLine = card.countLine { parts.append(countLine) }
         if !card.recentDots.isEmpty {
             let followed = card.recentDots.filter { $0 }.count
