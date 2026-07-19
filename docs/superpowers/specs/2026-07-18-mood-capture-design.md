@@ -84,7 +84,7 @@ The Home quick-check is the fast path; this tab is the "with note / earlier time
 
 - **Core (`swift test`):**
   - `MoodScaleTests` — each `MoodLevel`'s rawValue/label/emoji; `allCases` order.
-  - `CaptureServiceTests` (or the existing capture test) — `logMood` writes `category: .mood`, `value == level.rawValue`, `subtype == level.label`, `source: .manual`, note in metadata.
+  - `CaptureServiceTests` (or the existing capture test) — `logMood` writes `category: .mood`, `value == level.rawValue`, `subtype == "mood"`, `source: .manual`, note in metadata.
   - `ExposureSourceTests` — stays green with `lowMoodThreshold = 2`; add a boundary case: mood value 3 (Okay) → **not** a low-mood outcome; value 2 (Low) → low-mood outcome.
 - **App (`-parallel-testing-enabled NO`):**
   - The Home quick-check "not now" per-day dismiss flag persists/clears correctly (unit-tested at the view-model/store level).
