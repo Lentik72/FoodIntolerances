@@ -9,6 +9,8 @@ struct EvidenceConfigTests {
         #expect(c.lagWindow(for: .object(UUID(), .supplement)) == 0...48)
         #expect(c.lagWindow(for: .derived(.shortSleep)) == 0...18)
         #expect(c.lagWindow(for: .derived(.cyclePhase(.luteal))) == 0...24)
+        #expect(c.lagWindow(for: .derived(.fullMoon)) == 0...24)
+        #expect(c.lagWindow(for: .derived(.mercuryRetrograde)) == 0...24)
     }
     @Test func defaultsAreSane() {
         let c = EvidenceConfig.default
@@ -111,6 +113,25 @@ struct DerivedEventExposureSourceTests {
         ]
         let occ = PressureDropExposureSource().occurrences(from: events)
         #expect(occ.map(\.key) == [.derived(.pressureDrop)])
+    }
+}
+
+struct OutsideFactorExposureSourceTests {
+    private func env(_ subtype: String, phase: String? = nil) -> HealthEvent {
+        let meta = phase.map { try? JSONEncoder().encode(["phase": $0]) } ?? nil
+        return HealthEvent(timestamp: Date(timeIntervalSince1970: 100), timezoneID: "UTC",
+                           category: .environment, subtype: subtype, source: .weatherAPI, metadata: meta ?? nil)
+    }
+    @Test func fullMoonExtractsOnlyFullMoonPhase() {
+        let occ = FullMoonExposureSource().occurrences(from: [
+            env("moonPhase", phase: "Full Moon"), env("moonPhase", phase: "Waning Gibbous"),
+            env("mercuryRetrograde")])
+        #expect(occ.map(\.key) == [.derived(.fullMoon)])
+    }
+    @Test func mercuryExtractsRetrogradeEvents() {
+        let occ = MercuryRetrogradeExposureSource().occurrences(from: [
+            env("mercuryRetrograde"), env("moonPhase", phase: "Full Moon")])
+        #expect(occ.map(\.key) == [.derived(.mercuryRetrograde)])
     }
 }
 

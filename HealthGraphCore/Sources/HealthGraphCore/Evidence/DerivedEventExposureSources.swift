@@ -26,3 +26,31 @@ public struct PressureDropExposureSource: ExposureSource {
         }
     }
 }
+
+/// Mercury-retrograde exposures. EnvironmentalEventFactory emits a
+/// `subtype: "mercuryRetrograde"` event on retrograde days.
+public struct MercuryRetrogradeExposureSource: ExposureSource {
+    public init() {}
+    public func occurrences(from events: [HealthEvent]) -> [ExposureOccurrence] {
+        events.compactMap { e in
+            guard e.category == .environment, e.subtype == "mercuryRetrograde" else { return nil }
+            return ExposureOccurrence(key: .derived(.mercuryRetrograde), timestamp: e.timestamp,
+                                      timezoneID: e.timezoneID, sourceEventID: e.id)
+        }
+    }
+}
+
+/// Full-moon exposures. The factory emits a daily `subtype: "moonPhase"` event with
+/// the cleaned phase name in metadata; the "Full Moon" bucket spans ~2 days/cycle.
+public struct FullMoonExposureSource: ExposureSource {
+    public init() {}
+    public func occurrences(from events: [HealthEvent]) -> [ExposureOccurrence] {
+        events.compactMap { e in
+            guard e.category == .environment, e.subtype == "moonPhase", let data = e.metadata,
+                  let meta = try? JSONDecoder().decode([String: String].self, from: data),
+                  meta["phase"] == "Full Moon" else { return nil }
+            return ExposureOccurrence(key: .derived(.fullMoon), timestamp: e.timestamp,
+                                      timezoneID: e.timezoneID, sourceEventID: e.id)
+        }
+    }
+}

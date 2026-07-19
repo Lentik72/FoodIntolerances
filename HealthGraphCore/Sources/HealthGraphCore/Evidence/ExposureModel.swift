@@ -5,6 +5,7 @@ public enum CyclePhase: String, Sendable, Equatable, Hashable { case menstrual, 
 public enum DerivedExposureKind: Sendable, Equatable, Hashable {
     case shortSleep, highStress, pressureDrop
     case cyclePhase(CyclePhase)
+    case fullMoon, mercuryRetrograde
 }
 
 public enum ExposureKey: Sendable, Equatable, Hashable {

@@ -35,6 +35,8 @@ public struct EvidenceEngine {
             HighStressExposureSource(config: config),
             PressureDropExposureSource(),
             CyclePhaseExposureSource(config: config, timeZone: tz),
+            FullMoonExposureSource(),
+            MercuryRetrogradeExposureSource(),
         ]
         var exposures: [ExposureKey: [ExposureOccurrence]] = [:]
         for s in sources {

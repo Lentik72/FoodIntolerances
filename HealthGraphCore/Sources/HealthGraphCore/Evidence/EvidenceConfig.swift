@@ -11,6 +11,7 @@ public struct EvidenceConfig: Sendable {
     public var stressLagHours: ClosedRange<Double> = 0...24
     public var pressureLagHours: ClosedRange<Double> = 0...24
     public var cyclePhaseLagHours: ClosedRange<Double> = 0...24
+    public var outsideFactorLagHours: ClosedRange<Double> = 0...24   // moon/mercury: same-day
 
     // Derived-exposure thresholds.
     public var shortSleepThresholdMinutes: Double = 360   // < 6h asleep
@@ -76,6 +77,7 @@ public struct EvidenceConfig: Sendable {
             case .highStress: return stressLagHours
             case .pressureDrop: return pressureLagHours
             case .cyclePhase: return cyclePhaseLagHours
+            case .fullMoon, .mercuryRetrograde: return outsideFactorLagHours
             }
         }
     }

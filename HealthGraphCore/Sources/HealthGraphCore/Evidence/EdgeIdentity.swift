@@ -14,6 +14,8 @@ public enum EdgeIdentity {
             case .highStress: return "derived:highStress"
             case .pressureDrop: return "derived:pressureDrop"
             case let .cyclePhase(phase): return "derived:cyclePhase.\(phase.rawValue)"
+            case .fullMoon: return "derived:fullMoon"
+            case .mercuryRetrograde: return "derived:mercuryRetrograde"
             }
         }
     }
@@ -65,6 +67,8 @@ public enum EdgeIdentity {
             case "shortSleep": return .derived(.shortSleep)
             case "highStress": return .derived(.highStress)
             case "pressureDrop": return .derived(.pressureDrop)
+            case "fullMoon": return .derived(.fullMoon)
+            case "mercuryRetrograde": return .derived(.mercuryRetrograde)
             default:
                 if kind.hasPrefix("cyclePhase."),
                    let phase = CyclePhase(rawValue: String(kind.dropFirst("cyclePhase.".count))) {

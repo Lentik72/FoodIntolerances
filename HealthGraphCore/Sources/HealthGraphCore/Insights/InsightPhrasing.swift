@@ -66,6 +66,8 @@ public enum InsightPhrasing {
         case "pressureDrop": return "Pressure drops"
         case "cyclePhase.menstrual": return "Menstrual phase"
         case "cyclePhase.luteal": return "Luteal phase"
+        case "fullMoon": return "Full moon"
+        case "mercuryRetrograde": return "Mercury retrograde"
         default: return nil
         }
     }
