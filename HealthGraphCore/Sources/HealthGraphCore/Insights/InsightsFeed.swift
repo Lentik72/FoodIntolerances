@@ -3,7 +3,12 @@ import Foundation
 public enum InsightsFeed {
     public static func build(_ resolved: [ResolvedRelationship], now: Date,
                              config: InsightsConfig = .default) -> InsightsFeedModel {
-        let active = resolved.filter { $0.relationship.status == .active }
+        let activeAll = resolved.filter { $0.relationship.status == .active }
+        func tier(_ rr: ResolvedRelationship) -> PlausibilityTier {
+            PlausibilityCatalog.tier(forExposureCategory: rr.relationship.fromCategory)
+        }
+        let active = activeAll.filter { tier($0) != .novelty }        // evidence feed
+        let justForFun = activeAll.filter { tier($0) == .novelty }    // curiosities
         let noEffect = resolved.filter { $0.relationship.status == .confirmedNoEffect }
         let archive = resolved.filter { $0.relationship.status == .decayed || $0.relationship.status == .userDismissed }
 
@@ -27,7 +32,8 @@ public enum InsightsFeed {
                 id: r.id, claim: InsightPhrasing.claim(rr), exposureCategory: rr.exposureCategory,
                 badge: InsightPhrasing.badge(confidence: r.confidence, config: config),
                 countLine: InsightPhrasing.countLine(rr), recentDots: rr.recentOutcomes,
-                subline: InsightPhrasing.subline(rr), isNew: newIDs.contains(r.id), kind: r.type)
+                subline: InsightPhrasing.subline(rr), isNew: newIDs.contains(r.id), kind: r.type,
+                tier: tier(rr))
         }
         func idTiebreak(_ a: ResolvedRelationship, _ b: ResolvedRelationship) -> Bool {
             a.relationship.id.uuidString < b.relationship.id.uuidString
@@ -51,11 +57,15 @@ public enum InsightsFeed {
         let archiveCards = archive.sorted {
             $0.relationship.lastRecomputed != $1.relationship.lastRecomputed
                 ? $0.relationship.lastRecomputed > $1.relationship.lastRecomputed : idTiebreak($0, $1) }.map(card)
+        let justForFunCards = justForFun.sorted {
+            $0.relationship.confidence != $1.relationship.confidence
+                ? $0.relationship.confidence > $1.relationship.confidence : idTiebreak($0, $1) }.map(card)
 
         var sections: [InsightSection] = []
         if !activeCards.isEmpty { sections.append(InsightSection(kind: .active, cards: activeCards)) }
         if !noEffectCards.isEmpty { sections.append(InsightSection(kind: .noEffect, cards: noEffectCards)) }
         if !archiveCards.isEmpty { sections.append(InsightSection(kind: .archive, cards: archiveCards)) }
+        if !justForFunCards.isEmpty { sections.append(InsightSection(kind: .justForFun, cards: justForFunCards)) }
         return InsightsFeedModel(sections: sections)
     }
 }

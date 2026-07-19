@@ -77,4 +77,41 @@ struct InsightsFeedTests {
         #expect(claims.contains { $0.contains("coffee") })    // mood edge now surfaces
         #expect(claims.count == 2)
     }
+
+    @Test func tiersRouteNoveltyToJustForFunAndTagContested() {
+        let refNow = Date(timeIntervalSince1970: 1_700_000_000)
+        func rel(from: String, key: String, daysAgo: Double = 30) -> Relationship {
+            Relationship(fromCategory: from, toCategory: "symptom", type: .possibleTrigger,
+                         evidenceCount: 6, contradictionCount: 2, confidence: 0.6, strength: 5, lagHours: 12,
+                         firstSeen: refNow.addingTimeInterval(-daysAgo * 86_400), lastSeen: refNow,
+                         lastRecomputed: refNow, status: .active, edgeKey: key, toSubtype: "headache")
+        }
+        func rr(_ r: Relationship, _ label: String) -> ResolvedRelationship {
+            ResolvedRelationship(relationship: r, exposureLabel: label, outcomeLabel: "headache",
+                                 exposureCategory: .food, recentOutcomes: [])
+        }
+        let feed = InsightsFeed.build([
+            rr(rel(from: "food", key: "k-food"), "Dairy"),
+            rr(rel(from: "fullMoon", key: "k-moon"), "Full moon"),
+            rr(rel(from: "mercuryRetrograde", key: "k-merc", daysAgo: 1), "Mercury retrograde"),  // recent
+        ], now: refNow)
+        let active = feed.sections.first { $0.kind == .active }
+        let fun = feed.sections.first { $0.kind == .justForFun }
+        #expect(active?.cards.first { $0.claim.contains("Dairy") }?.tier == .established)
+        #expect(active?.cards.first { $0.claim.contains("Full moon") }?.tier == .contested)
+        #expect(active?.cards.contains { $0.claim.contains("Mercury") } == false)   // NOT in evidence feed
+        #expect(fun?.cards.contains { $0.claim.contains("Mercury") } == true)        // in Just for fun
+        #expect(fun?.cards.first?.isNew == false)   // recent novelty must NOT take a "New" slot
+    }
+    @Test func noJustForFunSectionWithoutNoveltyEdges() {
+        let refNow = Date(timeIntervalSince1970: 1_700_000_000)
+        let r = Relationship(fromCategory: "food", toCategory: "symptom", type: .possibleTrigger,
+                             evidenceCount: 6, contradictionCount: 2, confidence: 0.6, strength: 5, lagHours: 12,
+                             firstSeen: refNow.addingTimeInterval(-30 * 86_400), lastSeen: refNow,
+                             lastRecomputed: refNow, status: .active, edgeKey: "k", toSubtype: "headache")
+        let feed = InsightsFeed.build([ResolvedRelationship(
+            relationship: r, exposureLabel: "Dairy", outcomeLabel: "headache",
+            exposureCategory: .food, recentOutcomes: [])], now: refNow)
+        #expect(feed.sections.contains { $0.kind == .justForFun } == false)   // no empty section
+    }
 }

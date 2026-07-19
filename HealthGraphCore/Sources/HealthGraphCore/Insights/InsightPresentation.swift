@@ -30,15 +30,17 @@ public struct InsightCardModel: Sendable, Equatable, Identifiable {
     public let subline: String?       // lag+severity (trigger only)
     public let isNew: Bool
     public let kind: RelationshipType
+    public let tier: PlausibilityTier
     public init(id: UUID, claim: String, exposureCategory: EventCategory, badge: BadgeTier,
-                countLine: String?, recentDots: [Bool], subline: String?, isNew: Bool, kind: RelationshipType) {
+                countLine: String?, recentDots: [Bool], subline: String?, isNew: Bool, kind: RelationshipType,
+                tier: PlausibilityTier = .established) {
         self.id = id; self.claim = claim; self.exposureCategory = exposureCategory; self.badge = badge
         self.countLine = countLine; self.recentDots = recentDots; self.subline = subline
-        self.isNew = isNew; self.kind = kind
+        self.isNew = isNew; self.kind = kind; self.tier = tier
     }
 }
 
-public enum InsightSectionKind: Sendable, Equatable { case active, noEffect, archive }
+public enum InsightSectionKind: Sendable, Equatable { case active, noEffect, archive, justForFun }
 public struct InsightSection: Sendable, Equatable, Identifiable {
     public var id: InsightSectionKind { kind }
     public let kind: InsightSectionKind
