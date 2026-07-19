@@ -60,10 +60,10 @@ Then **add** a good-mood test to `OutcomeSourceTests`:
     }
 ```
 
-In `EdgeIdentityTests.swift`, add a `goodMood` round-trip to `derivedExposuresRoundTrip` (after the existing lines):
+In `EdgeIdentityTests.swift`, add a `goodMood` round-trip to `derivedExposuresRoundTrip` (after the existing lines) — use a **derived** exposure so it exercises the nil-`fromObjectID` path and matches the function's name:
 
 ```swift
-        roundTrip(.object(UUID(uuidString: "22222222-2222-2222-2222-222222222222")!, .food), .goodMood)
+        roundTrip(.derived(.pressureDrop), .goodMood)
 ```
 
 and add a columns test:
@@ -80,6 +80,13 @@ and add a columns test:
             edgeKey: EdgeIdentity.edgeKey(from: .derived(.shortSleep), to: .goodMood, type: .possibleTrigger),
             toSubtype: cols.toSubtype))?.outcome == .goodMood)
     }
+```
+
+In `ExposureSourceTests.swift`, pin the thresholds directly — add to `EvidenceConfigTests.defaultsAreSane()` (spec §6 lists `goodMoodThreshold == 3` as its own check):
+
+```swift
+        #expect(c.lowMoodThreshold == 1)
+        #expect(c.goodMoodThreshold == 3)
 ```
 
 - [ ] **Step 2: Run the tests to confirm they fail.**
@@ -166,10 +173,10 @@ In `InsightPhrasingTests.swift`, add a mood fixture helper + tests (the existing
                      strength: 5, lagHours: lagHours, firstSeen: now, lastSeen: now,
                      lastRecomputed: now, status: .active, edgeKey: "k", toSubtype: subtype)
     }
-    func moodResolved(_ r: Relationship, exposure: String) -> ResolvedRelationship {
+    func moodResolved(_ r: Relationship, exposure: String, recent: [Bool] = []) -> ResolvedRelationship {
         ResolvedRelationship(relationship: r, exposureLabel: exposure,
                              outcomeLabel: InsightPhrasing.outcomeLabel(for: r),
-                             exposureCategory: .food, recentOutcomes: [])
+                             exposureCategory: .food, recentOutcomes: recent)
     }
 
     @Test func moodClaims() {
@@ -193,6 +200,21 @@ In `InsightPhrasingTests.swift`, add a mood fixture helper + tests (the existing
         #expect(sub != nil)
         #expect(sub!.contains("~12h"))
         #expect(!sub!.contains("severity"))   // severity is a symptom concept, omitted for mood
+    }
+    @Test func moodCountLineUsesTheNaturalNoun() {
+        let rr = moodResolved(moodRel("good", .possibleTrigger), exposure: "Exercise", recent: [true, false, true])
+        #expect(InsightPhrasing.countLine(rr) == "In 2 of your last 3 Exercise logs, a good mood followed")
+    }
+    @Test func moodPhrasingHasNoCausalLanguage() {   // spec §7 — the honesty rule binds to mood too
+        let forbidden = ["cause", "causes", "triggers ", "makes you", "guarantee"]
+        let cases: [(String, RelationshipType)] = [("good", .possibleTrigger), ("low", .improves),
+            ("low", .possibleTrigger), ("good", .improves), ("low", .noEffect)]
+        for (sub, type) in cases {
+            let rr = moodResolved(moodRel(sub, type), exposure: "Exercise", recent: [true, false, true])
+            let text = (InsightPhrasing.claim(rr) + " " + (InsightPhrasing.subline(rr) ?? "")
+                        + " " + (InsightPhrasing.countLine(rr) ?? "")).lowercased()
+            for word in forbidden { #expect(!text.contains(word), "mood phrasing must avoid '\(word)'") }
+        }
     }
 ```
 
@@ -224,7 +246,7 @@ In `InsightsFeedTests.swift`, **replace** `moodOutcomeEdgesAreSuppressed` with t
 - [ ] **Step 2: Run to confirm failure.**
 
 Run: `cd HealthGraphCore && swift test 2>&1 | tail -20`
-Expected: FAIL — `outcomeLabel(for:)` undefined; mood claim renders the generic "Coffee → low"; the old suppression is gone but the phrasing/feed aren't updated yet.
+Expected: FAIL to **compile** first — `InsightPhrasing.outcomeLabel(for:)` is referenced by the new test helper but doesn't exist yet. (This is the RED step; a compile failure counts. Once Step 3 adds it, the mood-claim/feed assertions become the real checks.)
 
 - [ ] **Step 3: Add the mood phrasing.** In `InsightPhrasing.swift`, replace `claim(_:)` and `subline(_:)`, and add `outcomeLabel(for:)`:
 
@@ -285,23 +307,57 @@ git commit -m "feat(core): tentative mood phrasing (lift/lower/protect) + un-sup
 
 ---
 
-### Task 3: App — resolver uses the mood outcome noun
+### Task 3: App — resolver noun + mood-aware drill-down title + a mood VM test
 
 **Files:**
 - Modify: `Views/HealthOS/Insights/InsightsViewModel.swift` (the `load()` resolver)
+- Modify: `Views/HealthOS/Insights/InsightDetailView.swift` (drill-down `navigationTitle`)
+- Test: `Food IntolerancesTests/InsightsViewModelTests.swift` (a mood edge surfaces through the VM)
 
 **Interfaces:**
-- Consumes: `InsightPhrasing.outcomeLabel(for:)` from Task 2.
+- Consumes: `InsightPhrasing.outcomeLabel(for:)` from Task 2; `GRDBRelationshipStore(database:).save(_:)` (public) to seed a mood edge.
 
-- [ ] **Step 1: Use the core helper in the resolver.** In `InsightsViewModel.swift`'s `load()`, change the `ResolvedRelationship` construction's `outcomeLabel:` argument from `r.toSubtype ?? "outcome"` to:
+- [ ] **Step 1: Write the failing VM test first.** In `InsightsViewModelTests.swift`, add (it seeds a mood edge directly — `SyntheticDataGenerator` only plants symptom outcomes — and asserts it surfaces un-suppressed with tentative phrasing through the real `load()` pipeline):
+
+```swift
+    @Test func moodEdgeSurfacesWithTentativePhrasing() async throws {
+        let refNow = Date(timeIntervalSince1970: 1_713_000_000)
+        let db = try AppDatabase.inMemory()
+        let mood = Relationship(
+            fromCategory: "shortSleep", toCategory: "mood", type: .possibleTrigger,
+            evidenceCount: 6, contradictionCount: 2, confidence: 0.6, strength: 5, lagHours: 12,
+            firstSeen: refNow.addingTimeInterval(-5 * 86_400), lastSeen: refNow, lastRecomputed: refNow,
+            status: .active, edgeKey: "derived:shortSleep|mood:low|possibleTrigger", toSubtype: "low")
+        try await GRDBRelationshipStore(database: db).save(mood)
+        let vm = InsightsViewModel(database: db, now: { refNow })
+        await vm.load()
+        let card = vm.feed.sections.flatMap(\.cards).first { $0.claim.lowercased().contains("mood") }
+        #expect(card != nil)                                          // un-suppressed
+        #expect(card?.claim == "Short sleep is linked to lower mood") // tentative mood phrasing via the VM
+    }
+```
+
+Run it (fails today — the mood filter is still there until Task 2 lands / the resolver isn't wired): `xcodebuild test … -only-testing:"Food IntolerancesTests/InsightsViewModelTests/moodEdgeSurfacesWithTentativePhrasing" … -parallel-testing-enabled NO`. (With Tasks 1–2 already merged into the branch, the un-suppression is in place, so this test's real job is a regression lock that the mood edge keeps surfacing + phrasing correctly.)
+
+- [ ] **Step 2: Use the core helper in the resolver.** In `InsightsViewModel.swift`'s `load()`, change the `ResolvedRelationship` construction's `outcomeLabel:` argument from `r.toSubtype ?? "outcome"` to:
 
 ```swift
                                                  outcomeLabel: InsightPhrasing.outcomeLabel(for: r),
 ```
 
-(No other change — mood edges now get "a low mood"/"a good mood"; symptom edges are unchanged since `outcomeLabel(for:)` returns `r.toSubtype ?? "outcome"` for non-mood.)
+(Mood edges now get "a low mood"/"a good mood" in their supporting `countLine`; symptom edges are unchanged since `outcomeLabel(for:)` returns `r.toSubtype ?? "outcome"` for non-mood — provably behavior-preserving for the existing dairy/bloating tests.)
 
-- [ ] **Step 2: Build + regression.**
+- [ ] **Step 3: Fix the drill-down title for mood.** In `InsightDetailView.swift`, `navigationTitle` (line 61-62) currently renders `"Evidence: \(subtype.capitalized)"` — for a mood edge that's a bare "Evidence: Low" / "Evidence: Good". Add a mood branch first:
+
+```swift
+    private var navigationTitle: String {
+        if relationship?.toCategory == "mood" { return "Evidence: your mood" }
+        if let subtype = relationship?.toSubtype, !subtype.isEmpty { return "Evidence: \(subtype.capitalized)" }
+```
+
+(Leave the rest of `navigationTitle` unchanged.)
+
+- [ ] **Step 4: Build + run the VM tests.**
 
 Run:
 ```
@@ -313,13 +369,15 @@ Run:
 ```
 xcodebuild test -project "Food Intolerances.xcodeproj" -scheme "Food Intolerances" -only-testing:"Food IntolerancesTests/InsightsViewModelTests" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -parallel-testing-enabled NO 2>&1 | grep -E "Test run with|✔ Test|✘ Test|TEST (SUCCEEDED|FAILED)" | tail -10
 ```
-Expected: `** TEST SUCCEEDED **` (the resolver change is behavior-preserving for the existing symptom-based tests).
+Expected: `** TEST SUCCEEDED **` — the existing symptom tests stay green and `moodEdgeSurfacesWithTentativePhrasing` passes.
 
-- [ ] **Step 3: Commit.**
+- [ ] **Step 5: Commit.**
 
 ```bash
-git add "Views/HealthOS/Insights/InsightsViewModel.swift"
-git commit -m "feat(app): Insights resolver renders mood outcomes as a natural noun (a low/good mood)"
+git add "Views/HealthOS/Insights/InsightsViewModel.swift" \
+        "Views/HealthOS/Insights/InsightDetailView.swift" \
+        "Food IntolerancesTests/InsightsViewModelTests.swift"
+git commit -m "feat(app): mood outcomes render as a natural noun + mood-aware drill-down title (+ VM surfacing test)"
 ```
 
 ---

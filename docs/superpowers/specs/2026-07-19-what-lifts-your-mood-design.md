@@ -81,7 +81,7 @@ The engine's structure is unchanged — this adds one outcome key and wires it t
   - `InsightPhrasingTests` — each mood template (the 5 rows in §3D) renders exactly; a non-mood edge is unchanged; `subline` omits severity for a mood trigger but keeps lag.
   - `InsightsFeedTests` — the suppression test from last round is **inverted**: a mood-outcome edge now **appears** in the built feed (delete/replace `moodOutcomeEdgesAreSuppressed`).
 - **App (`-parallel-testing-enabled NO`):**
-  - `InsightsViewModelTests` — a resolved mood edge's `outcomeLabel` is the natural noun ("a good mood" / "a low mood"), not "good"/"low".
+  - `InsightsViewModelTests` — a seeded mood edge surfaces through `load()` un-suppressed with tentative phrasing ("… is linked to lower mood"). The natural-noun rendering ("a good mood" in the count line) is pinned in core via `InsightPhrasingTests` (`countLine`), since surfacing the noun at the app layer needs recomputed evidence; the app test locks that mood edges reach the feed correctly phrased.
 - **Device e2e:** with seeded data + recompute, a good-mood edge surfaces as "… seems to lift your mood" and a low-mood edge as "… is linked to lower mood"; both appear in Insights with dots + drill-down; "pressure drop → lower mood" can appear; no moon/mercury factor appears.
 
 ## 7. Copy / honesty guardrails
