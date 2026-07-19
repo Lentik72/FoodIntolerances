@@ -81,6 +81,7 @@ Design: `docs/superpowers/specs/2026-07-19-timeline-list-swipe-design.md`.
                         .listRowInsets(EdgeInsets())
                         .textCase(nil)
                 }
+                .listSectionSeparator(.hidden)   // MUST be on the Section — inert if applied to the List
             }
             if viewModel.hasMore && !viewModel.days.isEmpty && !viewModel.isSearchActive {
                 ProgressView()
@@ -93,7 +94,6 @@ Design: `docs/superpowers/specs/2026-07-19-timeline-list-swipe-design.md`.
             }
         }
         .listStyle(.plain)
-        .listSectionSeparator(.hidden)
         .listSectionSpacing(0)
         .scrollContentBackground(.hidden)
         .background(HealthTheme.paper)
@@ -108,6 +108,56 @@ Notes for the implementer (settle in `#Preview` + device, spec §5):
 - `.listSectionSpacing(0)` keeps days abutting (the header supplies its own top padding), matching the old `LazyVStack(spacing: 0)`.
 - Do NOT modify `TimelineDayHeader.swift`, `TimelineEventRow.swift`, or `SleepSessionRow.swift` — the paper background is applied in the `header:` closure here.
 
+- [ ] **Step 1b: Add a `#Preview` for the sticky-header styling** (there is none in the file today; the sticky-header background is the flagged-fiddly part and canvas iteration on it — light + dark, pinned vs. inline — is far faster than device rebuilds). Append to `TimelineView.swift`. Keep the synthetic-data constructors matching the real initializers (`HealthEvent(timestamp:category:subtype:value:source:)`, `TimelineDay(dayStart:items:severityPoints:)`, `SeverityPoint(time:value:)`) — adjust if the build flags a signature:
+
+```swift
+#Preview("Timeline — sticky headers") {
+    func ev(_ minsAgo: Double, _ cat: EventCategory, _ sub: String, _ v: Double?) -> HealthEvent {
+        HealthEvent(timestamp: Date(timeIntervalSinceNow: -minsAgo * 60),
+                    category: cat, subtype: sub, value: v, source: .manual)
+    }
+    let cal = Calendar.current
+    let days = [
+        TimelineDay(dayStart: cal.startOfDay(for: Date()),
+                    items: [.event(ev(30, .symptom, "headache", 6)),
+                            .event(ev(120, .mood, "mood", 2)),
+                            .event(ev(200, .note, "Slept badly", nil))],
+                    severityPoints: [SeverityPoint(time: Date(), value: 6)]),
+        TimelineDay(dayStart: cal.startOfDay(for: Date(timeIntervalSinceNow: -86_400)),
+                    items: [.event(ev(1_500, .symptom, "nausea", 3))],
+                    severityPoints: []),
+    ]
+    return List {
+        ForEach(days) { day in
+            Section {
+                ForEach(day.items) { item in
+                    if case .event(let e) = item {
+                        TimelineEventRow(event: e) { _ in }
+                            .padding(.leading, 16)
+                            .listRowInsets(EdgeInsets())
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                    }
+                }
+            } header: {
+                TimelineDayHeader(day: day)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(HealthTheme.paper)
+                    .listRowInsets(EdgeInsets())
+                    .textCase(nil)
+            }
+            .listSectionSeparator(.hidden)
+        }
+    }
+    .listStyle(.plain)
+    .listSectionSpacing(0)
+    .scrollContentBackground(.hidden)
+    .background(HealthTheme.paper)
+}
+```
+
+Scroll the canvas to confirm the pinned header sits on opaque paper (no gray material bleed) with the sparkline crisp; toggle the canvas to dark and re-check.
+
 - [ ] **Step 2: Build + verify the VM tests + preview.**
 
 Run:
@@ -120,7 +170,7 @@ Run:
 ```
 xcodebuild test -project "Food Intolerances.xcodeproj" -scheme "Food Intolerances" -only-testing:"Food IntolerancesTests/TimelineViewModelTests" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -parallel-testing-enabled NO 2>&1 | grep -E "Test run with|✔ Test|✘ Test|TEST (SUCCEEDED|FAILED)" | tail -10
 ```
-Expected: `** TEST SUCCEEDED **`, all pass (the VM is unchanged; this is a regression guard). Confirm `TimelineView`'s `#Preview` (if any) still compiles; if there is none, confirm the build's SwiftUI type-checking of `feed` passed.
+Expected: `** TEST SUCCEEDED **`, all pass (the VM is unchanged; this is a regression guard). Confirm the new `#Preview` (Step 1b) compiles and renders in the Xcode canvas — scroll it to check the pinned header on paper, in light + dark.
 
 - [ ] **Step 3: Commit.**
 
@@ -165,16 +215,18 @@ In `body`, add the sheet next to the existing `.navigationDestination(for: Healt
                                 } label: {
                                     Label("Delete", systemImage: "trash")
                                 }
-                                Button {
-                                    editingEvent = event
-                                } label: {
-                                    Label("Edit", systemImage: "pencil")
+                                if event.source == .manual {
+                                    Button {
+                                        editingEvent = event
+                                    } label: {
+                                        Label("Edit", systemImage: "pencil")
+                                    }
+                                    .tint(HealthTheme.accent)
                                 }
-                                .tint(HealthTheme.accent)
                             }
 ```
 
-Delete is declared first, so full-swipe triggers it (destructive → red). Edit is tinted with the accent. The `.sleepSession` branch gets NO `.swipeActions`.
+Delete is declared first, so full-swipe triggers it (destructive → red), and it applies to **all** event rows (parity with the detail screen, which lets any event be deleted). **Edit is gated behind `event.source == .manual`** — mirroring `EventDetailView.swift:39`, which only offers Edit for manually-logged events (editing a HealthKit/imported/photo/voice event would diverge from or be clobbered by the next sync). `.swipeActions` is a `@ViewBuilder`, so the `if` compiles; a non-manual row simply shows Delete only. The `.sleepSession` branch gets NO `.swipeActions`.
 
 - [ ] **Step 3: Build + verify the VM tests.**
 
@@ -199,11 +251,23 @@ git commit -m "feat(app): Timeline swipe-to-Delete/Edit on event rows (reuses de
   - App build succeeds.
 
 - [ ] **Step 2: On-device / simulator behavior check** (device preferred) — the real gate. Confirm:
-  - **Swipe** an event row (trailing) → **Delete + Edit** appear; **full-swipe deletes** and the **"Event deleted · Undo"** toast restores it.
+
+  *Swipe actions:*
+  - **Swipe** a manually-logged event row (trailing) → **Delete + Edit** appear; **full-swipe deletes** and the **"Event deleted · Undo"** toast restores it.
   - **Edit** (swipe) opens the **editor sheet** directly.
+  - **A non-manual row** (e.g. a HealthKit-sourced steps/vitals row, or an imported one) → swipe shows **Delete only, no Edit** (the source gate).
+  - **On device with the real DB** (not the in-memory sim), a full-swipe delete **animates away promptly** — no visible hang or snap-back before removal.
   - **Sleep-session rows are NOT swipeable** (swipe does nothing); tap-to-expand/collapse still works.
-  - **Day headers stick** to the top while scrolling, on `HealthTheme.paper` with the **severity sparkline crisp** — light + dark.
-  - **Infinite scroll** (scroll to load more), **pull-to-refresh**, **search**, **filter**, **empty state**, and **tap → detail** all still work.
+
+  *Preserved behaviors:*
+  - **Expand a sleep session that is NOT the first visible row** (scroll a few days down first) — the list does **not jump / auto-scroll** to reposition.
+  - **With an active search**, swipe-delete a result row → it disappears and **Undo restores it into the search results** (not the browse list).
+  - **Infinite scroll** (scroll to load more), **pull-to-refresh**, **filter**, **empty state**, and **tap → detail** all still work; **newest day is at the top**.
+  - Background then foreground the app → the feed **silently refreshes** (scenePhase); logging from Capture refreshes it too.
+
+  *Look + a11y:*
+  - **Day headers stick** to the top while scrolling, on `HealthTheme.paper` with the **severity sparkline crisp** and **no system-material bleed at the header edges**; **no stray section hairlines/separators** anywhere.
+  - With **VoiceOver** on, **Delete / Edit are reachable via the actions rotor** on an event row.
   - Correct in **light + dark** and at **XXL Dynamic Type** (headers/rows don't clip).
 
 - [ ] **Step 3: Record observed behavior** in the review notes / ledger.

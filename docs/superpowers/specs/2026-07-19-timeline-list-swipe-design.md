@@ -70,7 +70,7 @@ Every one of these must behave as it does today after the conversion:
 
 - **Day segmentation** — one `Section` per `TimelineDay` (was: `TimelineDayHeader` + rows inline). Newest day first, same ordering.
 - **Sleep session expand/collapse** — `expandedSessions: Set<String>` in `TimelineView`, toggled by `SleepSessionRow`'s callback, unchanged.
-- **Infinite scroll** — the `hasMore && !isSearchActive` sentinel (`ProgressView().onAppear { await viewModel.loadMore() }`) becomes a **trailing row after the sections** (a plain, header-less row); `.onAppear` still fires `loadMore()`.
+- **Infinite scroll** — the `hasMore && !days.isEmpty && !isSearchActive` sentinel (`ProgressView().onAppear { await viewModel.loadMore() }`) becomes a **trailing row after the sections** (a plain, header-less row); `.onAppear` still fires `loadMore()`.
 - **Pull-to-refresh** — `.refreshable { await viewModel.refresh() }` (native on List).
 - **Search / filter** — driven by `viewModel.days` / `searchText` / the filter bar; the List renders whatever `days` holds, so search and filter are unaffected. (Search days hold raw event rows only — no sessions — which the switch handles.)
 - **Empty state** — when `viewModel.days.isEmpty && !isLoading`, show the existing empty-state view (as a plain row or an `.overlay` on the List — implementer picks whichever renders cleanly with no stray separators/insets).
