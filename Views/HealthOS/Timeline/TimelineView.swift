@@ -97,13 +97,17 @@ struct TimelineView: View {
     }
 
     private var feed: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                if viewModel.days.isEmpty && !viewModel.isLoading {
-                    emptyState.padding(.top, 60)
-                }
-                ForEach(viewModel.days) { day in
-                    TimelineDayHeader(day: day)
+        List {
+            if viewModel.days.isEmpty && !viewModel.isLoading {
+                emptyState
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 60)
+                    .listRowInsets(EdgeInsets())
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+            }
+            ForEach(viewModel.days) { day in
+                Section {
                     ForEach(day.items) { item in
                         switch item {
                         case .event(let event):
@@ -111,6 +115,9 @@ struct TimelineView: View {
                                 path.append(tapped)
                             }
                             .padding(.leading, 16)
+                            .listRowInsets(EdgeInsets())
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
                         case .sleepSession(let session):
                             SleepSessionRow(session: session,
                                             isExpanded: expandedSessions.contains(session.id)) {
@@ -123,17 +130,34 @@ struct TimelineView: View {
                                 }
                             }
                             .padding(.leading, 16)
+                            .listRowInsets(EdgeInsets())
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
                         }
                     }
+                } header: {
+                    TimelineDayHeader(day: day)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(HealthTheme.paper)
+                        .listRowInsets(EdgeInsets())
+                        .textCase(nil)
                 }
-                if viewModel.hasMore && !viewModel.days.isEmpty && !viewModel.isSearchActive {
-                    ProgressView()
-                        .padding(.vertical, 24)
-                        .onAppear { Task { await viewModel.loadMore() } }
-                }
+                .listSectionSeparator(.hidden)   // MUST be on the Section — inert if applied to the List
             }
-            .padding(.bottom, 12)
+            if viewModel.hasMore && !viewModel.days.isEmpty && !viewModel.isSearchActive {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
+                    .listRowInsets(EdgeInsets())
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                    .onAppear { Task { await viewModel.loadMore() } }
+            }
         }
+        .listStyle(.plain)
+        .listSectionSpacing(0)
+        .scrollContentBackground(.hidden)
+        .background(HealthTheme.paper)
         .scrollDismissesKeyboard(.immediately)
         .refreshable { await viewModel.refresh() }
     }
@@ -152,4 +176,48 @@ struct TimelineView: View {
                 .padding(.horizontal, 40)
         }
     }
+}
+
+#Preview("Timeline — sticky headers") {
+    func ev(_ minsAgo: Double, _ cat: EventCategory, _ sub: String, _ v: Double?) -> HealthEvent {
+        HealthEvent(timestamp: Date(timeIntervalSinceNow: -minsAgo * 60),
+                    category: cat, subtype: sub, value: v, source: .manual)
+    }
+    let cal = Calendar.current
+    let days = [
+        TimelineDay(dayStart: cal.startOfDay(for: Date()),
+                    items: [.event(ev(30, .symptom, "headache", 6)),
+                            .event(ev(120, .mood, "mood", 2)),
+                            .event(ev(200, .note, "Slept badly", nil))],
+                    severityPoints: [SeverityPoint(time: Date(), value: 6)]),
+        TimelineDay(dayStart: cal.startOfDay(for: Date(timeIntervalSinceNow: -86_400)),
+                    items: [.event(ev(1_500, .symptom, "nausea", 3))],
+                    severityPoints: []),
+    ]
+    return List {
+        ForEach(days) { day in
+            Section {
+                ForEach(day.items) { item in
+                    if case .event(let e) = item {
+                        TimelineEventRow(event: e) { _ in }
+                            .padding(.leading, 16)
+                            .listRowInsets(EdgeInsets())
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                    }
+                }
+            } header: {
+                TimelineDayHeader(day: day)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(HealthTheme.paper)
+                    .listRowInsets(EdgeInsets())
+                    .textCase(nil)
+            }
+            .listSectionSeparator(.hidden)
+        }
+    }
+    .listStyle(.plain)
+    .listSectionSpacing(0)
+    .scrollContentBackground(.hidden)
+    .background(HealthTheme.paper)
 }
