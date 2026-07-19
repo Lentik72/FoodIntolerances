@@ -7,6 +7,7 @@ struct TimelineView: View {
     @State private var searchDebounce: Task<Void, Never>?
     @State private var path = NavigationPath()
     @State private var expandedSessions: Set<String> = []
+    @State private var editingEvent: HealthEvent?
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var captureCoordinator: CaptureCoordinator
 
@@ -20,6 +21,9 @@ struct TimelineView: View {
             .background(HealthTheme.paper)
             .navigationDestination(for: HealthEvent.self) { event in
                 EventDetailView(event: event, viewModel: viewModel)
+            }
+            .sheet(item: $editingEvent) { event in
+                EventEditView(event: event, viewModel: viewModel)
             }
             .overlay(alignment: .bottom) {
                 if let pending = viewModel.pendingUndo {
@@ -118,6 +122,21 @@ struct TimelineView: View {
                             .listRowInsets(EdgeInsets())
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    Task { await viewModel.delete(event) }
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                                if event.source == .manual {
+                                    Button {
+                                        editingEvent = event
+                                    } label: {
+                                        Label("Edit", systemImage: "pencil")
+                                    }
+                                    .tint(HealthTheme.accent)
+                                }
+                            }
                         case .sleepSession(let session):
                             SleepSessionRow(session: session,
                                             isExpanded: expandedSessions.contains(session.id)) {
