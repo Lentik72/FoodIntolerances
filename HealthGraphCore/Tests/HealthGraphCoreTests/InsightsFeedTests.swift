@@ -56,4 +56,25 @@ struct InsightsFeedTests {
         let card = feed.sections.first { $0.kind == .active }!.cards.first!
         #expect(card.badge == .earlySignal)
     }
+
+    @Test func moodOutcomeEdgesAreSuppressed() {
+        let refNow = Date(timeIntervalSince1970: 1_700_000_000)
+        func rel(toCategory: String, toSubtype: String, key: String) -> Relationship {
+            Relationship(fromCategory: "food", toCategory: toCategory, type: .possibleTrigger,
+                         evidenceCount: 6, contradictionCount: 2, confidence: 0.6, strength: 5, lagHours: 12,
+                         firstSeen: refNow.addingTimeInterval(-5 * 86_400), lastSeen: refNow,
+                         lastRecomputed: refNow, status: .active, edgeKey: key, toSubtype: toSubtype)
+        }
+        let dairy = ResolvedRelationship(
+            relationship: rel(toCategory: "symptom", toSubtype: "bloating", key: "k-dairy"),
+            exposureLabel: "Dairy", outcomeLabel: "bloating", exposureCategory: .food, recentOutcomes: [])
+        let coffeeMood = ResolvedRelationship(
+            relationship: rel(toCategory: "mood", toSubtype: "low", key: "k-coffee-mood"),
+            exposureLabel: "Coffee", outcomeLabel: "low", exposureCategory: .food, recentOutcomes: [])
+        let claims = InsightsFeed.build([dairy, coffeeMood], now: refNow)
+            .sections.flatMap(\.cards).map { $0.claim.lowercased() }
+        #expect(claims.contains { $0.contains("dairy") })    // the symptom edge survives
+        #expect(!claims.contains { $0.contains("coffee") })  // the mood edge is suppressed
+        #expect(claims.count == 1)                           // exactly one card (guards vacuity)
+    }
 }
