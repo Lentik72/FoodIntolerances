@@ -14,9 +14,16 @@ public struct OutcomeSource {
                 return OutcomeOccurrence(key: .symptom(subtype), timestamp: e.timestamp,
                                          value: e.value, sourceEventID: e.id)
             case .mood:
-                guard let v = e.value, v <= config.lowMoodThreshold else { return nil }
-                return OutcomeOccurrence(key: .lowMood, timestamp: e.timestamp,
-                                         value: v, sourceEventID: e.id)
+                guard let v = e.value else { return nil }
+                if v <= config.lowMoodThreshold {
+                    return OutcomeOccurrence(key: .lowMood, timestamp: e.timestamp,
+                                             value: v, sourceEventID: e.id)
+                }
+                if v >= config.goodMoodThreshold {
+                    return OutcomeOccurrence(key: .goodMood, timestamp: e.timestamp,
+                                             value: v, sourceEventID: e.id)
+                }
+                return nil
             default:
                 return nil
             }

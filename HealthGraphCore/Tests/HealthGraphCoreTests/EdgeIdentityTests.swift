@@ -22,6 +22,18 @@ struct EdgeIdentityTests {
         roundTrip(.derived(.pressureDrop), .symptom("headache"))
         roundTrip(.derived(.cyclePhase(.luteal)), .symptom("cramps"))
         roundTrip(.derived(.highStress), .lowMood)
+        roundTrip(.derived(.pressureDrop), .goodMood)
+    }
+    @Test func goodMoodColumns() {
+        let cols = EdgeIdentity.columns(from: .derived(.shortSleep), to: .goodMood)
+        #expect(cols.toCategory == "mood")
+        #expect(cols.toSubtype == "good")
+        #expect(EdgeIdentity.parse(Relationship(
+            fromObjectID: cols.fromObjectID, fromCategory: cols.fromCategory,
+            toCategory: cols.toCategory, type: .possibleTrigger, firstSeen: Date(), lastSeen: Date(),
+            lastRecomputed: Date(), status: .active,
+            edgeKey: EdgeIdentity.edgeKey(from: .derived(.shortSleep), to: .goodMood, type: .possibleTrigger),
+            toSubtype: cols.toSubtype))?.outcome == .goodMood)
     }
     @Test func objectColumnsCarryStructuredPointers() {
         let oid = UUID()

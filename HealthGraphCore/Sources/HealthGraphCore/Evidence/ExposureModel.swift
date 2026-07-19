@@ -26,6 +26,7 @@ public struct ExposureOccurrence: Sendable, Equatable {
 public enum OutcomeKey: Sendable, Equatable, Hashable {
     case symptom(String)   // subtype
     case lowMood
+    case goodMood
 }
 
 public struct OutcomeOccurrence: Sendable, Equatable {

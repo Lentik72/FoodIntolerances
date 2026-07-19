@@ -16,6 +16,8 @@ struct EvidenceConfigTests {
         #expect(c.observationalCeiling == 0.75)
         #expect(c.candidateRatioTrigger > 1.0)
         #expect(c.candidateRatioProtective < 1.0)
+        #expect(c.lowMoodThreshold == 1)
+        #expect(c.goodMoodThreshold == 3)
     }
 }
 
@@ -45,7 +47,7 @@ struct OutcomeSourceTests {
             HealthEvent(timestamp: Date(timeIntervalSince1970: 200), category: .mood,
                         subtype: "mood", value: 1, source: .manual),           // Rough (≤1) → low mood
             HealthEvent(timestamp: Date(timeIntervalSince1970: 300), category: .mood,
-                        subtype: "mood", value: 3, source: .manual),           // Good → skipped
+                        subtype: "mood", value: 2, source: .manual),           // Okay → neither
         ]
         let occ = OutcomeSource(config: .default).occurrences(from: events)
         #expect(occ.contains { $0.key == .symptom("headache") && $0.value == 6 })
@@ -59,6 +61,15 @@ struct OutcomeSourceTests {
                                subtype: "mood", value: 2, source: .manual)  // Okay → NOT low
         let occ = OutcomeSource(config: .default).occurrences(from: [low, okay])
         #expect(occ.filter { $0.key == .lowMood }.count == 1)
+    }
+    @Test func goodMoodAtThreshold() {
+        let good = HealthEvent(timestamp: Date(timeIntervalSince1970: 100), category: .mood,
+                               subtype: "mood", value: 3, source: .manual)   // Good → good mood
+        let okay = HealthEvent(timestamp: Date(timeIntervalSince1970: 200), category: .mood,
+                               subtype: "mood", value: 2, source: .manual)   // Okay → neither
+        let occ = OutcomeSource(config: .default).occurrences(from: [good, okay])
+        #expect(occ.filter { $0.key == .goodMood }.count == 1)
+        #expect(occ.count == 1)
     }
 }
 

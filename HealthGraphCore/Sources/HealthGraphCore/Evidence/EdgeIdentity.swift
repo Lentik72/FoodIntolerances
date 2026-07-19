@@ -21,6 +21,7 @@ public enum EdgeIdentity {
         switch key {
         case let .symptom(subtype): return "symptom:\(subtype)"
         case .lowMood: return "mood:low"
+        case .goodMood: return "mood:good"
         }
     }
 
@@ -39,6 +40,7 @@ public enum EdgeIdentity {
         switch to {
         case let .symptom(subtype): return (fromObjectID, fromCategory, "symptom", subtype)
         case .lowMood: return (fromObjectID, fromCategory, "mood", "low")
+        case .goodMood: return (fromObjectID, fromCategory, "mood", "good")
         }
     }
 
@@ -77,6 +79,7 @@ public enum EdgeIdentity {
     static func parseTo(_ token: String) -> OutcomeKey? {
         if token.hasPrefix("symptom:") { return .symptom(String(token.dropFirst(8))) }
         if token == "mood:low" { return .lowMood }
+        if token == "mood:good" { return .goodMood }
         return nil
     }
 }
