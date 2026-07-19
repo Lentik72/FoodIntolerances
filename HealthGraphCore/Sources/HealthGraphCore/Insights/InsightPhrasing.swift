@@ -3,11 +3,33 @@ import Foundation
 /// Deterministic, template-based user-facing text. NO causal language (spec §7).
 public enum InsightPhrasing {
     public static func claim(_ rr: ResolvedRelationship) -> String {
+        if rr.relationship.toCategory == "mood" { return moodClaim(rr) }
         switch rr.relationship.type {
         case .improves: return "\(rr.exposureLabel) → fewer \(rr.outcomeLabel)"
         case .noEffect: return "No measurable effect of \(rr.exposureLabel) on \(rr.outcomeLabel)"
         default:        return "\(rr.exposureLabel) → \(rr.outcomeLabel)"
         }
+    }
+
+    /// Warm, tentative, directional — never causal. `.improves` reduces the outcome;
+    /// everything else (possibleTrigger/worsens/precedes) increases it.
+    private static func moodClaim(_ rr: ResolvedRelationship) -> String {
+        let x = rr.exposureLabel
+        let isGood = (rr.relationship.toSubtype == "good")
+        switch rr.relationship.type {
+        case .noEffect: return "No clear link between \(x) and your mood"
+        case .improves: return isGood ? "\(x) seems to weigh on your mood"
+                                      : "\(x) seems to protect against low moods"
+        default:        return isGood ? "\(x) seems to lift your mood"
+                                      : "\(x) is linked to lower mood"
+        }
+    }
+
+    /// The outcome noun for supporting lines (countLine). Mood reads naturally
+    /// ("a good mood"); other outcomes keep their subtype.
+    public static func outcomeLabel(for r: Relationship) -> String {
+        guard r.toCategory == "mood" else { return r.toSubtype ?? "outcome" }
+        return r.toSubtype == "good" ? "a good mood" : "a low mood"
     }
 
     public static func badge(confidence: Double, config: InsightsConfig = .default) -> BadgeTier {
@@ -22,7 +44,7 @@ public enum InsightPhrasing {
         let r = rr.relationship
         var parts: [String] = []
         if let lag = r.lagHours { parts.append("usually within ~\(Int(lag.rounded()))h") }
-        if let s = r.strength { parts.append(String(format: "avg severity +%.1f", s)) }
+        if r.toCategory != "mood", let s = r.strength { parts.append(String(format: "avg severity +%.1f", s)) }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 

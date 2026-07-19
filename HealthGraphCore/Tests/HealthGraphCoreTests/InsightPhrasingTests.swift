@@ -60,4 +60,54 @@ struct InsightPhrasingTests {
             for word in forbidden { #expect(!text.contains(word), "phrasing must avoid causal word '\(word)'") }
         }
     }
+
+    func moodRel(_ subtype: String, _ type: RelationshipType, lagHours: Double? = 12) -> Relationship {
+        Relationship(fromCategory: "shortSleep", toCategory: "mood", type: type,
+                     evidenceCount: 6, contradictionCount: 2, confidence: 0.6,
+                     strength: 5, lagHours: lagHours, firstSeen: now, lastSeen: now,
+                     lastRecomputed: now, status: .active, edgeKey: "k", toSubtype: subtype)
+    }
+    func moodResolved(_ r: Relationship, exposure: String, recent: [Bool] = []) -> ResolvedRelationship {
+        ResolvedRelationship(relationship: r, exposureLabel: exposure,
+                             outcomeLabel: InsightPhrasing.outcomeLabel(for: r),
+                             exposureCategory: .food, recentOutcomes: recent)
+    }
+
+    @Test func moodClaims() {
+        #expect(InsightPhrasing.claim(moodResolved(moodRel("good", .possibleTrigger), exposure: "Exercise"))
+                == "Exercise seems to lift your mood")
+        #expect(InsightPhrasing.claim(moodResolved(moodRel("low", .improves), exposure: "Magnesium"))
+                == "Magnesium seems to protect against low moods")
+        #expect(InsightPhrasing.claim(moodResolved(moodRel("low", .possibleTrigger), exposure: "Short sleep"))
+                == "Short sleep is linked to lower mood")
+        #expect(InsightPhrasing.claim(moodResolved(moodRel("good", .improves), exposure: "Alcohol"))
+                == "Alcohol seems to weigh on your mood")
+        #expect(InsightPhrasing.claim(moodResolved(moodRel("low", .noEffect), exposure: "Coffee"))
+                == "No clear link between Coffee and your mood")
+    }
+    @Test func moodOutcomeLabelIsANaturalNoun() {
+        #expect(InsightPhrasing.outcomeLabel(for: moodRel("good", .possibleTrigger)) == "a good mood")
+        #expect(InsightPhrasing.outcomeLabel(for: moodRel("low", .possibleTrigger)) == "a low mood")
+    }
+    @Test func moodTriggerSublineHasLagButNoSeverity() {
+        let sub = InsightPhrasing.subline(moodResolved(moodRel("low", .possibleTrigger), exposure: "Short sleep"))
+        #expect(sub != nil)
+        #expect(sub!.contains("~12h"))
+        #expect(!sub!.contains("severity"))   // severity is a symptom concept, omitted for mood
+    }
+    @Test func moodCountLineUsesTheNaturalNoun() {
+        let rr = moodResolved(moodRel("good", .possibleTrigger), exposure: "Exercise", recent: [true, false, true])
+        #expect(InsightPhrasing.countLine(rr) == "In 2 of your last 3 Exercise logs, a good mood followed")
+    }
+    @Test func moodPhrasingHasNoCausalLanguage() {   // spec §7 — the honesty rule binds to mood too
+        let forbidden = ["cause", "causes", "triggers ", "makes you", "guarantee"]
+        let cases: [(String, RelationshipType)] = [("good", .possibleTrigger), ("low", .improves),
+            ("low", .possibleTrigger), ("good", .improves), ("low", .noEffect)]
+        for (sub, type) in cases {
+            let rr = moodResolved(moodRel(sub, type), exposure: "Exercise", recent: [true, false, true])
+            let text = (InsightPhrasing.claim(rr) + " " + (InsightPhrasing.subline(rr) ?? "")
+                        + " " + (InsightPhrasing.countLine(rr) ?? "")).lowercased()
+            for word in forbidden { #expect(!text.contains(word), "mood phrasing must avoid '\(word)'") }
+        }
+    }
 }

@@ -3,9 +3,6 @@ import Foundation
 public enum InsightsFeed {
     public static func build(_ resolved: [ResolvedRelationship], now: Date,
                              config: InsightsConfig = .default) -> InsightsFeedModel {
-        // Mood-outcome edges (toCategory == "mood") are mined + stored but not surfaced this
-        // cycle — their reading experience ("what lifts your mood") is the next round.
-        let resolved = resolved.filter { $0.relationship.toCategory != "mood" }
         let active = resolved.filter { $0.relationship.status == .active }
         let noEffect = resolved.filter { $0.relationship.status == .confirmedNoEffect }
         let archive = resolved.filter { $0.relationship.status == .decayed || $0.relationship.status == .userDismissed }
