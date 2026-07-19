@@ -13,7 +13,7 @@ final class MoodCaptureModel: ObservableObject {
     }
 }
 
-/// Capture-sheet Mood tab: tap one of five faces (+ optional note); back-dated via the
+/// Capture-sheet Mood tab: tap one of three faces (+ optional note); back-dated via the
 /// sheet's shared "When" picker. The Home quick-check is the fast path; this is the
 /// "with note / earlier time" path.
 struct MoodCaptureView: View {
@@ -34,7 +34,7 @@ struct MoodCaptureView: View {
                         }
                     } label: {
                         VStack(spacing: 4) {
-                            Text(level.emoji).font(.largeTitle)
+                            MoodFace(level: level, size: 52)
                             Text(level.label).font(.caption).foregroundStyle(HealthTheme.inkSecondary)
                         }
                         .frame(maxWidth: .infinity, minHeight: 64).contentShape(Rectangle())

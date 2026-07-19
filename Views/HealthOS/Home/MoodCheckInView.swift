@@ -39,9 +39,8 @@ final class MoodCheckInModel: ObservableObject {
     func load() async {
         dismissedToday = (defaults.string(forKey: Self.dismissKey) == Self.dayKey(now(), calendar))
         let events = (try? await store.events(in: todayInterval, category: .mood)) ?? []
-        if let latest = events.max(by: { $0.timestamp < $1.timestamp }),
-           let v = latest.value, let level = MoodLevel(rawValue: Int(v)) {
-            todaysMood = (level, latest.timestamp)
+        if let latest = events.max(by: { $0.timestamp < $1.timestamp }), let v = latest.value {
+            todaysMood = (MoodLevel(clamping: Int(v)), latest.timestamp)
             lastLoggedID = latest.id
         } else {
             todaysMood = nil; lastLoggedID = nil
@@ -103,7 +102,7 @@ struct MoodCheckInView: View {
                             Button {
                                 Task { await model.log(level); captureCoordinator.saveCompleted() }
                             } label: {
-                                Text(level.emoji).font(.largeTitle)
+                                MoodFace(level: level, size: 56)
                                     .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
                             }
                             .accessibilityLabel(level.label)

@@ -30,7 +30,7 @@ struct MoodCheckInModelTests {
 
     @Test func latestOfMultipleLogsTodayWins() async throws {
         let db = try AppDatabase.inMemory()
-        await model(db, at: noon).log(.awful)
+        await model(db, at: noon).log(.rough)
         await model(db, at: noon.addingTimeInterval(3600)).log(.good)   // later, same day
         let fresh = model(db, at: noon.addingTimeInterval(7200))
         await fresh.load()
@@ -48,7 +48,7 @@ struct MoodCheckInModelTests {
     @Test func undoRemovesTodaysMood() async throws {
         let db = try AppDatabase.inMemory()
         let m = model(db, at: noon)
-        await m.log(.awful)
+        await m.log(.rough)
         await m.undo()
         #expect(m.todaysMood == nil)
     }
@@ -65,5 +65,15 @@ struct MoodCheckInModelTests {
         #expect(m.dismissedToday == true)
         #expect(mk(noon).dismissedToday == true)                                // same day sees it
         #expect(mk(noon.addingTimeInterval(24 * 3600)).dismissedToday == false)  // next day cleared
+    }
+
+    @Test func outOfRangeStoredMoodTodayStillShowsAsLogged() async throws {
+        let db = try AppDatabase.inMemory()
+        // A pre-refinement value (old "Good" = 4) written directly, bypassing logMood.
+        try await GRDBEventStore(database: db).save(
+            HealthEvent(timestamp: noon, category: .mood, subtype: "mood", value: 4, source: .manual))
+        let m = model(db, at: noon.addingTimeInterval(3600))
+        await m.load()
+        #expect(m.todaysMood?.level == .good)   // clamped to nearest valid level, not silently dropped
     }
 }

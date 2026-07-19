@@ -12,6 +12,10 @@ enum HealthTheme {
     static let inkSecondary = dyn(light: 0x6B6759, dark: 0xA8A296)
     static let inkMuted    = dyn(light: 0x8F8A7B, dark: 0x7A756A)
     static let accent      = dyn(light: 0x2E7D74, dark: 0x4FA599)
+    // Mood faces (starting values — tunable live in MoodFace previews)
+    static let moodRough = dyn(light: 0xC46A72, dark: 0xD08A90)   // muted rose
+    static let moodOkay  = dyn(light: 0x8F8A7B, dark: 0x9A9488)   // warm neutral
+    static let moodGood  = dyn(light: 0x2E7D74, dark: 0x4FA599)   // sage (matches accent)
     /// Evidence dots & warm alerts ONLY (Phase 2 insight cards). Never a category color.
     static let amber       = dyn(light: 0xC77E32, dark: 0xD89A55)
     static let dotMiss     = dyn(light: 0xD8D2C6, dark: 0x4A463C)
