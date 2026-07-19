@@ -212,16 +212,17 @@ git commit -m "feat(core): 3-level MoodLevel (Rough/Okay/Good) + clamping init +
 
 **Files:**
 - Create: `Views/HealthOS/Capture/MoodFace.swift`
+- Create: `Food IntolerancesTests/MoodFaceTests.swift`
 - Modify: `Views/HealthOS/Theme/HealthTheme.swift` (add three mood color tokens)
-- Modify: `Views/HealthOS/Capture/MoodCaptureView.swift:37`
-- Modify: `Views/HealthOS/Home/MoodCheckInView.swift:106`
-- Modify: `Food IntolerancesTests/MoodCheckInModelTests.swift:33,51` (`.awful` → `.rough`)
+- Modify: `Views/HealthOS/Capture/MoodCaptureView.swift:16,37` (face + stale doc comment)
+- Modify: `Views/HealthOS/Home/MoodCheckInView.swift:43,106` (clamp in `load()` + face)
+- Modify: `Food IntolerancesTests/MoodCheckInModelTests.swift:33,51` (`.awful` → `.rough`) + one new regression test
 
 **Interfaces:**
-- Consumes: `MoodLevel` (3 cases) from Task 1.
-- Produces: `struct MoodFace: View { let level: MoodLevel; var size: CGFloat = 56 }` — a self-contained tinted face; no bindings, `accessibilityHidden` (the enclosing button carries the VoiceOver label).
+- Consumes: `MoodLevel` (3 cases) + `MoodLevel(clamping:)` from Task 1; `GRDBEventStore(database:).save(_:)` (public) for the regression fixture.
+- Produces: `struct MoodFace: View { let level: MoodLevel; var size: CGFloat = 56 }` — a self-contained tinted face; no bindings, `accessibilityHidden` (the enclosing button carries the VoiceOver label). Its `smile`/`tint` are `internal` (not `private`) so a test can pin the frown→flat→smile mapping.
 
-- [ ] **Step 1: Add mood color tokens to `HealthTheme`.** In `HealthTheme.swift`, immediately after the `accent` token (`static let accent = dyn(light: 0x2E7D74, dark: 0x4FA599)`), add:
+- [ ] **Step 1: Add mood color tokens to `HealthTheme`.** In `HealthTheme.swift`, insert the block below on its own new line immediately AFTER the existing `accent` token — line 14, which reads (note the column-aligned spacing) `    static let accent      = dyn(light: 0x2E7D74, dark: 0x4FA599)`. (Anchor on `let accent` rather than the exact whitespace.) The three tokens use the same `dyn(light:dark:)` helper (a `private static func` on the same `enum HealthTheme`, so it's in scope wherever inserted in the type body):
 
 ```swift
     // Mood faces (starting values — tunable live in MoodFace previews)
@@ -243,7 +244,8 @@ struct MoodFace: View {
     let level: MoodLevel
     var size: CGFloat = 56
 
-    private var tint: Color {
+    // `internal` (not `private`) so MoodFaceTests can pin the level→expression mapping.
+    var tint: Color {
         switch level {
         case .rough: HealthTheme.moodRough
         case .okay:  HealthTheme.moodOkay
@@ -252,7 +254,7 @@ struct MoodFace: View {
     }
     /// Mouth control-point offset as a fraction of the mouth rect height:
     /// +ve dips the middle down → smile; -ve raises it → frown; 0 → flat.
-    private var smile: CGFloat {
+    var smile: CGFloat {
         switch level {
         case .rough: -0.7
         case .okay:   0
@@ -292,14 +294,35 @@ private struct MouthShape: Shape {
     }
 }
 
-#Preview {
-    VStack(spacing: 24) {
+private struct MoodFaceGallery: View {
+    var body: some View {
         HStack(spacing: 16) {
             ForEach(MoodLevel.allCases, id: \.rawValue) { MoodFace(level: $0, size: 76) }
         }
+        .padding(32).frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(HealthTheme.paper)
     }
-    .padding(32).frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(HealthTheme.paper)
+}
+
+#Preview("Light") { MoodFaceGallery().preferredColorScheme(.light) }
+#Preview("Dark")  { MoodFaceGallery().preferredColorScheme(.dark) }
+```
+
+- [ ] **Step 2b: Add `MoodFaceTests.swift`** at `Food IntolerancesTests/MoodFaceTests.swift` — pins the frown→flat→smile mapping (the one behavioral fact of the drawing) so a swapped `-0.7`/`0.7` can't ship silently:
+
+```swift
+import Foundation
+import Testing
+import HealthGraphCore
+@testable import Food_Intolerances
+
+@MainActor
+struct MoodFaceTests {
+    @Test func smileDirectionMatchesLevel() {
+        #expect(MoodFace(level: .rough).smile < 0)   // frown
+        #expect(MoodFace(level: .okay).smile == 0)    // flat
+        #expect(MoodFace(level: .good).smile > 0)    // smile
+    }
 }
 ```
 
@@ -317,7 +340,34 @@ with:
 
 (Leave the `Text(level.label)` caption, the `.frame(maxWidth: .infinity, minHeight: 64)`, and the note field unchanged.)
 
-- [ ] **Step 4: Wire the Home quick-check.** In `MoodCheckInView.swift`, replace line 106:
+Also fix the now-stale doc comment on line 16 — replace `tap one of five faces` with `tap one of three faces`.
+
+- [ ] **Step 4: Wire the Home quick-check + clamp `load()`.** In `MoodCheckInView.swift`:
+
+**(a) Clamp the stored-value read in `load()`** — the same brittle failable-`rawValue` pattern fixed in `EventDisplay` (Task 1 Step 5) lives here too, and if left unfixed an orphaned pre-refinement value (4/5) logged *today* makes the Home card silently forget it (reverting to the un-logged prompt, inviting a double-log) while the Timeline shows it correctly. Replace lines 42-48:
+
+```swift
+        if let latest = events.max(by: { $0.timestamp < $1.timestamp }),
+           let v = latest.value, let level = MoodLevel(rawValue: Int(v)) {
+            todaysMood = (level, latest.timestamp)
+            lastLoggedID = latest.id
+        } else {
+            todaysMood = nil; lastLoggedID = nil
+        }
+```
+
+with (drop the failable `rawValue` bind for the non-failable clamp; the `else` still fires when there's no event / no value):
+
+```swift
+        if let latest = events.max(by: { $0.timestamp < $1.timestamp }), let v = latest.value {
+            todaysMood = (MoodLevel(clamping: Int(v)), latest.timestamp)
+            lastLoggedID = latest.id
+        } else {
+            todaysMood = nil; lastLoggedID = nil
+        }
+```
+
+**(b) Swap the face** — replace line 106:
 
 ```swift
                                 Text(level.emoji).font(.largeTitle)
@@ -331,7 +381,23 @@ with:
 
 (Leave the `.frame(maxWidth: .infinity, minHeight: 48)` and `.accessibilityLabel(level.label)` unchanged.)
 
-- [ ] **Step 5: Fix the app-test fixtures.** In `MoodCheckInModelTests.swift`, the case `.awful` no longer exists. Replace `.log(.awful)` with `.log(.rough)` at line 33 and line 51. (No assertion depends on the level value at those sites — one logs-then-logs-good and asserts "good wins"; the other logs-then-undoes and asserts nil.)
+- [ ] **Step 5: Fix the app-test fixtures + add the clamp regression test.** In `MoodCheckInModelTests.swift`:
+
+**(a)** The case `.awful` no longer exists — replace `.log(.awful)` with `.log(.rough)` at line 33 and line 51. (No assertion depends on the level value at those sites — one logs-then-logs-good and asserts "good wins"; the other logs-then-undoes and asserts nil.)
+
+**(b)** Add this test (pins the Step 4a fix — it fails today because `load()` would resolve an orphaned value-4 event to `nil` and forget it):
+
+```swift
+    @Test func outOfRangeStoredMoodTodayStillShowsAsLogged() async throws {
+        let db = try AppDatabase.inMemory()
+        // A pre-refinement value (old "Good" = 4) written directly, bypassing logMood.
+        try await GRDBEventStore(database: db).save(
+            HealthEvent(timestamp: noon, category: .mood, subtype: "mood", value: 4, source: .manual))
+        let m = model(db, at: noon.addingTimeInterval(3600))
+        await m.load()
+        #expect(m.todaysMood?.level == .good)   // clamped to nearest valid level, not silently dropped
+    }
+```
 
 - [ ] **Step 6: Build the app + run the app mood tests.**
 
@@ -343,9 +409,9 @@ Expected: `** BUILD SUCCEEDED **` (all `level.emoji` references resolved to `Moo
 
 Run:
 ```
-xcodebuild test -project "Food Intolerances.xcodeproj" -scheme "Food Intolerances" -only-testing:"Food IntolerancesTests/MoodCheckInModelTests" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -parallel-testing-enabled NO 2>&1 | grep -E "Test run with|✔ Test|✘ Test|TEST (SUCCEEDED|FAILED)" | tail -10
+xcodebuild test -project "Food Intolerances.xcodeproj" -scheme "Food Intolerances" -only-testing:"Food IntolerancesTests/MoodCheckInModelTests" -only-testing:"Food IntolerancesTests/MoodFaceTests" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -parallel-testing-enabled NO 2>&1 | grep -E "Test run with|✔ Test|✘ Test|TEST (SUCCEEDED|FAILED)" | tail -12
 ```
-Expected: `** TEST SUCCEEDED **`, all 5 tests pass. Confirm the `MoodFace` `#Preview` compiles.
+Expected: `** TEST SUCCEEDED **` — `MoodCheckInModelTests` (now 6 tests incl. `outOfRangeStoredMoodTodayStillShowsAsLogged`) + `MoodFaceTests` (1) all pass. Confirm the `MoodFace` light/dark `#Preview`s compile.
 
 - [ ] **Step 7: Commit.**
 
@@ -354,8 +420,12 @@ git add "Views/HealthOS/Capture/MoodFace.swift" \
         "Views/HealthOS/Theme/HealthTheme.swift" \
         "Views/HealthOS/Capture/MoodCaptureView.swift" \
         "Views/HealthOS/Home/MoodCheckInView.swift" \
-        "Food IntolerancesTests/MoodCheckInModelTests.swift"
-git commit -m "feat(app): custom-drawn MoodFace (Rough/Okay/Good) replaces emoji on both mood surfaces"
+        "Food IntolerancesTests/MoodCheckInModelTests.swift" \
+        "Food IntolerancesTests/MoodFaceTests.swift"
+git commit -m "feat(app): custom-drawn MoodFace (Rough/Okay/Good) replaces emoji on both mood surfaces
+
+Also clamps MoodCheckInModel.load() (parity with EventDisplay) so an orphaned
+out-of-range mood logged today isn't silently dropped from the Home card."
 ```
 
 ---
