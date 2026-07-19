@@ -46,6 +46,10 @@ struct HealthGraphDebugView: View {
                     Task { await loadSynthetic() }
                 }
                 .disabled(isWorking)
+                Button("Load MOOD demo data (160 days) + recompute") {
+                    Task { await loadMoodDemo() }
+                }
+                .disabled(isWorking)
                 // Migration is idempotent (deterministic ids); synthetic load
                 // APPENDS a fresh dataset each tap — reset first to reload.
                 Button("Reset Health Graph DB (delete all rows)", role: .destructive) {
@@ -193,6 +197,37 @@ struct HealthGraphDebugView: View {
                 noiseFoodsPerDay: 1...3
             )
             try await SyntheticDataGenerator.generate(config: config).insert(into: database)
+            await refresh()
+        } catch {
+            errorMessage = String(describing: error)
+        }
+    }
+
+    /// Seeds two plausible mood correlations (Magnesium → good mood, Coffee → low mood)
+    /// and recomputes, so "what lifts your mood" insights render immediately in the
+    /// Insights tab. DEBUG-only; APPENDS — reset first to reload cleanly.
+    private func loadMoodDemo() async {
+        errorMessage = nil
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            let config = SyntheticConfig(
+                startDate: Date().addingTimeInterval(-160 * 86_400),
+                days: 160, seed: 7,
+                patterns: [
+                    PlantedPattern(exposureName: "Magnesium", exposureCategory: .supplement,
+                                   outcomeSubtype: "mood", lagHours: 6, lagJitterHours: 3,
+                                   followProbability: 0.75, exposureProbabilityPerDay: 0.5,
+                                   moodOutcomeValue: 3),   // Good → "seems to lift your mood"
+                    PlantedPattern(exposureName: "Coffee", exposureCategory: .food,
+                                   outcomeSubtype: "mood", lagHours: 4, lagJitterHours: 2,
+                                   followProbability: 0.75, exposureProbabilityPerDay: 0.55,
+                                   moodOutcomeValue: 1),   // Rough → "is linked to lower mood"
+                ],
+                outcomeBaseRatePerDay: 0,          // no baseline symptom noise for the mood demo
+                noiseFoodsPerDay: 1...2)
+            try await SyntheticDataGenerator.generate(config: config).insert(into: database)
+            _ = try await EvidenceEngine(database: database).recompute(asOf: Date())
             await refresh()
         } catch {
             errorMessage = String(describing: error)

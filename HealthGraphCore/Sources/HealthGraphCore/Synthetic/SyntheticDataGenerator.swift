@@ -10,10 +10,15 @@ public struct PlantedPattern {
     public var lagJitterHours: Double
     public var followProbability: Double
     public var exposureProbabilityPerDay: Double
+    /// When set, the planted outcome is a `.mood` event carrying this value (1–3)
+    /// instead of a symptom — lets the synthetic seed plant mood correlations
+    /// (e.g. Magnesium → good mood = 3). Default nil preserves symptom behavior.
+    public var moodOutcomeValue: Double?
 
     public init(exposureName: String, exposureCategory: EventCategory,
                 outcomeSubtype: String, lagHours: Double, lagJitterHours: Double,
-                followProbability: Double, exposureProbabilityPerDay: Double) {
+                followProbability: Double, exposureProbabilityPerDay: Double,
+                moodOutcomeValue: Double? = nil) {
         self.exposureName = exposureName
         self.exposureCategory = exposureCategory
         self.outcomeSubtype = outcomeSubtype
@@ -21,6 +26,7 @@ public struct PlantedPattern {
         self.lagJitterHours = lagJitterHours
         self.followProbability = followProbability
         self.exposureProbabilityPerDay = exposureProbabilityPerDay
+        self.moodOutcomeValue = moodOutcomeValue
     }
 }
 
@@ -146,13 +152,18 @@ public enum SyntheticDataGenerator {
                 if Double.random(in: 0..<1, using: &rng) < pattern.followProbability {
                     let lag = pattern.lagHours
                         + Double.random(in: -pattern.lagJitterHours...pattern.lagJitterHours, using: &rng)
-                    events.append(HealthEvent(
-                        timestamp: exposureTime.addingTimeInterval(lag * 3600),
-                        timezoneID: tz, category: .symptom,
-                        subtype: pattern.outcomeSubtype,
-                        value: Double(Int.random(in: 3...8, using: &rng)),
-                        source: .manual
-                    ))
+                    let outcomeTime = exposureTime.addingTimeInterval(lag * 3600)
+                    if let mood = pattern.moodOutcomeValue {
+                        events.append(HealthEvent(
+                            timestamp: outcomeTime, timezoneID: tz, category: .mood,
+                            subtype: "mood", value: mood, source: .manual))
+                    } else {
+                        events.append(HealthEvent(
+                            timestamp: outcomeTime, timezoneID: tz, category: .symptom,
+                            subtype: pattern.outcomeSubtype,
+                            value: Double(Int.random(in: 3...8, using: &rng)),
+                            source: .manual))
+                    }
                 }
             }
 
