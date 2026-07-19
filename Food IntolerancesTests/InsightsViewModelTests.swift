@@ -40,6 +40,22 @@ struct InsightsViewModelTests {
         #expect(inArchive)
     }
 
+    @Test func moodEdgeSurfacesWithTentativePhrasing() async throws {
+        let refNow = Date(timeIntervalSince1970: 1_713_000_000)
+        let db = try AppDatabase.inMemory()
+        let mood = Relationship(
+            fromCategory: "shortSleep", toCategory: "mood", type: .possibleTrigger,
+            evidenceCount: 6, contradictionCount: 2, confidence: 0.6, strength: 5, lagHours: 12,
+            firstSeen: refNow.addingTimeInterval(-5 * 86_400), lastSeen: refNow, lastRecomputed: refNow,
+            status: .active, edgeKey: "derived:shortSleep|mood:low|possibleTrigger", toSubtype: "low")
+        try await GRDBRelationshipStore(database: db).save(mood)
+        let vm = InsightsViewModel(database: db, now: { refNow })
+        await vm.load()
+        let card = vm.feed.sections.flatMap(\.cards).first { $0.claim.lowercased().contains("mood") }
+        #expect(card != nil)                                          // un-suppressed
+        #expect(card?.claim == "Short sleep is linked to lower mood") // tentative mood phrasing via the VM
+    }
+
     @Test func undoRestoresDismissedCard() async throws {
         let db = try await seedMinedDB()
         let vm = InsightsViewModel(database: db, now: { Date(timeIntervalSince1970: 1_713_000_000) })

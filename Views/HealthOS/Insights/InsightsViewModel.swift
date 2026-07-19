@@ -31,7 +31,7 @@ final class InsightsViewModel: ObservableObject {
                 recent = ev.exposures.suffix(config.recentDotCount).map(\.outcomeFollowed)   // last-N chronological
             }
             resolved.append(ResolvedRelationship(relationship: r, exposureLabel: label,
-                                                 outcomeLabel: r.toSubtype ?? "outcome",
+                                                 outcomeLabel: InsightPhrasing.outcomeLabel(for: r),
                                                  exposureCategory: category, recentOutcomes: recent))
         }
         feed = InsightsFeed.build(resolved, now: now())

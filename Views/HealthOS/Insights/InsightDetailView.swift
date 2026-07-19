@@ -59,6 +59,7 @@ struct InsightDetailView: View {
     }
 
     private var navigationTitle: String {
+        if relationship?.toCategory == "mood" { return "Evidence: your mood" }
         if let subtype = relationship?.toSubtype, !subtype.isEmpty { return "Evidence: \(subtype.capitalized)" }
         return "Evidence"
     }
