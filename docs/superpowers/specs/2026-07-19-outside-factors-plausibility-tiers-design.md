@@ -24,7 +24,7 @@ This round wires moon (as **full moon**) and mercury as exposures **and** adds t
 |---|----------|--------|
 | 1 | Principle | **Track & correlate everything the user wants, but present each factor with an honest plausibility tier** so nothing unproven masquerades as established science. |
 | 2 | Three tiers | **Established** (known mechanism) · **Contested** (plausible, weak/mixed evidence) · **Novelty** (no known mechanism). |
-| 3 | Tier presentation | Established → normal card (no label). Contested → in the evidence feed with an *"unproven mechanism — your personal pattern"* tag. Novelty → **not** in the evidence feed; a separate **"Just for fun"** section, labeled *"a curious coincidence — correlation isn't causation."* |
+| 3 | Tier presentation | Established → normal card (no label). Contested → in the evidence feed with an *"unproven mechanism · your pattern"* tag. Novelty → **not** in the evidence feed; a separate **"Just for fun"** section, labeled *"a curious coincidence — correlation isn't causation."* |
 | 4 | Which factors | This round adds **full moon** (→ *contested*) and **mercury retrograde** (→ *novelty*). Existing factors stay *established*. |
 | 5 | Moon granularity | **Full moon only**, a single exposure. The "Full Moon" phase bucket already spans ~2 days/cycle (~25 days/yr) — enough for the gates, no extra windowing. (Not all 8 phases — that fragments the data.) |
 | 6 | Scope | Weather (temp/humidity) deferred to the next round (needs new ingestion). |

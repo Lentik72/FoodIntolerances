@@ -21,6 +21,7 @@ Design: `docs/superpowers/specs/2026-07-19-outside-factors-plausibility-tiers-de
 - **App-target tests MUST run `-parallel-testing-enabled NO`;** the lone `SwiftDataMigratorTests` `** TEST FAILED **` is the KNOWN pre-existing teardown crash.
 - **Simulator:** iPhone 17 Pro (iOS 26.5).
 - **Out of scope:** weather (temp/humidity) exposures (next round), opt-in toggles, season, any re-sort beyond the new section.
+- **Intermediate state:** after Task 1 (mining) but before Task 2 (tiering), moon/mercury would surface as *un-tiered* plain evidence cards against real data. That's fine — nothing merges until all four tasks land; the branch is only reviewed/merged as a whole.
 
 ---
 
@@ -74,6 +75,13 @@ In `InsightPhrasingTests.swift`, extend `derivedLabels`:
 ```swift
         #expect(InsightPhrasing.derivedExposureLabel(fromCategory: "fullMoon") == "Full moon")
         #expect(InsightPhrasing.derivedExposureLabel(fromCategory: "mercuryRetrograde") == "Mercury retrograde")
+```
+
+In `ExposureSourceTests.swift`, extend `EvidenceConfigTests.lagWindowsByExposureKind` (pins the lag wiring — the exhaustive switch forces a *case*, but only a test catches a wrong *value*, e.g. copy-pasting `pressureLagHours`):
+
+```swift
+        #expect(c.lagWindow(for: .derived(.fullMoon)) == 0...24)
+        #expect(c.lagWindow(for: .derived(.mercuryRetrograde)) == 0...24)
 ```
 
 - [ ] **Step 2: Run to confirm failure.** `cd HealthGraphCore && swift test 2>&1 | tail -20` → FAIL to compile (`.fullMoon`/`FullMoonExposureSource` undefined).
@@ -199,10 +207,10 @@ In `InsightsFeedTests.swift`, add (build three active edges — food/symptom = e
 ```swift
     @Test func tiersRouteNoveltyToJustForFunAndTagContested() {
         let refNow = Date(timeIntervalSince1970: 1_700_000_000)
-        func rel(from: String, key: String) -> Relationship {
+        func rel(from: String, key: String, daysAgo: Double = 30) -> Relationship {
             Relationship(fromCategory: from, toCategory: "symptom", type: .possibleTrigger,
                          evidenceCount: 6, contradictionCount: 2, confidence: 0.6, strength: 5, lagHours: 12,
-                         firstSeen: refNow.addingTimeInterval(-30 * 86_400), lastSeen: refNow,
+                         firstSeen: refNow.addingTimeInterval(-daysAgo * 86_400), lastSeen: refNow,
                          lastRecomputed: refNow, status: .active, edgeKey: key, toSubtype: "headache")
         }
         func rr(_ r: Relationship, _ label: String) -> ResolvedRelationship {
@@ -212,14 +220,26 @@ In `InsightsFeedTests.swift`, add (build three active edges — food/symptom = e
         let feed = InsightsFeed.build([
             rr(rel(from: "food", key: "k-food"), "Dairy"),
             rr(rel(from: "fullMoon", key: "k-moon"), "Full moon"),
-            rr(rel(from: "mercuryRetrograde", key: "k-merc"), "Mercury retrograde"),
+            rr(rel(from: "mercuryRetrograde", key: "k-merc", daysAgo: 1), "Mercury retrograde"),  // recent
         ], now: refNow)
         let active = feed.sections.first { $0.kind == .active }
         let fun = feed.sections.first { $0.kind == .justForFun }
-        #expect(active?.cards.contains { $0.claim.contains("Dairy") } == true)
+        #expect(active?.cards.first { $0.claim.contains("Dairy") }?.tier == .established)
         #expect(active?.cards.first { $0.claim.contains("Full moon") }?.tier == .contested)
         #expect(active?.cards.contains { $0.claim.contains("Mercury") } == false)   // NOT in evidence feed
         #expect(fun?.cards.contains { $0.claim.contains("Mercury") } == true)        // in Just for fun
+        #expect(fun?.cards.first?.isNew == false)   // recent novelty must NOT take a "New" slot
+    }
+    @Test func noJustForFunSectionWithoutNoveltyEdges() {
+        let refNow = Date(timeIntervalSince1970: 1_700_000_000)
+        let r = Relationship(fromCategory: "food", toCategory: "symptom", type: .possibleTrigger,
+                             evidenceCount: 6, contradictionCount: 2, confidence: 0.6, strength: 5, lagHours: 12,
+                             firstSeen: refNow.addingTimeInterval(-30 * 86_400), lastSeen: refNow,
+                             lastRecomputed: refNow, status: .active, edgeKey: "k", toSubtype: "headache")
+        let feed = InsightsFeed.build([ResolvedRelationship(
+            relationship: r, exposureLabel: "Dairy", outcomeLabel: "headache",
+            exposureCategory: .food, recentOutcomes: [])], now: refNow)
+        #expect(feed.sections.contains { $0.kind == .justForFun } == false)   // no empty section
     }
 ```
 
@@ -255,7 +275,7 @@ public enum PlausibilityCatalog {
 - [ ] **Step 5: Route + tag in the feed.** In `InsightsFeed.build`:
   - Add a helper: `func tier(_ rr: ResolvedRelationship) -> PlausibilityTier { PlausibilityCatalog.tier(forExposureCategory: rr.relationship.fromCategory) }`.
   - In `card(_:)`, pass `tier: tier(rr)` to `InsightCardModel(...)`.
-  - Partition active: replace `let active = resolved.filter { $0.relationship.status == .active }` usage so that the evidence sections use only non-novelty active edges, and novelty active edges form the fun section:
+  - Partition active: **delete** the existing line `let active = resolved.filter { $0.relationship.status == .active }` and replace it with the three lines below (`active` is redefined to the evidence-only set; the existing `recent`/`newIDs`/`activeCards` code then references this narrowed `active` unchanged):
 
 ```swift
         let activeAll = resolved.filter { $0.relationship.status == .active }
@@ -298,7 +318,8 @@ git commit -m "feat(core): plausibility tiers — route novelty to 'Just for fun
 **Files:**
 - Modify: `Views/HealthOS/Insights/InsightsView.swift` (`sectionView` — add `.justForFun`)
 - Modify: `Views/HealthOS/Insights/InsightCardView.swift` (contested tag)
-- Test: `Food IntolerancesTests/InsightsViewModelTests.swift` (novelty edge surfaces under justForFun)
+- Modify: `Views/HealthOS/Insights/InsightsViewModel.swift` (`exposure(for:)` — map the new tokens to the `.environment` icon)
+- Test: `Food IntolerancesTests/InsightsViewModelTests.swift` (novelty → justForFun; contested → active + tag)
 
 **Interfaces:** Consumes `InsightSectionKind.justForFun` + `card.tier` from Task 2.
 
@@ -319,6 +340,21 @@ git commit -m "feat(core): plausibility tiers — route novelty to 'Just for fun
         await vm.load()
         #expect(vm.feed.sections.contains { $0.kind == .justForFun } == true)
         #expect(vm.feed.sections.first { $0.kind == .active } == nil)   // no evidence card for a novelty edge
+    }
+    @Test func fullMoonEdgeSurfacesInActiveWithContestedTier() async throws {
+        let refNow = Date(timeIntervalSince1970: 1_713_000_000)
+        let db = try AppDatabase.inMemory()
+        let moon = Relationship(
+            fromCategory: "fullMoon", toCategory: "symptom", type: .possibleTrigger,
+            evidenceCount: 6, contradictionCount: 2, confidence: 0.6, strength: 5, lagHours: 12,
+            firstSeen: refNow.addingTimeInterval(-30 * 86_400), lastSeen: refNow, lastRecomputed: refNow,
+            status: .active, edgeKey: "derived:fullMoon|symptom:headache|possibleTrigger", toSubtype: "headache")
+        try await GRDBRelationshipStore(database: db).save(moon)
+        let vm = InsightsViewModel(database: db, now: { refNow })
+        await vm.load()
+        let card = vm.feed.sections.first { $0.kind == .active }?.cards.first
+        #expect(card?.tier == .contested)                              // contested stays in the evidence feed…
+        #expect(card?.claim.contains("Full moon") == true)             // …phrased + labeled via exposure(for:)
     }
 ```
 
@@ -349,19 +385,22 @@ git commit -m "feat(core): plausibility tiers — route novelty to 'Just for fun
                     }
 ```
 
+- [ ] **Step 3b: Fix the card icon for the new factors.** In `InsightsViewModel.swift`'s `exposure(for:)`, the derived-`fromCategory` → representative-`EventCategory` mapping (used for the card icon) sends `"pressureDrop"` → `.environment` but has no branch for the two new tokens, so `"fullMoon"`/`"mercuryRetrograde"` fall through to `.note` (a generic "Context" icon). Add both to the **`.environment`** branch (they're `.environment` events too), mirroring `"pressureDrop"`.
+
 - [ ] **Step 4: Build + VM tests.**
 
 Run: `xcodebuild build -project "Food Intolerances.xcodeproj" -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -quiet 2>&1 | tail -8` → `** BUILD SUCCEEDED **`.
 
-Run: `xcodebuild test -project "Food Intolerances.xcodeproj" -scheme "Food Intolerances" -only-testing:"Food IntolerancesTests/InsightsViewModelTests" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -parallel-testing-enabled NO 2>&1 | grep -E "Test run with|✔ Test|✘ Test|TEST (SUCCEEDED|FAILED)" | tail -10` → `** TEST SUCCEEDED **` (existing tests + `mercuryEdgeSurfacesUnderJustForFun`).
+Run: `xcodebuild test -project "Food Intolerances.xcodeproj" -scheme "Food Intolerances" -only-testing:"Food IntolerancesTests/InsightsViewModelTests" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -parallel-testing-enabled NO 2>&1 | grep -E "Test run with|✔ Test|✘ Test|TEST (SUCCEEDED|FAILED)" | tail -10` → `** TEST SUCCEEDED **` (existing tests + `mercuryEdgeSurfacesUnderJustForFun` + `fullMoonEdgeSurfacesInActiveWithContestedTier`).
 
 - [ ] **Step 5: Commit.**
 
 ```bash
 git add "Views/HealthOS/Insights/InsightsView.swift" \
         "Views/HealthOS/Insights/InsightCardView.swift" \
+        "Views/HealthOS/Insights/InsightsViewModel.swift" \
         "Food IntolerancesTests/InsightsViewModelTests.swift"
-git commit -m "feat(app): 'Just for fun' section for novelty factors + 'unproven mechanism' tag on contested cards"
+git commit -m "feat(app): 'Just for fun' section + 'unproven mechanism' tag + environment icon for moon/mercury"
 ```
 
 ---
@@ -373,7 +412,7 @@ git commit -m "feat(app): 'Just for fun' section for novelty factors + 'unproven
 
 **Interfaces:** Consumes the exposure sources (Task 1) + tier routing (Task 2). Reuses `EvidenceEngine(database:).recompute(asOf:)` (public, already used in the debug view).
 
-- [ ] **Step 1: Add the demo seed.** In `HealthGraphDebugView.swift`, add a button next to "Load MOOD demo data" and a `loadOutsideFactorsDemo()` that hand-generates ~200 days of `.environment` events with a correlated symptom, then recomputes. Emit, over the range: a `moonPhase` event each day (metadata `["phase": ...]`, "Full Moon" on ~2 days per ~29.5-day cycle, other phases otherwise); a `mercuryRetrograde` event on a few multi-week windows; and a correlated `.symptom` "headache" following full-moon days (~70%) and retrograde days (~70%), with light baseline noise. Then `try await EvidenceEngine(database: database).recompute(asOf: Date())` and `await refresh()`. Model the structure on `loadMoodDemo()` (build a `[HealthEvent]` array, save via `GRDBEventStore(database: database).save(_:)`). Keep it DEBUG-only, APPENDS (reset first).
+- [ ] **Step 1: Add the demo seed.** In `HealthGraphDebugView.swift`, add a button next to "Load MOOD demo data" and a `loadOutsideFactorsDemo()` that hand-generates ~200 days of `.environment` events with a correlated symptom, then recomputes. Emit, over the range: a `moonPhase` event each day (metadata `["phase": ...]`, "Full Moon" on ~2 days per ~29.5-day cycle, other phases otherwise); a `mercuryRetrograde` event on a few multi-week windows; and a correlated `.symptom` "headache" following full-moon days (~70%) and retrograde days (~70%), with light baseline noise. Then `try await EvidenceEngine(database: database).recompute(asOf: Date())` and `await refresh()`. Reuse `loadMoodDemo()`'s `isWorking`/`defer`/`do-catch` shell, but **hand-build a `[HealthEvent]` array and save via `GRDBEventStore(database: database).save(_:)`** (public) — `loadMoodDemo` itself seeds via `SyntheticDataGenerator.insert`, but the generator can't emit moon/mercury `.environment` events, so build them directly here. Keep it DEBUG-only, APPENDS (reset first).
 
   (Implementer: pick the exact day-marking logic; the goal is enough full-moon days [~14] and retrograde days [~40] with a ~70% headache follow-rate to clear the gates so both a contested "Full moon → headache" card and a novelty "Mercury retrograde → headache" card appear after recompute.)
 
