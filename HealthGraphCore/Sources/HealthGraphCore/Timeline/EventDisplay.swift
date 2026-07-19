@@ -31,8 +31,8 @@ public enum EventDisplay {
     public static func title(for event: HealthEvent) -> String {
         // A note's title IS its text.
         if event.category == .note, let s = event.subtype, !s.isEmpty { return s }
-        if event.category == .mood, let v = event.value, let level = MoodLevel(rawValue: Int(v)) {
-            return "Mood: \(level.label)"
+        if event.category == .mood, let v = event.value {
+            return "Mood: \(MoodLevel(clamping: Int(v)).label)"
         }
         guard let subtype = event.subtype, !subtype.isEmpty else {
             return event.category.rawValue.prefix(1).uppercased() + event.category.rawValue.dropFirst()

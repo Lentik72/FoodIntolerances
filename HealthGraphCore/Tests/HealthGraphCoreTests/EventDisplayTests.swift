@@ -8,10 +8,16 @@ struct EventDisplayMoodTests {
                     subtype: "mood", value: v, source: .manual)
     }
     @Test func moodTitleShowsTheLevel() {
-        #expect(EventDisplay.title(for: mood(4)) == "Mood: Good")
-        #expect(EventDisplay.title(for: mood(1)) == "Mood: Awful")
+        #expect(EventDisplay.title(for: mood(1)) == "Mood: Rough")
+        #expect(EventDisplay.title(for: mood(2)) == "Mood: Okay")
+        #expect(EventDisplay.title(for: mood(3)) == "Mood: Good")
+    }
+    @Test func moodTitleClampsOutOfRangeValues() {
+        #expect(EventDisplay.title(for: mood(0)) == "Mood: Rough")   // guards orphaned/garbage
+        #expect(EventDisplay.title(for: mood(4)) == "Mood: Good")    // old "Good"
+        #expect(EventDisplay.title(for: mood(5)) == "Mood: Good")    // old "Great"
     }
     @Test func moodValueLineIsNilBecauseTitleCarriesIt() {
-        #expect(EventDisplay.valueLine(for: mood(4)) == nil)
+        #expect(EventDisplay.valueLine(for: mood(2)) == nil)
     }
 }

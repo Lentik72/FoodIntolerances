@@ -43,20 +43,20 @@ struct OutcomeSourceTests {
             HealthEvent(timestamp: Date(timeIntervalSince1970: 100), category: .symptom,
                         subtype: "headache", value: 6, source: .manual),
             HealthEvent(timestamp: Date(timeIntervalSince1970: 200), category: .mood,
-                        subtype: "mood", value: 2, source: .manual),           // ≤2 → low mood
+                        subtype: "mood", value: 1, source: .manual),           // Rough (≤1) → low mood
             HealthEvent(timestamp: Date(timeIntervalSince1970: 300), category: .mood,
-                        subtype: "mood", value: 8, source: .manual),           // high → skipped
+                        subtype: "mood", value: 3, source: .manual),           // Good → skipped
         ]
         let occ = OutcomeSource(config: .default).occurrences(from: events)
         #expect(occ.contains { $0.key == .symptom("headache") && $0.value == 6 })
         #expect(occ.contains { $0.key == .lowMood })
         #expect(occ.count == 2)
     }
-    @Test func moodThresholdIsTwo() {
+    @Test func moodThresholdIsOne() {
         let low = HealthEvent(timestamp: Date(timeIntervalSince1970: 100), category: .mood,
-                              subtype: "mood", value: 2, source: .manual)   // Low → low mood
+                              subtype: "mood", value: 1, source: .manual)   // Rough → low mood
         let okay = HealthEvent(timestamp: Date(timeIntervalSince1970: 200), category: .mood,
-                               subtype: "mood", value: 3, source: .manual)  // Okay → NOT low
+                               subtype: "mood", value: 2, source: .manual)  // Okay → NOT low
         let occ = OutcomeSource(config: .default).occurrences(from: [low, okay])
         #expect(occ.filter { $0.key == .lowMood }.count == 1)
     }
