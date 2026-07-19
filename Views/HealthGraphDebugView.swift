@@ -50,6 +50,10 @@ struct HealthGraphDebugView: View {
                     Task { await loadMoodDemo() }
                 }
                 .disabled(isWorking)
+                Button("Load OUTSIDE-FACTORS demo") {
+                    Task { await loadOutsideFactorsDemo() }
+                }
+                .disabled(isWorking)
                 // Migration is idempotent (deterministic ids); synthetic load
                 // APPENDS a fresh dataset each tap — reset first to reload.
                 Button("Reset Health Graph DB (delete all rows)", role: .destructive) {
@@ -227,6 +231,82 @@ struct HealthGraphDebugView: View {
                 outcomeBaseRatePerDay: 0,          // no baseline symptom noise for the mood demo
                 noiseFoodsPerDay: 1...2)
             try await SyntheticDataGenerator.generate(config: config).insert(into: database)
+            _ = try await EvidenceEngine(database: database).recompute(asOf: Date())
+            await refresh()
+        } catch {
+            errorMessage = String(describing: error)
+        }
+    }
+
+    /// Hand-builds ~200 days of `.environment` moonPhase + mercuryRetrograde events
+    /// with a correlated "headache" symptom, then recomputes — so the contested
+    /// "Full moon" evidence card and the novelty "Mercury retrograde" card (Just for
+    /// fun section) render on device. `SyntheticDataGenerator` can't emit these
+    /// `.environment` subtypes, so this mirrors `EnvironmentalEventFactory`'s shape
+    /// (subtype/metadata/source) by hand and saves via `GRDBEventStore` directly.
+    /// DEBUG-only; APPENDS — reset first to reload cleanly.
+    private func loadOutsideFactorsDemo() async {
+        errorMessage = nil
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            var cal = Calendar(identifier: .gregorian)
+            cal.timeZone = .current
+            let tz = cal.timeZone.identifier
+            let days = 200
+            let now = Date()
+
+            var events: [HealthEvent] = []
+            // Separate running counters (not day-index modulus) so the ~70% follow
+            // rate isn't accidentally correlated with the day-marking pattern below.
+            var fullMoonIndex = 0     // ~14 full-moon days total
+            var retrogradeIndex = 0   // ~42 retrograde days across 3 windows
+            var otherIndex = 0        // light baseline noise on non-exposure days
+
+            for d in 0..<days {
+                let dayStart = cal.startOfDay(for: now.addingTimeInterval(-Double(days - d) * 86_400))
+                // ~2 full-moon days per ~29.5-day lunar cycle.
+                let isFullMoon = (d % 30 == 0) || (d % 30 == 1)
+                // 3 windows of 14 days across the 200-day span.
+                let isRetrograde = (d % 70) < 14
+                let phase = isFullMoon ? "Full Moon" : "Waning Gibbous"
+
+                events.append(HealthEvent(
+                    timestamp: dayStart.addingTimeInterval(12 * 3600), timezoneID: tz,
+                    category: .environment, subtype: "moonPhase", source: .weatherAPI,
+                    metadata: try? JSONEncoder().encode(["phase": phase]),
+                    dedupKey: DedupKey.daily(.environment, "moonPhase", dayStart: dayStart)))
+
+                if isRetrograde {
+                    events.append(HealthEvent(
+                        timestamp: dayStart.addingTimeInterval(12 * 3600), timezoneID: tz,
+                        category: .environment, subtype: "mercuryRetrograde", source: .weatherAPI,
+                        dedupKey: DedupKey.daily(.environment, "mercuryRetrograde", dayStart: dayStart)))
+                }
+
+                // Correlated headache: ~70% follow on full-moon/retrograde days
+                // (one event even when both coincide), ~5% baseline otherwise.
+                var headache = false
+                if isFullMoon {
+                    headache = headache || fullMoonIndex % 10 < 7
+                    fullMoonIndex += 1
+                }
+                if isRetrograde {
+                    headache = headache || retrogradeIndex % 10 < 7
+                    retrogradeIndex += 1
+                }
+                if !isFullMoon && !isRetrograde {
+                    headache = otherIndex % 20 == 0
+                    otherIndex += 1
+                }
+                if headache {
+                    events.append(HealthEvent(
+                        timestamp: dayStart.addingTimeInterval(18 * 3600), timezoneID: tz,
+                        category: .symptom, subtype: "headache", value: 5, source: .manual))
+                }
+            }
+
+            try await GRDBEventStore(database: database).save(events)
             _ = try await EvidenceEngine(database: database).recompute(asOf: Date())
             await refresh()
         } catch {
