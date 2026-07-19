@@ -56,6 +56,37 @@ struct InsightsViewModelTests {
         #expect(card?.claim == "Short sleep is linked to lower mood") // tentative mood phrasing via the VM
     }
 
+    @Test func mercuryEdgeSurfacesUnderJustForFun() async throws {
+        let refNow = Date(timeIntervalSince1970: 1_713_000_000)
+        let db = try AppDatabase.inMemory()
+        let merc = Relationship(
+            fromCategory: "mercuryRetrograde", toCategory: "symptom", type: .possibleTrigger,
+            evidenceCount: 6, contradictionCount: 2, confidence: 0.6, strength: 5, lagHours: 12,
+            firstSeen: refNow.addingTimeInterval(-30 * 86_400), lastSeen: refNow, lastRecomputed: refNow,
+            status: .active, edgeKey: "derived:mercuryRetrograde|symptom:headache|possibleTrigger",
+            toSubtype: "headache")
+        try await GRDBRelationshipStore(database: db).save(merc)
+        let vm = InsightsViewModel(database: db, now: { refNow })
+        await vm.load()
+        #expect(vm.feed.sections.contains { $0.kind == .justForFun } == true)
+        #expect(vm.feed.sections.first { $0.kind == .active } == nil)   // no evidence card for a novelty edge
+    }
+    @Test func fullMoonEdgeSurfacesInActiveWithContestedTier() async throws {
+        let refNow = Date(timeIntervalSince1970: 1_713_000_000)
+        let db = try AppDatabase.inMemory()
+        let moon = Relationship(
+            fromCategory: "fullMoon", toCategory: "symptom", type: .possibleTrigger,
+            evidenceCount: 6, contradictionCount: 2, confidence: 0.6, strength: 5, lagHours: 12,
+            firstSeen: refNow.addingTimeInterval(-30 * 86_400), lastSeen: refNow, lastRecomputed: refNow,
+            status: .active, edgeKey: "derived:fullMoon|symptom:headache|possibleTrigger", toSubtype: "headache")
+        try await GRDBRelationshipStore(database: db).save(moon)
+        let vm = InsightsViewModel(database: db, now: { refNow })
+        await vm.load()
+        let card = vm.feed.sections.first { $0.kind == .active }?.cards.first
+        #expect(card?.tier == .contested)                              // contested stays in the evidence feed…
+        #expect(card?.claim.contains("Full moon") == true)             // …phrased + labeled via exposure(for:)
+    }
+
     @Test func undoRestoresDismissedCard() async throws {
         let db = try await seedMinedDB()
         let vm = InsightsViewModel(database: db, now: { Date(timeIntervalSince1970: 1_713_000_000) })

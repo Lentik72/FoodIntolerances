@@ -92,6 +92,18 @@ struct InsightsView: View {
             }
         case .archive:
             archiveSection(section.cards)
+        case .justForFun:
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Just for fun")
+                        .font(HealthTheme.sectionHeader())
+                        .foregroundStyle(HealthTheme.ink)
+                    Text("Curious coincidences from your data — correlation isn't causation, and there's no known mechanism.")
+                        .font(.footnote)
+                        .foregroundStyle(HealthTheme.inkSecondary)
+                }
+                cardsStack(section.cards, dismissable: false)
+            }
         }
     }
 

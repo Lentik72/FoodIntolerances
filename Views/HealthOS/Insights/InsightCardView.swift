@@ -21,6 +21,11 @@ struct InsightCardView: View {
                             .font(.system(.title3, design: .serif, weight: .semibold))
                             .foregroundStyle(HealthTheme.ink)
                     }
+                    if card.tier == .contested {
+                        Text("unproven mechanism · your pattern")
+                            .font(.caption)
+                            .foregroundStyle(HealthTheme.inkMuted)
+                    }
                     if let countLine = card.countLine {
                         Text(countLine).font(.subheadline).foregroundStyle(HealthTheme.ink)
                     }
