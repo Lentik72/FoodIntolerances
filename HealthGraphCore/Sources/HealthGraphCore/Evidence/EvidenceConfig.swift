@@ -19,6 +19,9 @@ public struct EvidenceConfig: Sendable {
     public var lowMoodThreshold: Double = 1               // mood value ≤ 1 (Rough on the 1–3 scale) → low mood
     public var goodMoodThreshold: Double = 3              // mood value ≥ 3 (Good on the 1–3 scale) → good mood
     public var lutealWindowDays: Int = 5                  // days before next period start
+    public var weatherHighPercentile: Double = 0.75
+    public var weatherLowPercentile: Double = 0.25
+    public var minWeatherReadings: Int = 20
 
     // Candidate evaluation gate.
     public var minExposures: Int = 5
@@ -78,6 +81,7 @@ public struct EvidenceConfig: Sendable {
             case .pressureDrop: return pressureLagHours
             case .cyclePhase: return cyclePhaseLagHours
             case .fullMoon, .mercuryRetrograde: return outsideFactorLagHours
+            case .hotDay, .coldDay, .humidDay: return outsideFactorLagHours
             }
         }
     }

@@ -12,6 +12,7 @@ public enum PlausibilityCatalog {
         switch category {
         case "fullMoon":          return .contested
         case "mercuryRetrograde": return .novelty
+        case "hotDay", "coldDay", "humidDay": return .contested
         default:                  return .established
         }
     }

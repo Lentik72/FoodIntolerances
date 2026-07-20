@@ -52,6 +52,9 @@ struct InsightPhrasingTests {
         #expect(InsightPhrasing.derivedExposureLabel(fromCategory: "food") == nil)   // objects resolve via name
         #expect(InsightPhrasing.derivedExposureLabel(fromCategory: "fullMoon") == "Full moon")
         #expect(InsightPhrasing.derivedExposureLabel(fromCategory: "mercuryRetrograde") == "Mercury retrograde")
+        #expect(InsightPhrasing.derivedExposureLabel(fromCategory: "hotDay") == "Hot days")
+        #expect(InsightPhrasing.derivedExposureLabel(fromCategory: "coldDay") == "Cold days")
+        #expect(InsightPhrasing.derivedExposureLabel(fromCategory: "humidDay") == "Humid days")
     }
     @Test func noCausalLanguage() {
         let forbidden = ["cause", "causes", "triggers ", "makes you", "guarantee"]

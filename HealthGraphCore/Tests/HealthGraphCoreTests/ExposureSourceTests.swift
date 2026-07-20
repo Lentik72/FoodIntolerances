@@ -11,6 +11,9 @@ struct EvidenceConfigTests {
         #expect(c.lagWindow(for: .derived(.cyclePhase(.luteal))) == 0...24)
         #expect(c.lagWindow(for: .derived(.fullMoon)) == 0...24)
         #expect(c.lagWindow(for: .derived(.mercuryRetrograde)) == 0...24)
+        #expect(c.lagWindow(for: .derived(.hotDay)) == 0...24)
+        #expect(c.lagWindow(for: .derived(.coldDay)) == 0...24)
+        #expect(c.lagWindow(for: .derived(.humidDay)) == 0...24)
     }
     @Test func defaultsAreSane() {
         let c = EvidenceConfig.default
@@ -20,6 +23,9 @@ struct EvidenceConfigTests {
         #expect(c.candidateRatioProtective < 1.0)
         #expect(c.lowMoodThreshold == 1)
         #expect(c.goodMoodThreshold == 3)
+        #expect(c.minWeatherReadings == 20)
+        #expect(c.weatherHighPercentile == 0.75)
+        #expect(c.weatherLowPercentile == 0.25)
     }
 }
 
