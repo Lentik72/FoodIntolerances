@@ -456,6 +456,41 @@ struct HealthGraphDebugView: View {
                 }
             }
 
+            // Enrich the most recent 3 days with the FULL environment set so the
+            // collapsed "Environment" Timeline row demonstrates every detail line —
+            // Air pressure (with the pressure-drop fold) / Moon phase / Season /
+            // Mercury retrograde (a value-less presence line) — alongside Temperature
+            // + Humidity. These subtypes are otherwise emitted only by real live
+            // logging, so a weather-demo day never shows the complete row without this.
+            for d in max(0, days - 3)..<days {
+                let dayStart = cal.startOfDay(for: now.addingTimeInterval(-Double(days - d) * 86_400))
+                let stamp = dayStart.addingTimeInterval(9 * 3600)
+                events.append(HealthEvent(
+                    timestamp: stamp, timezoneID: tz, category: .environment,
+                    subtype: "pressure", value: 1013 - Double(d % 5), unit: "hPa", source: .weatherAPI,
+                    dedupKey: DedupKey.daily(.environment, "pressure", dayStart: dayStart)))
+                events.append(HealthEvent(
+                    timestamp: stamp, timezoneID: tz, category: .environment, subtype: "moonPhase",
+                    source: .weatherAPI, metadata: try? JSONEncoder().encode(["phase": "Waxing Gibbous"]),
+                    dedupKey: DedupKey.daily(.environment, "moonPhase", dayStart: dayStart)))
+                events.append(HealthEvent(
+                    timestamp: stamp, timezoneID: tz, category: .environment, subtype: "season",
+                    source: .weatherAPI, metadata: try? JSONEncoder().encode(["season": "Summer"]),
+                    dedupKey: DedupKey.daily(.environment, "season", dayStart: dayStart)))
+                // Most recent day only: a pressure drop (folds into the Air pressure
+                // line) and mercury retrograde (a value-less presence line).
+                if d == days - 1 {
+                    events.append(HealthEvent(
+                        timestamp: stamp, timezoneID: tz, category: .environment,
+                        subtype: "pressureDrop", value: 7, unit: "hPa", source: .weatherAPI,
+                        dedupKey: DedupKey.daily(.environment, "pressureDrop", dayStart: dayStart)))
+                    events.append(HealthEvent(
+                        timestamp: stamp, timezoneID: tz, category: .environment, subtype: "mercuryRetrograde",
+                        source: .weatherAPI,
+                        dedupKey: DedupKey.daily(.environment, "mercuryRetrograde", dayStart: dayStart)))
+                }
+            }
+
             try await GRDBEventStore(database: database).save(events)
             _ = try await EvidenceEngine(database: database).recompute(asOf: Date())
             await refresh()
