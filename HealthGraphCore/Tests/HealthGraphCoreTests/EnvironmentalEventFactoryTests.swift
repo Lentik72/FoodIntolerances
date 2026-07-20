@@ -74,4 +74,23 @@ struct EnvironmentalEventFactoryTests {
         let pressure = try await store.recentEvents(limit: 10).first { $0.subtype == "pressure" }
         #expect(pressure?.value == 1012) // latest reading wins (equal rank -> update)
     }
+
+    @Test func emitsTemperatureAndHumidityWhenPresent() {
+        let r = EnvironmentalReading(date: Date(timeIntervalSince1970: 1_700_000_000),
+            pressureHPa: nil, previousPressureHPa: nil, moonPhaseName: nil, season: nil,
+            isMercuryRetrograde: false, timezoneID: "UTC", temperatureC: 28.5, humidityPct: 82)
+        let events = EnvironmentalEventFactory.events(for: r)
+        let temp = events.first { $0.subtype == "temperature" }
+        let hum = events.first { $0.subtype == "humidity" }
+        #expect(temp?.category == .environment && temp?.value == 28.5 && temp?.unit == "°C")
+        #expect(hum?.category == .environment && hum?.value == 82 && hum?.unit == "%")
+        #expect(temp?.dedupKey != nil && hum?.dedupKey != nil)   // daily dedupKey (idempotent re-emission)
+    }
+    @Test func emitsNoTempHumidityWhenNil() {
+        let r = EnvironmentalReading(date: Date(timeIntervalSince1970: 1_700_000_000),
+            pressureHPa: 1013, previousPressureHPa: nil, moonPhaseName: nil, season: nil,
+            isMercuryRetrograde: false, timezoneID: "UTC")   // temp/humidity default nil
+        let events = EnvironmentalEventFactory.events(for: r)
+        #expect(!events.contains { $0.subtype == "temperature" || $0.subtype == "humidity" })
+    }
 }

@@ -9,10 +9,13 @@ public struct EnvironmentalReading: Sendable {
     public let season: String?
     public let isMercuryRetrograde: Bool
     public let timezoneID: String
+    public let temperatureC: Double?
+    public let humidityPct: Double?
 
     public init(date: Date, pressureHPa: Double?, previousPressureHPa: Double?,
                 moonPhaseName: String?, season: String?,
-                isMercuryRetrograde: Bool, timezoneID: String) {
+                isMercuryRetrograde: Bool, timezoneID: String,
+                temperatureC: Double? = nil, humidityPct: Double? = nil) {
         self.date = date
         self.pressureHPa = pressureHPa
         self.previousPressureHPa = previousPressureHPa
@@ -20,6 +23,8 @@ public struct EnvironmentalReading: Sendable {
         self.season = season
         self.isMercuryRetrograde = isMercuryRetrograde
         self.timezoneID = timezoneID
+        self.temperatureC = temperatureC
+        self.humidityPct = humidityPct
     }
 }
 
@@ -64,6 +69,12 @@ public enum EnvironmentalEventFactory {
             // Daily exposure — the engine correlates against season presence,
             // not just the four transition days a year.
             events.append(event("season", metadata: ["season": season]))
+        }
+        if let temp = r.temperatureC {
+            events.append(event("temperature", value: temp, unit: "°C"))
+        }
+        if let humidity = r.humidityPct {
+            events.append(event("humidity", value: humidity, unit: "%"))
         }
         return events
     }
