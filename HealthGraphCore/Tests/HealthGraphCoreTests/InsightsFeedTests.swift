@@ -114,4 +114,20 @@ struct InsightsFeedTests {
             exposureCategory: .food, recentOutcomes: [])], now: refNow)
         #expect(feed.sections.contains { $0.kind == .justForFun } == false)   // no empty section
     }
+
+    @Test func nonActiveNoveltyEdgesAreDroppedNotShownAsEvidence() {
+        let refNow = Date(timeIntervalSince1970: 1_700_000_000)
+        func merc(_ status: RelStatus, key: String) -> ResolvedRelationship {
+            let r = Relationship(fromCategory: "mercuryRetrograde", toCategory: "symptom", type: .possibleTrigger,
+                                 evidenceCount: 20, contradictionCount: 2, confidence: 0.6, strength: 5, lagHours: 12,
+                                 firstSeen: refNow.addingTimeInterval(-120 * 86_400), lastSeen: refNow,
+                                 lastRecomputed: refNow, status: status, edgeKey: key, toSubtype: "headache")
+            return ResolvedRelationship(relationship: r, exposureLabel: "Mercury retrograde",
+                                        outcomeLabel: "headache", exposureCategory: .environment, recentOutcomes: [])
+        }
+        let feed = InsightsFeed.build([merc(.confirmedNoEffect, key: "k-ne"), merc(.decayed, key: "k-dec")], now: refNow)
+        let allClaims = feed.sections.flatMap(\.cards).map(\.claim)
+        #expect(allClaims.contains { $0.contains("Mercury") } == false)   // never an evidence card
+        #expect(feed.sections.isEmpty)                                    // nothing to show
+    }
 }

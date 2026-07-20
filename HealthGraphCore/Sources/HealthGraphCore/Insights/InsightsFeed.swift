@@ -9,8 +9,10 @@ public enum InsightsFeed {
         }
         let active = activeAll.filter { tier($0) != .novelty }        // evidence feed
         let justForFun = activeAll.filter { tier($0) == .novelty }    // curiosities
-        let noEffect = resolved.filter { $0.relationship.status == .confirmedNoEffect }
-        let archive = resolved.filter { $0.relationship.status == .decayed || $0.relationship.status == .userDismissed }
+        let noEffect = resolved.filter { $0.relationship.status == .confirmedNoEffect && tier($0) != .novelty }
+        let archive = resolved.filter {
+            ($0.relationship.status == .decayed || $0.relationship.status == .userDismissed) && tier($0) != .novelty
+        }
 
         // "New" selection: recent active edges, top N by confidence × novelty.
         func novelty(_ r: Relationship) -> Double {
