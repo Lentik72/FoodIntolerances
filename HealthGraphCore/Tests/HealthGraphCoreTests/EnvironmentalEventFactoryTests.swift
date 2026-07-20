@@ -75,22 +75,38 @@ struct EnvironmentalEventFactoryTests {
         #expect(pressure?.value == 1012) // latest reading wins (equal rank -> update)
     }
 
-    @Test func emitsTemperatureAndHumidityWhenPresent() {
-        let r = EnvironmentalReading(date: Date(timeIntervalSince1970: 1_700_000_000),
-            pressureHPa: nil, previousPressureHPa: nil, moonPhaseName: nil, season: nil,
-            isMercuryRetrograde: false, timezoneID: "UTC", temperatureC: 28.5, humidityPct: 82)
-        let events = EnvironmentalEventFactory.events(for: r)
-        let temp = events.first { $0.subtype == "temperature" }
-        let hum = events.first { $0.subtype == "humidity" }
-        #expect(temp?.category == .environment && temp?.value == 28.5 && temp?.unit == "°C")
-        #expect(hum?.category == .environment && hum?.value == 82 && hum?.unit == "%")
-        #expect(temp?.dedupKey != nil && hum?.dedupKey != nil)   // daily dedupKey (idempotent re-emission)
-    }
     @Test func emitsNoTempHumidityWhenNil() {
         let r = EnvironmentalReading(date: Date(timeIntervalSince1970: 1_700_000_000),
             pressureHPa: 1013, previousPressureHPa: nil, moonPhaseName: nil, season: nil,
             isMercuryRetrograde: false, timezoneID: "UTC")   // temp/humidity default nil
         let events = EnvironmentalEventFactory.events(for: r)
         #expect(!events.contains { $0.subtype == "temperature" || $0.subtype == "humidity" })
+    }
+
+    @Test func emitsExactlyOneCombinedTemperatureWithLowInMetadata() {
+        let r = EnvironmentalReading(date: Date(timeIntervalSince1970: 1_700_000_000),
+            pressureHPa: nil, previousPressureHPa: nil, moonPhaseName: nil, season: nil,
+            isMercuryRetrograde: false, timezoneID: "UTC",
+            temperatureHighC: 24, temperatureLowC: 12, humidityPct: 68)
+        let events = EnvironmentalEventFactory.events(for: r)
+        #expect(events.filter { $0.subtype == "temperature" }.count == 1)   // ONE combined event, not two
+        let temp = events.first { $0.subtype == "temperature" }
+        #expect(temp?.value == 24 && temp?.unit == "°C" && temp?.dedupKey != nil)
+        let meta = temp?.metadata.flatMap { try? JSONDecoder().decode([String: String].self, from: $0) }
+        #expect(meta?["low"] == "12.0")
+        #expect(events.first { $0.subtype == "humidity" }?.value == 68)
+    }
+    // Either pole nil → no temperature event; humidity is INDEPENDENT (still emits).
+    @Test func skipsTemperatureWhenEitherPoleNilButKeepsHumidity() {
+        func temps(high: Double?, low: Double?) -> [HealthEvent] {
+            EnvironmentalEventFactory.events(for: EnvironmentalReading(
+                date: Date(timeIntervalSince1970: 1_700_000_000),
+                pressureHPa: nil, previousPressureHPa: nil, moonPhaseName: nil, season: nil,
+                isMercuryRetrograde: false, timezoneID: "UTC",
+                temperatureHighC: high, temperatureLowC: low, humidityPct: 55))
+        }
+        #expect(!temps(high: 24, low: nil).contains { $0.subtype == "temperature" })   // low-nil branch
+        #expect(!temps(high: nil, low: 12).contains { $0.subtype == "temperature" })   // high-nil branch
+        #expect(temps(high: 24, low: nil).contains { $0.subtype == "humidity" })       // humidity independent
     }
 }
