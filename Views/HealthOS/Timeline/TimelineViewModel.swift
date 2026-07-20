@@ -126,7 +126,7 @@ final class TimelineViewModel: ObservableObject {
                 let remaining = day.events.filter { $0.id != event.id }
                 guard !remaining.isEmpty else { return nil }
                 return TimelineDayBuilder.days(from: remaining, timeZone: timeZone,
-                                               sessionizeSleep: false).first
+                                               sessionizeSleep: false, groupEnvironment: false).first
             }
         } else {
             // Browse days contain sleep sessions whose segments can span day
@@ -226,7 +226,7 @@ final class TimelineViewModel: ObservableObject {
             isSearchActive = true
             if let categoryFilter { results = results.filter { categoryFilter.contains($0.category) } }
             if let sourceFilter { results = results.filter { sourceFilter.contains($0.source) } }
-            days = TimelineDayBuilder.days(from: results, timeZone: timeZone, sessionizeSleep: false)
+            days = TimelineDayBuilder.days(from: results, timeZone: timeZone, sessionizeSleep: false, groupEnvironment: false)
         } catch {
             guard gen == loadGeneration else { return }
             isSearchActive = true

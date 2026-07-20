@@ -30,12 +30,14 @@ struct EventDetailView: View {
                 whenCard
                 sourceCard
                 if !metadataRows.isEmpty { detailsCard }
-                deleteButton
-                if deleteFailed {
-                    Text("Couldn't delete. Please try again.")
-                        .font(.footnote)
-                        .foregroundStyle(HealthTheme.amber)
-                        .frame(maxWidth: .infinity, alignment: .center)
+                if !displayEvent.isReadOnlyEnvironment {
+                    deleteButton
+                    if deleteFailed {
+                        Text("Couldn't delete. Please try again.")
+                            .font(.footnote)
+                            .foregroundStyle(HealthTheme.amber)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    }
                 }
                 if event.source == .manual {
                     Button { editing = true } label: {
