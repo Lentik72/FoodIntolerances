@@ -45,6 +45,7 @@ Design: `docs/superpowers/specs/2026-07-19-weather-exposures-design.md`.
         let hum = events.first { $0.subtype == "humidity" }
         #expect(temp?.category == .environment && temp?.value == 28.5 && temp?.unit == "°C")
         #expect(hum?.category == .environment && hum?.value == 82 && hum?.unit == "%")
+        #expect(temp?.dedupKey != nil && hum?.dedupKey != nil)   // daily dedupKey (idempotent re-emission)
     }
     @Test func emitsNoTempHumidityWhenNil() {
         let r = EnvironmentalReading(date: Date(timeIntervalSince1970: 1_700_000_000),
@@ -108,29 +109,59 @@ import Foundation
 @testable import HealthGraphCore
 
 struct WeatherExposureSourcesTests {
-    private func temp(_ v: Double, _ t: TimeInterval) -> HealthEvent {
-        HealthEvent(timestamp: Date(timeIntervalSince1970: t), timezoneID: "UTC",
+    private func temp(_ v: Double, _ i: Int) -> HealthEvent {
+        HealthEvent(timestamp: Date(timeIntervalSince1970: Double(i) * 86_400), timezoneID: "UTC",
                     category: .environment, subtype: "temperature", value: v, unit: "°C", source: .weatherAPI)
     }
+    private func humid(_ v: Double, _ i: Int) -> HealthEvent {
+        HealthEvent(timestamp: Date(timeIntervalSince1970: Double(i) * 86_400), timezoneID: "UTC",
+                    category: .environment, subtype: "humidity", value: v, unit: "%", source: .weatherAPI)
+    }
+    // Values 1…20 in SHUFFLED input order — the source must sort internally (a dropped
+    // `.sorted()` would pass a pre-sorted fixture but fail this one).
+    private let shuffled20: [Double] = [11, 3, 17, 8, 20, 1, 14, 6, 19, 9, 2, 15, 7, 12, 4, 18, 10, 5, 16, 13]
+
     @Test func hotAndColdByQuartile() {
-        let events = (1...20).map { temp(Double($0), Double($0) * 86_400) }   // 1…20
+        let events = shuffled20.enumerated().map { temp($0.element, $0.offset) }   // n=20, values 1…20
         let occ = TemperatureExposureSource(config: .default).occurrences(from: events)
         let hot = occ.filter { $0.key == .derived(.hotDay) }.count
         let cold = occ.filter { $0.key == .derived(.coldDay) }.count
-        #expect(hot == 6)     // values >= p75(15): 15,16,17,18,19,20
-        #expect(cold == 5)    // values <= p25(5): 1,2,3,4,5
-        #expect(occ.count == hot + cold)   // 6..14 → neither
+        #expect(hot == 6)     // >= p75(15): 15…20
+        #expect(cold == 5)    // <= p25(5): 1…5
+        #expect(occ.count == hot + cold)   // middle → neither
+    }
+    @Test func percentileIsNearestRankNotFloorOrLinear() {   // n=21 → fractional rank exercises .rounded(.up)
+        let occ = TemperatureExposureSource(config: .default).occurrences(from: (1...21).map { temp(Double($0), $0) })
+        #expect(occ.filter { $0.key == .derived(.hotDay) }.count == 6)    // p75 rank=ceil(15.75)=16 → cutoff 16 → 16…21
+        #expect(occ.filter { $0.key == .derived(.coldDay) }.count == 6)   // p25 rank=ceil(5.25)=6 → cutoff 6 → 1…6
     }
     @Test func belowMinReadingsEmitsNothing() {
-        let events = (1...10).map { temp(Double($0), Double($0) * 86_400) }   // 10 < 20
-        #expect(TemperatureExposureSource(config: .default).occurrences(from: events).isEmpty)
+        #expect(TemperatureExposureSource(config: .default).occurrences(from: (1...10).map { temp(Double($0), $0) }).isEmpty)
+    }
+    @Test func atMinMinusOneEmitsNothing() {   // n=19 = minWeatherReadings−1 → catches a too-lenient guard
+        #expect(TemperatureExposureSource(config: .default).occurrences(from: (1...19).map { temp(Double($0), $0) }).isEmpty)
+    }
+    @Test func degenerateAllEqualSeriesEmitsNothing() {   // no spread → NO false signal (the percentile-design guarantee)
+        #expect(TemperatureExposureSource(config: .default).occurrences(from: (1...25).map { temp(20, $0) }).isEmpty)
+        #expect(HumidityExposureSource(config: .default).occurrences(from: (1...25).map { humid(55, $0) }).isEmpty)
     }
     @Test func humidityTopQuartileOnly() {
-        let events = (1...20).map { v in HealthEvent(timestamp: Date(timeIntervalSince1970: Double(v) * 86_400),
-            timezoneID: "UTC", category: .environment, subtype: "humidity", value: Double(v), unit: "%", source: .weatherAPI) }
-        let occ = HumidityExposureSource(config: .default).occurrences(from: events)
+        let occ = HumidityExposureSource(config: .default).occurrences(from: shuffled20.enumerated().map { humid($0.element, $0.offset) })
         #expect(occ.allSatisfy { $0.key == .derived(.humidDay) })
         #expect(occ.count == 6)   // >= p75(15)
+    }
+    @Test func humidityBelowMinReadingsEmitsNothing() {
+        #expect(HumidityExposureSource(config: .default).occurrences(from: (1...10).map { humid(Double($0), $0) }).isEmpty)
+    }
+    @Test func eachSourceIgnoresOtherSubtypes() {   // mixed batch → each source reacts only to its own subtype
+        var events = shuffled20.enumerated().map { temp($0.element, $0.offset) }
+        events += shuffled20.enumerated().map { humid($0.element, $0.offset + 100) }
+        events.append(HealthEvent(timestamp: Date(timeIntervalSince1970: 900 * 86_400), timezoneID: "UTC",
+            category: .environment, subtype: "pressure", value: 1013, unit: "hPa", source: .weatherAPI))
+        #expect(TemperatureExposureSource(config: .default).occurrences(from: events)
+            .allSatisfy { $0.key == .derived(.hotDay) || $0.key == .derived(.coldDay) })
+        #expect(HumidityExposureSource(config: .default).occurrences(from: events)
+            .allSatisfy { $0.key == .derived(.humidDay) })
     }
 }
 ```
@@ -138,7 +169,7 @@ struct WeatherExposureSourcesTests {
 `EdgeIdentityTests` — extend `derivedExposuresRoundTrip`: `roundTrip(.derived(.hotDay), .symptom("migraine"))`, `roundTrip(.derived(.coldDay), .symptom("jointPain"))`, `roundTrip(.derived(.humidDay), .lowMood)`.
 `InsightPhrasingTests.derivedLabels` — add: `"hotDay" → "Hot days"`, `"coldDay" → "Cold days"`, `"humidDay" → "Humid days"`.
 `PlausibilityCatalogTests.tiers` — add: `"hotDay"`, `"coldDay"`, `"humidDay"` → `.contested`.
-`ExposureSourceTests.EvidenceConfigTests` — add: `#expect(c.minWeatherReadings == 20)`, `#expect(c.weatherHighPercentile == 0.75)`, `#expect(c.weatherLowPercentile == 0.25)`, and `#expect(c.lagWindow(for: .derived(.hotDay)) == 0...24)`.
+`ExposureSourceTests.EvidenceConfigTests` — add: `#expect(c.minWeatherReadings == 20)`, `#expect(c.weatherHighPercentile == 0.75)`, `#expect(c.weatherLowPercentile == 0.25)`, and the lag for **all three** kinds (the three share one switch arm, so assert each to catch a copy-paste): `#expect(c.lagWindow(for: .derived(.hotDay)) == 0...24)`, `.coldDay`, `.humidDay`.
 
 - [ ] **Step 2: Run to confirm failure.** `cd HealthGraphCore && swift test 2>&1 | tail -20` → FAIL to compile.
 
@@ -179,6 +210,7 @@ public struct TemperatureExposureSource: ExposureSource {
         let sorted = temps.compactMap(\.value).sorted()
         let hi = Percentile.value(sorted, config.weatherHighPercentile)
         let lo = Percentile.value(sorted, config.weatherLowPercentile)
+        guard hi > lo else { return [] }   // no spread (flat/degenerate series) → no buckets, no false signal
         return temps.compactMap { e in
             guard let v = e.value else { return nil }
             if v >= hi { return ExposureOccurrence(key: .derived(.hotDay), timestamp: e.timestamp,
@@ -197,7 +229,10 @@ public struct HumidityExposureSource: ExposureSource {
     public func occurrences(from events: [HealthEvent]) -> [ExposureOccurrence] {
         let hums = events.filter { $0.category == .environment && $0.subtype == "humidity" && $0.value != nil }
         guard hums.count >= config.minWeatherReadings else { return [] }
-        let hi = Percentile.value(hums.compactMap(\.value).sorted(), config.weatherHighPercentile)
+        let sorted = hums.compactMap(\.value).sorted()
+        let hi = Percentile.value(sorted, config.weatherHighPercentile)
+        let lo = Percentile.value(sorted, config.weatherLowPercentile)
+        guard hi > lo else { return [] }   // no spread → no buckets
         return hums.compactMap { e in
             guard let v = e.value, v >= hi else { return nil }
             return ExposureOccurrence(key: .derived(.humidDay), timestamp: e.timestamp,
@@ -283,9 +318,9 @@ git commit -m "feat(core): personal-percentile Hot/Cold/Humid exposures + contes
 ```
 
 - [ ] **Step 2: Decode temp/humidity in the service.** In `EnvironmentalDataService.swift`:
-  - `WeatherResponse.Main`: add `let temp: Double` and `let humidity: Int` (already in the `units=metric` payload).
-  - Add `@Published var currentTemperatureC: Double? = nil` and `@Published var currentHumidityPct: Double? = nil` near the other published props. **Use optionals, NOT a `0` default** — 0 °C is a legitimate (freezing) reading, and dropping it via a `> 0` guard would silently discard exactly the *cold days* the Cold-day exposure needs. Optionals distinguish "no reading yet" from "0 °C". (Pressure uses a `0`/`> 0` guard because 0 hPa is physically impossible; temperature is different.)
-  - In `fetchAtmosphericPressure`'s success `MainActor.run` block (where `updateAtmosphericPressure(pressureValue)` is called), also set `self.currentTemperatureC = decodedResponse.main.temp` and `self.currentHumidityPct = Double(decodedResponse.main.humidity)`.
+  - `WeatherResponse.Main`: add `let temp: Double?` and `let humidity: Int?` — **optional**, so a missing/renamed key on either doesn't also fail the (previously pressure-only) decode; defensive and consistent with the optionals below.
+  - Add `@Published var currentTemperatureC: Double? = nil` and `@Published var currentHumidityPct: Double? = nil` near the other published props. **Optionals, NOT a `0` default** — 0 °C is a legitimate (freezing) reading, and a `> 0` guard would silently discard exactly the *cold days* the Cold-day exposure needs. Optionals distinguish "no reading yet" from "0 °C". (Pressure uses a `0`/`> 0` guard because 0 hPa is physically impossible; temperature is different.)
+  - In `fetchAtmosphericPressure`'s success branch, **extract scalars before the `MainActor.run` closure** (mirroring the existing `let pressureValue = ...`, to avoid capturing the non-Sendable `WeatherResponse` across the hop): `let temp = decodedResponse.main.temp` and `let humidity = decodedResponse.main.humidity.map(Double.init)`, then inside the closure set `self.currentTemperatureC = temp` and `self.currentHumidityPct = humidity`.
 
 - [ ] **Step 3: Thread into the reading.** In `EnvironmentalEventEmitter.emitIfNeeded`, add to the `EnvironmentalReading(...)` init call: `temperatureC: service.currentTemperatureC, humidityPct: service.currentHumidityPct` (already optional — nil when never fetched, so no event is emitted that day; a genuine 0 °C reading is preserved). `backfillDerived` leaves them nil (unchanged — no weather history).
 
