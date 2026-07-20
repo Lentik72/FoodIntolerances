@@ -45,11 +45,11 @@ The split follows the established convention: **core groups & identifies; the ap
 
 - If the day has a `temperature` event → `"{lowConv}–{highConv}°{unit}"` (via `WeatherValueFormatter`), append `" · {humidity}%"` when a `humidity` event exists.
 - Else if a `moonPhase` event exists → the moon phase name, append `" · {season}"` when a `season` event exists.
-- Else → the single remaining subtype's value line (degenerate; e.g. season-only or mercury-only day).
+- Else (degenerate single-subtype day; e.g. season-only or mercury-only) → the first detail line rendered as `"{label}: {value}"`, or the bare `"{label}"` when that reading has no value (e.g. mercury retrograde). The labeled form guarantees a non-empty headline even for a value-less reading.
 
 ### D. Expandability
 
-- The row is **expandable when the day has ≥2 env subtypes** (or one subtype whose full line the headline doesn't already show). Backfill days (moon + season, often + mercury) and live days always qualify. A degenerate single-subtype day renders a **non-expandable** row (no chevron) — parity with `SleepSessionRow`'s `isExpandable` guard.
+- The row is **expandable when it has ≥2 detail lines** — i.e. more than the single-line headline conveys. Because `pressureDrop` folds into the Air pressure line (§3B), a pressure-only day is one line and is not expandable; backfill days (moon + season, often + mercury) and live days have ≥2 and always qualify. A one-line day renders a **non-expandable** row (no chevron) — parity with `SleepSessionRow`'s `isExpandable` guard. Implemented as `detailLines(...).count >= 2`.
 
 ### E. Read-only enforcement (Decision 7)
 
