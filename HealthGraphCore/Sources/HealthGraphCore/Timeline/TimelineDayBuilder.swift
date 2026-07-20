@@ -13,19 +13,23 @@ public struct SeverityPoint: Equatable, Sendable {
 public enum TimelineItem: Identifiable, Equatable, Sendable {
     case event(HealthEvent)
     case sleepSession(SleepSession)
+    case environmentSummary(EnvironmentDaySummary)
 
     public var id: String {
         switch self {
         case .event(let e): e.id.uuidString
         case .sleepSession(let s): s.id
+        case .environmentSummary(let s): s.id
         }
     }
 
-    /// Where the row sorts within its day: events by start, sessions by wake.
+    /// Where the row sorts within its day: events by start, sessions by wake,
+    /// environment summaries by their shared per-day env timestamp.
     public var sortDate: Date {
         switch self {
         case .event(let e): e.timestamp
         case .sleepSession(let s): s.end
+        case .environmentSummary(let s): s.timestamp
         }
     }
 }
@@ -59,8 +63,14 @@ public enum TimelineDayBuilder {
     /// segments started in. Point `.sleep` events pass through as raw rows.
     /// Search passes `false`: results are a filtered subset, and sessionizing
     /// a subset would display wrong totals.
+    ///
+    /// With `groupEnvironment` (browse mode, the default) `.environment` events
+    /// leave the row stream and come back as ONE `EnvironmentDaySummary` item
+    /// per local calendar day. Search passes `false`: results are a filtered
+    /// subset, and summarizing a subset would misrepresent the day.
     public static func days(from events: [HealthEvent], timeZone: TimeZone,
-                            sessionizeSleep: Bool = true) -> [TimelineDay] {
+                            sessionizeSleep: Bool = true,
+                            groupEnvironment: Bool = true) -> [TimelineDay] {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
 
@@ -73,7 +83,11 @@ public enum TimelineDayBuilder {
                 // fragment must not become a permanent "0m" session row.
                 .filter { $0.end.timeIntervalSince($0.start) >= 60 }
             : []
-        let rowEvents = sessionizeSleep ? events.filter { !isSessionizable($0) } : events
+        let summaries = groupEnvironment
+            ? EnvironmentDaySummaryBuilder.summaries(from: events, timeZone: timeZone)
+            : []
+        var rowEvents = sessionizeSleep ? events.filter { !isSessionizable($0) } : events
+        if groupEnvironment { rowEvents = rowEvents.filter { $0.category != .environment } }
 
         // HealthKit emits sub-30-second stages that would otherwise render as
         // cluttering "0m" rows; drop those while keeping all point-in-time events.
@@ -88,6 +102,9 @@ public enum TimelineDayBuilder {
         }
         for session in sessions {
             buckets[calendar.startOfDay(for: session.end), default: []].append(.sleepSession(session))
+        }
+        for summary in summaries {
+            buckets[summary.dayStart, default: []].append(.environmentSummary(summary))
         }
 
         return buckets.keys.sorted(by: >).map { day in

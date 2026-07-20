@@ -178,6 +178,7 @@ struct TimelineDayBuilderTests {
             switch item {
             case .event(let e): e.subtype ?? ""
             case .sleepSession: "session"
+            case .environmentSummary: "env"
             }
         }
         #expect(kinds == ["coffee", "session", "headache"])   // 06:10 > 06:00 > 05:50
@@ -201,5 +202,33 @@ struct TimelineDayBuilderTests {
                                    source: .healthKit, createdAt: base)
         let days = TimelineDayBuilder.days(from: [fragment], timeZone: TimeZone(identifier: "UTC")!)
         #expect(days.isEmpty)
+    }
+
+    @Test func environmentEventsCollapseIntoOneSummaryInBrowse() {
+        let tz = TimeZone(identifier: "UTC")!
+        func env(_ s: String) -> HealthEvent { HealthEvent(timestamp: Date(timeIntervalSince1970: 43_200),
+            timezoneID: "UTC", category: .environment, subtype: s, source: .weatherAPI) }
+        let symptom = HealthEvent(timestamp: Date(timeIntervalSince1970: 40_000), timezoneID: "UTC",
+                                  category: .symptom, subtype: "migraine", value: 5, source: .manual)
+        let days = TimelineDayBuilder.days(from: [env("temperature"), env("humidity"), env("moonPhase"), symptom],
+                                           timeZone: tz)
+        let envItems = days[0].items.filter { if case .environmentSummary = $0 { true } else { false } }
+        #expect(envItems.count == 1)                                   // one collapsed row
+        if case .environmentSummary(let s) = envItems[0] {             // and it actually carries the 3 env events
+            #expect(s.events.count == 3)
+        } else { Issue.record("expected an environmentSummary item") }
+        #expect(days[0].events.map { $0.subtype } == ["migraine"])     // env excluded from raw .event rows
+        // Sort: summary sortDate = its timestamp (43_200) > the earlier symptom (40_000); items are newest-first.
+        // A bug returning dayStart/midnight (0) would mis-sort the summary to the bottom and this would fail.
+        #expect({ if case .environmentSummary = days[0].items.first { true } else { false } }())
+    }
+    @Test func searchLeavesEnvironmentRaw() {
+        let tz = TimeZone(identifier: "UTC")!
+        func env(_ s: String) -> HealthEvent { HealthEvent(timestamp: Date(timeIntervalSince1970: 43_200),
+            timezoneID: "UTC", category: .environment, subtype: s, source: .weatherAPI) }
+        let days = TimelineDayBuilder.days(from: [env("temperature"), env("humidity")], timeZone: tz,
+                                           sessionizeSleep: false, groupEnvironment: false)
+        #expect(days[0].items.allSatisfy { if case .event = $0 { true } else { false } })   // raw rows, no summary
+        #expect(days[0].events.count == 2)
     }
 }
