@@ -87,6 +87,22 @@ struct InsightsViewModelTests {
         #expect(card?.claim.contains("Full moon") == true)             // …phrased + labeled via exposure(for:)
     }
 
+    @Test func hotDayEdgeSurfacesInActiveWithContestedTier() async throws {
+        let refNow = Date(timeIntervalSince1970: 1_713_000_000)
+        let db = try AppDatabase.inMemory()
+        let hot = Relationship(
+            fromCategory: "hotDay", toCategory: "symptom", type: .possibleTrigger,
+            evidenceCount: 6, contradictionCount: 2, confidence: 0.6, strength: 5, lagHours: 12,
+            firstSeen: refNow.addingTimeInterval(-30 * 86_400), lastSeen: refNow, lastRecomputed: refNow,
+            status: .active, edgeKey: "derived:hotDay|symptom:migraine|possibleTrigger", toSubtype: "migraine")
+        try await GRDBRelationshipStore(database: db).save(hot)
+        let vm = InsightsViewModel(database: db, now: { refNow })
+        await vm.load()
+        let card = vm.feed.sections.first { $0.kind == .active }?.cards.first
+        #expect(card?.tier == .contested)
+        #expect(card?.claim.contains("Hot days") == true)
+    }
+
     @Test func undoRestoresDismissedCard() async throws {
         let db = try await seedMinedDB()
         let vm = InsightsViewModel(database: db, now: { Date(timeIntervalSince1970: 1_713_000_000) })

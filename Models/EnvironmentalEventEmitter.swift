@@ -22,7 +22,9 @@ enum EnvironmentalEventEmitter {
             moonPhaseName: getMoonPhase(for: now),
             season: getCurrentSeason(for: now),
             isMercuryRetrograde: MercuryRetrograde.isRetrograde(on: now),
-            timezoneID: TimeZone.current.identifier
+            timezoneID: TimeZone.current.identifier,
+            temperatureC: service.currentTemperatureC,
+            humidityPct: service.currentHumidityPct
         )
         do {
             _ = try await IngestPipeline(database: database)

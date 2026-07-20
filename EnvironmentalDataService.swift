@@ -13,6 +13,10 @@ class EnvironmentalDataService: ObservableObject {
     @Published var currentPressure: Double = 0.0
     @Published var previousPressure: Double = 0.0
     @Published var suddenPressureChange: Bool = false
+    // Optional (NOT 0-default): 0 °C / 0% are legitimate readings, and a `> 0` guard
+    // would silently drop exactly the cold days the Cold-day exposure needs.
+    @Published var currentTemperatureC: Double? = nil
+    @Published var currentHumidityPct: Double? = nil
     @Published var moonPhase: String = "Loading..."
     @Published var isMercuryRetrograde: Bool = false
     @Published var lastUpdated: Date = Date()
@@ -232,11 +236,15 @@ class EnvironmentalDataService: ObservableObject {
                 let decodedResponse = try JSONDecoder().decode(WeatherResponse.self, from: data)
 
                 let pressureValue = Double(decodedResponse.main.pressure)
+                let temp = decodedResponse.main.temp
+                let humidity = decodedResponse.main.humidity.map(Double.init)
 
                 await MainActor.run {
                     self.updateAtmosphericPressure(pressureValue)
                     self.atmosphericPressure = "\(Int(pressureValue)) hPa"
                     self.atmosphericPressureCategory = self.categorizePressure(pressureValue)
+                    self.currentTemperatureC = temp
+                    self.currentHumidityPct = humidity
                     self.lastUpdated = Date()
                 }
 
@@ -357,6 +365,8 @@ class EnvironmentalDataService: ObservableObject {
     struct WeatherResponse: Codable {
         struct Main: Codable {
             let pressure: Int
+            let temp: Double?
+            let humidity: Int?
         }
         let main: Main
     }

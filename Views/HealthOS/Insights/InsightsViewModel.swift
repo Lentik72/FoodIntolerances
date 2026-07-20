@@ -68,7 +68,8 @@ final class InsightsViewModel: ObservableObject {
         if let fc = r.fromCategory, let derived = InsightPhrasing.derivedExposureLabel(fromCategory: fc) {
             let category: EventCategory = fc.hasPrefix("cyclePhase") ? .cycle
                 : fc == "shortSleep" ? .sleep : fc == "highStress" ? .stress
-                : fc == "pressureDrop" || fc == "fullMoon" || fc == "mercuryRetrograde" ? .environment : .note
+                : fc == "pressureDrop" || fc == "fullMoon" || fc == "mercuryRetrograde"
+                    || fc == "hotDay" || fc == "coldDay" || fc == "humidDay" ? .environment : .note
             return (derived, category)
         }
         return (r.fromCategory ?? "Something", .note)
