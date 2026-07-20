@@ -23,8 +23,12 @@ enum WeatherValueFormatter {
         guard event.category == .environment, let v = event.value else { return nil }
         switch event.subtype {
         case "temperature":
-            let shown = unit == .fahrenheit ? v * 9 / 5 + 32 : v
-            return "\(Int(shown.rounded()))°\(unit.rawValue)"     // rawValue is "C"/"F"
+            func conv(_ c: Double) -> Int { Int((unit == .fahrenheit ? c * 9 / 5 + 32 : c).rounded()) }
+            if let data = event.metadata,
+               let low = (try? JSONDecoder().decode([String: String].self, from: data))?["low"].flatMap({ Double($0) }) {
+                return "\(conv(low))–\(conv(v))°\(unit.rawValue)"   // separator is U+2013 EN DASH — must match the test literal
+            }
+            return "\(conv(v))°\(unit.rawValue)"                    // legacy single-value path (no metadata)
         case "humidity":
             return "\(Int(v.rounded()))%"
         default:

@@ -69,7 +69,7 @@ final class InsightsViewModel: ObservableObject {
             let category: EventCategory = fc.hasPrefix("cyclePhase") ? .cycle
                 : fc == "shortSleep" ? .sleep : fc == "highStress" ? .stress
                 : fc == "pressureDrop" || fc == "fullMoon" || fc == "mercuryRetrograde"
-                    || fc == "hotDay" || fc == "coldDay" || fc == "humidDay" ? .environment : .note
+                    || fc == "hotDay" || fc == "coldDay" || fc == "humidDay" || fc == "swingDay" ? .environment : .note
             return (derived, category)
         }
         return (r.fromCategory ?? "Something", .note)

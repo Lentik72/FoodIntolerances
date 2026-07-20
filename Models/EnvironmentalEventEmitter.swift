@@ -23,8 +23,9 @@ enum EnvironmentalEventEmitter {
             season: getCurrentSeason(for: now),
             isMercuryRetrograde: MercuryRetrograde.isRetrograde(on: now),
             timezoneID: TimeZone.current.identifier,
-            temperatureC: service.currentTemperatureC,
-            humidityPct: service.currentHumidityPct
+            temperatureHighC: service.forecastHighC,
+            temperatureLowC: service.forecastLowC,
+            humidityPct: service.forecastHumidity
         )
         do {
             _ = try await IngestPipeline(database: database)

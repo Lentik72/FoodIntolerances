@@ -17,6 +17,12 @@ class EnvironmentalDataService: ObservableObject {
     // would silently drop exactly the cold days the Cold-day exposure needs.
     @Published var currentTemperatureC: Double? = nil
     @Published var currentHumidityPct: Double? = nil
+    // Next-24h daily high/low + mean humidity from the /forecast endpoint. Optional
+    // (nil on fetch failure or < 3 in-window slots) so the emitter leaves the
+    // temperature/humidity events unemitted rather than writing a false 0.
+    @Published var forecastHighC: Double? = nil
+    @Published var forecastLowC: Double? = nil
+    @Published var forecastHumidity: Double? = nil
     @Published var moonPhase: String = "Loading..."
     @Published var isMercuryRetrograde: Bool = false
     @Published var lastUpdated: Date = Date()
@@ -62,7 +68,12 @@ class EnvironmentalDataService: ObservableObject {
             if !Task.isCancelled {
                 // Fetch atmospheric pressure (most important data)
                 await fetchAtmosphericPressure()
-                
+
+                // Fetch the daily high/low + mean humidity from the forecast endpoint
+                if !Task.isCancelled {
+                    await fetchDailyForecast()
+                }
+
                 // Final update
                 if !Task.isCancelled {
                     await MainActor.run {
@@ -259,7 +270,76 @@ class EnvironmentalDataService: ObservableObject {
 
         currentAtmosphericTask = newTask
     }
-    
+
+    /// Pure reduction over 3-hourly forecast slots: the daily high (max temp), low
+    /// (min temp) and mean humidity across the slots whose `dt` falls in the next
+    /// 24h window `[now, now + 86_400]`. Requires ≥ 3 in-window slots (a partial
+    /// window at the edge of a forecast run is not a trustworthy daily high/low);
+    /// nil otherwise. Static + network-free so it can be unit-tested directly.
+    static func aggregate24h(slots: [(dt: TimeInterval, temp: Double, humidity: Double)],
+                             now: Date) -> (high: Double, low: Double, humidity: Double)? {
+        let start = now.timeIntervalSince1970
+        let end = start + 86_400
+        let inWindow = slots.filter { $0.dt >= start && $0.dt <= end }
+        guard inWindow.count >= 3 else { return nil }
+        let temps = inWindow.map(\.temp)
+        guard let high = temps.max(), let low = temps.min() else { return nil }
+        let humidity = inWindow.map(\.humidity).reduce(0, +) / Double(inWindow.count)
+        return (high, low, humidity)
+    }
+
+    /// GETs the /forecast endpoint (3-hourly slots) and publishes the next-24h daily
+    /// high/low + mean humidity. Reuses the exact location resolution the pressure
+    /// fetch uses (manual override → LocationService); no new location path.
+    public func fetchDailyForecast() async {
+        // Resolve location the same way fetchAtmosphericPressure does.
+        let location: CLLocationCoordinate2D
+        if let manualLoc = self.manualLocation {
+            location = manualLoc
+        } else if let serviceLoc = self.locationManager?.currentLocation {
+            location = serviceLoc
+        } else {
+            Logger.warning("No location available for daily forecast fetch.", category: .location)
+            await MainActor.run {
+                self.forecastHighC = nil
+                self.forecastLowC = nil
+                self.forecastHumidity = nil
+            }
+            return
+        }
+
+        guard let url = APIConfig.forecastURL(latitude: location.latitude, longitude: location.longitude) else {
+            Logger.error("Invalid URL for forecast API", category: .network)
+            return
+        }
+
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let decoded = try JSONDecoder().decode(ForecastResponse.self, from: data)
+            let slots = decoded.list.map {
+                (dt: $0.dt, temp: $0.main.temp, humidity: Double($0.main.humidity))
+            }
+            // Extract plain scalars BEFORE the MainActor.run block so we don't
+            // cross-actor-capture the (non-Sendable) tuple/decoded state.
+            let aggregate = EnvironmentalDataService.aggregate24h(slots: slots, now: Date())
+            let high = aggregate?.high
+            let low = aggregate?.low
+            let humidity = aggregate?.humidity
+            await MainActor.run {
+                self.forecastHighC = high
+                self.forecastLowC = low
+                self.forecastHumidity = humidity
+            }
+        } catch {
+            Logger.error(error, message: "Error fetching daily forecast", category: .network)
+            await MainActor.run {
+                self.forecastHighC = nil
+                self.forecastLowC = nil
+                self.forecastHumidity = nil
+            }
+        }
+    }
+
     @MainActor
     func useFallbackPressureData() {
         
@@ -369,6 +449,20 @@ class EnvironmentalDataService: ObservableObject {
             let humidity: Int?
         }
         let main: Main
+    }
+
+    /// OpenWeather /forecast payload: 3-hourly slots, each with a Unix `dt` and a
+    /// `main` block carrying temp (°C, units=metric) and humidity (%).
+    struct ForecastResponse: Codable {
+        struct Slot: Codable {
+            struct Main: Codable {
+                let temp: Double
+                let humidity: Int
+            }
+            let dt: TimeInterval
+            let main: Main
+        }
+        let list: [Slot]
     }
 
     deinit {

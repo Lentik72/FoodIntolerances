@@ -51,7 +51,7 @@ enum APIConfig {
         guard let apiKey = openWeatherAPIKey else {
             return nil
         }
-        let urlString = "\(openWeatherBaseURL)/forecast?lat=\(latitude)&lon=\(longitude)&appid=\(apiKey)"
+        let urlString = "\(openWeatherBaseURL)/forecast?lat=\(latitude)&lon=\(longitude)&appid=\(apiKey)&units=metric"
         return URL(string: urlString)
     }
 }

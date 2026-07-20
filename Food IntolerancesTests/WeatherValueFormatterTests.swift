@@ -8,6 +8,22 @@ struct WeatherValueFormatterTests {
         HealthEvent(timestamp: Date(timeIntervalSince1970: 100), category: .environment,
                     subtype: subtype, value: v, source: .weatherAPI)
     }
+    /// A combined `temperature` event carrying the daily low in metadata (mirrors
+    /// EnvironmentalEventFactory: value = high °C, metadata["low"] = String(low)).
+    private func tempRange(high: Double, low: Double) -> HealthEvent {
+        let meta = try! JSONEncoder().encode(["low": String(low)])
+        return HealthEvent(timestamp: Date(timeIntervalSince1970: 100), category: .environment,
+                           subtype: "temperature", value: high, source: .weatherAPI, metadata: meta)
+    }
+    @Test func temperatureRangeRendersBothPoles() {
+        // Separator is U+2013 EN DASH, byte-identical to the formatter.
+        #expect(WeatherValueFormatter.line(for: tempRange(high: 24, low: 12), unit: .celsius) == "12–24°C")
+        // 12 → 53.6 → 54, 24 → 75.2 → 75
+        #expect(WeatherValueFormatter.line(for: tempRange(high: 24, low: 12), unit: .fahrenheit) == "54–75°F")
+    }
+    @Test func temperatureWithoutMetadataRendersSingleValue() {   // legacy path preserved
+        #expect(WeatherValueFormatter.line(for: env("temperature", 24), unit: .celsius) == "24°C")
+    }
     @Test func temperatureCelsiusRoundsWhole() {
         #expect(WeatherValueFormatter.line(for: env("temperature", 20), unit: .celsius) == "20°C")
         #expect(WeatherValueFormatter.line(for: env("temperature", 19.6372), unit: .celsius) == "20°C")   // ≥.5 → round up
