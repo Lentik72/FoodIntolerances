@@ -54,6 +54,10 @@ struct HealthGraphDebugView: View {
                     Task { await loadOutsideFactorsDemo() }
                 }
                 .disabled(isWorking)
+                Button("Load WEATHER demo") {
+                    Task { await loadWeatherDemo() }
+                }
+                .disabled(isWorking)
                 // Migration is idempotent (deterministic ids); synthetic load
                 // APPENDS a fresh dataset each tap — reset first to reload.
                 Button("Reset Health Graph DB (delete all rows)", role: .destructive) {
@@ -303,6 +307,104 @@ struct HealthGraphDebugView: View {
                     events.append(HealthEvent(
                         timestamp: dayStart.addingTimeInterval(18 * 3600), timezoneID: tz,
                         category: .symptom, subtype: "headache", value: 5, source: .manual))
+                }
+            }
+
+            try await GRDBEventStore(database: database).save(events)
+            _ = try await EvidenceEngine(database: database).recompute(asOf: Date())
+            await refresh()
+        } catch {
+            errorMessage = String(describing: error)
+        }
+    }
+
+    /// Hand-builds ~200 days of `.environment` temperature + humidity events with
+    /// a real spread (seasonal sine + day-of-week noise) and a correlated
+    /// "migraine" symptom on the top-quartile hot/humid days, then recomputes —
+    /// so the contested "Hot days → migraine" / "Humid days → migraine" cards
+    /// render on device. `SyntheticDataGenerator` can't emit `.environment`
+    /// temperature/humidity with a real distribution, so this mirrors
+    /// `EnvironmentalEventFactory`'s shape (subtype/value/unit/source) by hand
+    /// and saves via `GRDBEventStore` directly. The top-quartile cutoff is
+    /// computed the same way `TemperatureExposureSource`/`HumidityExposureSource`
+    /// compute it (nearest-rank percentile over the full sorted series) so the
+    /// symptom-correlation matches what the engine will actually bucket as
+    /// hot/humid. DEBUG-only; APPENDS — reset first to reload cleanly.
+    private func loadWeatherDemo() async {
+        errorMessage = nil
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            var cal = Calendar(identifier: .gregorian)
+            cal.timeZone = .current
+            let tz = cal.timeZone.identifier
+            let days = 200
+            let now = Date()
+
+            // Generate the full temp/humidity series first so the top-quartile
+            // cutoff can be computed up front (nearest-rank, matching the
+            // engine's `Percentile.value`) before deciding which days get the
+            // correlated symptom.
+            var temps: [Double] = []
+            var hums: [Double] = []
+            for d in 0..<days {
+                temps.append(20 + 12 * sin(2 * .pi * Double(d) / 365) + Double(d % 7))
+                hums.append(50 + 25 * sin(2 * .pi * Double(d) / 180) + Double(d % 5))
+            }
+            func topQuartileCutoff(_ values: [Double]) -> Double {
+                let sorted = values.sorted()
+                let rank = Int((0.75 * Double(sorted.count)).rounded(.up))   // 1-based, nearest-rank
+                return sorted[max(1, min(sorted.count, rank)) - 1]
+            }
+            let tempCutoff = topQuartileCutoff(temps)
+            let humCutoff = topQuartileCutoff(hums)
+
+            var events: [HealthEvent] = []
+            // Separate running counters (not day-index modulus) so the ~70%
+            // follow rate isn't accidentally correlated with the day-marking
+            // pattern above.
+            var hotIndex = 0
+            var humidIndex = 0
+            var otherIndex = 0
+
+            for d in 0..<days {
+                let dayStart = cal.startOfDay(for: now.addingTimeInterval(-Double(days - d) * 86_400))
+                let temp = temps[d]
+                let hum = hums[d]
+                let isHot = temp >= tempCutoff
+                let isHumid = hum >= humCutoff
+
+                events.append(HealthEvent(
+                    timestamp: dayStart.addingTimeInterval(9 * 3600), timezoneID: tz,
+                    category: .environment, subtype: "temperature",
+                    value: temp, unit: "°C", source: .weatherAPI,
+                    dedupKey: DedupKey.daily(.environment, "temperature", dayStart: dayStart)))
+
+                events.append(HealthEvent(
+                    timestamp: dayStart.addingTimeInterval(9 * 3600), timezoneID: tz,
+                    category: .environment, subtype: "humidity",
+                    value: hum, unit: "%", source: .weatherAPI,
+                    dedupKey: DedupKey.daily(.environment, "humidity", dayStart: dayStart)))
+
+                // Correlated migraine: ~70% follow on top-quartile hot/humid days
+                // (one event even when both coincide), ~5% baseline otherwise.
+                var migraine = false
+                if isHot {
+                    migraine = migraine || hotIndex % 10 < 7
+                    hotIndex += 1
+                }
+                if isHumid {
+                    migraine = migraine || humidIndex % 10 < 7
+                    humidIndex += 1
+                }
+                if !isHot && !isHumid {
+                    migraine = otherIndex % 20 == 0
+                    otherIndex += 1
+                }
+                if migraine {
+                    events.append(HealthEvent(
+                        timestamp: dayStart.addingTimeInterval(15 * 3600), timezoneID: tz,
+                        category: .symptom, subtype: "migraine", value: 5, source: .manual))
                 }
             }
 
