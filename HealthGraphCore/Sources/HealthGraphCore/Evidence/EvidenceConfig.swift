@@ -81,7 +81,7 @@ public struct EvidenceConfig: Sendable {
             case .pressureDrop: return pressureLagHours
             case .cyclePhase: return cyclePhaseLagHours
             case .fullMoon, .mercuryRetrograde: return outsideFactorLagHours
-            case .hotDay, .coldDay, .humidDay: return outsideFactorLagHours
+            case .hotDay, .coldDay, .humidDay, .swingDay: return outsideFactorLagHours
             }
         }
     }

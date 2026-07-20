@@ -71,6 +71,7 @@ public enum InsightPhrasing {
         case "hotDay": return "Hot days"
         case "coldDay": return "Cold days"
         case "humidDay": return "Humid days"
+        case "swingDay": return "Big temperature swings"
         default: return nil
         }
     }

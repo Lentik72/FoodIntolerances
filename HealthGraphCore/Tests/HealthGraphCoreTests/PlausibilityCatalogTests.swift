@@ -11,5 +11,6 @@ struct PlausibilityCatalogTests {
         #expect(PlausibilityCatalog.tier(forExposureCategory: "hotDay") == .contested)
         #expect(PlausibilityCatalog.tier(forExposureCategory: "coldDay") == .contested)
         #expect(PlausibilityCatalog.tier(forExposureCategory: "humidDay") == .contested)
+        #expect(PlausibilityCatalog.tier(forExposureCategory: "swingDay") == .contested)
     }
 }
