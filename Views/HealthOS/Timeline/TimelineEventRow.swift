@@ -5,12 +5,18 @@ struct TimelineEventRow: View {
     let event: HealthEvent
     let onTap: (HealthEvent) -> Void
 
+    @AppStorage("hg.temperatureUnit") private var rawTempUnit = ""
+
     private var style: CategoryStyle { .style(for: event.category) }
     private var isDuration: Bool { event.endTimestamp != nil }
 
     private var valueLineColor: Color {
         if event.category == .symptom, let v = event.value { return HealthTheme.severityColor(Int(v)) }
         return HealthTheme.inkSecondary
+    }
+
+    private var displayValueLine: String? {
+        WeatherValueFormatter.line(for: event, unit: TemperatureUnit.resolved(from: rawTempUnit)) ?? EventDisplay.valueLine(for: event)
     }
 
     var body: some View {
@@ -37,7 +43,7 @@ struct TimelineEventRow: View {
                         .font(.body)
                         .foregroundStyle(HealthTheme.ink)
                         .lineLimit(2)
-                    if let line = EventDisplay.valueLine(for: event) {
+                    if let line = displayValueLine {
                         Text(line)
                             .font(.footnote)
                             .foregroundStyle(valueLineColor)
@@ -60,7 +66,7 @@ struct TimelineEventRow: View {
 
     private var accessibilitySummary: String {
         var parts = [style.family.label, EventDisplay.title(for: event)]
-        if let line = EventDisplay.valueLine(for: event) { parts.append(line) }
+        if let line = displayValueLine { parts.append(line) }
         parts.append(event.timestamp.formatted(.dateTime.hour().minute()))
         return parts.joined(separator: ", ")
     }

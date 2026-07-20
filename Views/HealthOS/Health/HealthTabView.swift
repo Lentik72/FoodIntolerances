@@ -4,6 +4,12 @@ struct HealthTabView: View {
     #if DEBUG
     @State private var showingLegacyApp = false
     #endif
+    @AppStorage("hg.temperatureUnit") private var rawTempUnit = ""
+
+    private var tempUnitBinding: Binding<TemperatureUnit> {
+        Binding(get: { TemperatureUnit.resolved(from: rawTempUnit) },
+                set: { rawTempUnit = $0.rawValue })
+    }
 
     private let comingRows: [(icon: String, name: String, detail: String)] = [
         ("cabinet", "Cabinet", "meds, supplements, peptides — stock and refills"),
@@ -65,6 +71,23 @@ struct HealthTabView: View {
                         .padding(16)
                         .contentShape(Rectangle())
                     }
+                    Divider().padding(.leading, 16)
+                    HStack {
+                        Image(systemName: "thermometer.medium")
+                            .foregroundStyle(HealthTheme.accent)
+                        Text("Temperature")
+                            .foregroundStyle(HealthTheme.ink)
+                        Spacer()
+                        Picker("Temperature unit", selection: tempUnitBinding) {
+                            Text("°C").tag(TemperatureUnit.celsius)
+                            Text("°F").tag(TemperatureUnit.fahrenheit)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .accessibilityLabel("Temperature unit")
+                        .frame(width: 116)
+                    }
+                    .padding(16)
                     #if DEBUG
                     Divider().padding(.leading, 16)
                     Button {

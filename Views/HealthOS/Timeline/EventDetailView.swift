@@ -7,6 +7,7 @@ struct EventDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var deleteFailed = false
     @State private var editing = false
+    @AppStorage("hg.temperatureUnit") private var rawTempUnit = ""
 
     /// Re-resolves the event by id from the (already `@ObservedObject`) viewModel's
     /// refreshed timeline so the screen reflects a just-saved edit live, falling
@@ -67,7 +68,7 @@ struct EventDetailView: View {
                     Text(style.family.label)
                         .font(.footnote)
                         .foregroundStyle(HealthTheme.inkSecondary)
-                    if let line = EventDisplay.valueLine(for: displayEvent) {
+                    if let line = WeatherValueFormatter.line(for: displayEvent, unit: TemperatureUnit.resolved(from: rawTempUnit)) ?? EventDisplay.valueLine(for: displayEvent) {
                         Text("·").foregroundStyle(HealthTheme.inkMuted)
                         Text(line)
                             .font(.footnote)
