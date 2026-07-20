@@ -341,43 +341,70 @@ struct HealthGraphDebugView: View {
             let days = 200
             let now = Date()
 
-            // Generate the full temp/humidity series first so the top-quartile
-            // cutoff can be computed up front (nearest-rank, matching the
-            // engine's `Percentile.value`) before deciding which days get the
-            // correlated symptom.
-            var temps: [Double] = []
+            // Generate the full high/low/humidity series first so the top- (and
+            // bottom-) quartile cutoffs can be computed up front (nearest-rank,
+            // matching the engine's `Percentile.value`) before deciding which days
+            // get a correlated symptom. The daily RANGE (high − low) is varied
+            // independently of the seasonal cycle via `d % 9` so swingDay has a
+            // genuine top quartile distinct from hotDay/coldDay.
+            var highs: [Double] = []
+            var lows: [Double] = []
             var hums: [Double] = []
             for d in 0..<days {
-                temps.append(20 + 12 * sin(2 * .pi * Double(d) / 365) + Double(d % 7))
+                let high = 20 + 12 * sin(2 * .pi * Double(d) / 365) + Double(d % 7)
+                highs.append(high)
+                lows.append(high - (4 + Double(d % 9)))
                 hums.append(50 + 25 * sin(2 * .pi * Double(d) / 180) + Double(d % 5))
             }
+            let ranges = zip(highs, lows).map { $0 - $1 }
             func topQuartileCutoff(_ values: [Double]) -> Double {
                 let sorted = values.sorted()
                 let rank = Int((0.75 * Double(sorted.count)).rounded(.up))   // 1-based, nearest-rank
                 return sorted[max(1, min(sorted.count, rank)) - 1]
             }
-            let tempCutoff = topQuartileCutoff(temps)
+            func bottomQuartileCutoff(_ values: [Double]) -> Double {
+                let sorted = values.sorted()
+                let rank = Int((0.25 * Double(sorted.count)).rounded(.up))   // 1-based, nearest-rank
+                return sorted[max(1, min(sorted.count, rank)) - 1]
+            }
+            let highCutoff = topQuartileCutoff(highs)
+            let rangeCutoff = topQuartileCutoff(ranges)
             let humCutoff = topQuartileCutoff(hums)
+            let lowCutoff = bottomQuartileCutoff(lows)
 
             var events: [HealthEvent] = []
-            // Separate running counters (not day-index modulus) so the ~70%
+            // Separate running counters (not day-index modulus) so the ~80%
             // follow rate isn't accidentally correlated with the day-marking
-            // pattern above.
-            var hotIndex = 0
-            var humidIndex = 0
-            var otherIndex = 0
+            // pattern above. Two independent symptom pairs — Hot+Humid→migraine,
+            // Swing+Cold→jointPain — rather than one symptom shared by all four
+            // buckets: with four ~25%-wide quartile buckets over the same 200
+            // days, a single shared outcome lets the OTHER three buckets' elevated
+            // rate leak into each bucket's "not exposed" population and dilute its
+            // ratio below the ×2 activation floor (verified against the real
+            // EvidenceEngine gates while building this seed — hotDay in particular
+            // sits close to the stability floor when sharing an outcome with
+            // humidDay). Keeping two clean pairs gives all four buckets headroom.
+            var hotIndex = 0, humidIndex = 0, swingIndex = 0, coldIndex = 0
+            var otherMigraineIndex = 0, otherJointPainIndex = 0
 
             for d in 0..<days {
                 let dayStart = cal.startOfDay(for: now.addingTimeInterval(-Double(days - d) * 86_400))
-                let temp = temps[d]
+                let high = highs[d]
+                let low = lows[d]
                 let hum = hums[d]
-                let isHot = temp >= tempCutoff
+                let isHot = high >= highCutoff
                 let isHumid = hum >= humCutoff
+                let isSwing = ranges[d] >= rangeCutoff
+                let isCold = low <= lowCutoff
 
+                // Combined daily temperature event: value = high, metadata["low"] = low —
+                // the same shape EnvironmentalEventFactory emits so TemperatureExposureSource
+                // decodes it (a missing/malformed "low" makes the source skip the day).
                 events.append(HealthEvent(
                     timestamp: dayStart.addingTimeInterval(9 * 3600), timezoneID: tz,
                     category: .environment, subtype: "temperature",
-                    value: temp, unit: "°C", source: .weatherAPI,
+                    value: high, unit: "°C", source: .weatherAPI,
+                    metadata: try? JSONEncoder().encode(["low": String(low)]),
                     dedupKey: DedupKey.daily(.environment, "temperature", dayStart: dayStart)))
 
                 events.append(HealthEvent(
@@ -386,25 +413,46 @@ struct HealthGraphDebugView: View {
                     value: hum, unit: "%", source: .weatherAPI,
                     dedupKey: DedupKey.daily(.environment, "humidity", dayStart: dayStart)))
 
-                // Correlated migraine: ~70% follow on top-quartile hot/humid days
-                // (one event even when both coincide), ~5% baseline otherwise.
+                // Pair A — hot/humid → migraine: ~80% follow on top-quartile hot or
+                // humid days (one event even when both coincide), ~4% baseline otherwise.
                 var migraine = false
                 if isHot {
-                    migraine = migraine || hotIndex % 10 < 7
+                    migraine = migraine || hotIndex % 10 < 8
                     hotIndex += 1
                 }
                 if isHumid {
-                    migraine = migraine || humidIndex % 10 < 7
+                    migraine = migraine || humidIndex % 10 < 8
                     humidIndex += 1
                 }
                 if !isHot && !isHumid {
-                    migraine = otherIndex % 20 == 0
-                    otherIndex += 1
+                    migraine = otherMigraineIndex % 25 == 0
+                    otherMigraineIndex += 1
                 }
                 if migraine {
                     events.append(HealthEvent(
                         timestamp: dayStart.addingTimeInterval(15 * 3600), timezoneID: tz,
                         category: .symptom, subtype: "migraine", value: 5, source: .manual))
+                }
+
+                // Pair B — swing/cold → jointPain: same ~80%/~4% shape, kept on its
+                // own symptom so it doesn't compete with pair A for the same signal.
+                var jointPain = false
+                if isSwing {
+                    jointPain = jointPain || swingIndex % 10 < 8
+                    swingIndex += 1
+                }
+                if isCold {
+                    jointPain = jointPain || coldIndex % 10 < 8
+                    coldIndex += 1
+                }
+                if !isSwing && !isCold {
+                    jointPain = otherJointPainIndex % 25 == 0
+                    otherJointPainIndex += 1
+                }
+                if jointPain {
+                    events.append(HealthEvent(
+                        timestamp: dayStart.addingTimeInterval(16 * 3600), timezoneID: tz,
+                        category: .symptom, subtype: "jointPain", value: 5, source: .manual))
                 }
             }
 
