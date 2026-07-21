@@ -7,6 +7,22 @@ import SwiftUI
 import UIKit
 import HealthGraphCore
 
+/// A single completed local day's retrospective AQI: either a value derived
+/// from enough in-window hourly PM2.5 readings, or `.absent` when the day had
+/// too little history coverage to trust.
+enum AQIDayValue: Equatable {
+    case value(Int)
+    case absent
+}
+
+/// Result of a ranged retrospective-AQI fetch: either the whole request failed
+/// (transport error OR a decode error — never conflated with per-day absence),
+/// or a dictionary of local-day → `AQIDayValue`, keyed by `calendar.startOfDay(for:)`.
+enum AQIRangeResult: Equatable {
+    case fetchError
+    case days([Date: AQIDayValue])
+}
+
 class EnvironmentalDataService: ObservableObject {
     // Published properties for UI updates
     @Published var atmosphericPressure: String = ""
@@ -417,6 +433,107 @@ class EnvironmentalDataService: ObservableObject {
             await MainActor.run {
                 self.forecastAQI = nil
             }
+        }
+    }
+
+    /// Minimum distinct in-window hourly readings a completed local day needs
+    /// before its retrospective mean PM2.5 is trusted (out of a possible 24). Below
+    /// this, `dailyMeanPM25` returns nil rather than average a too-sparse sample.
+    static let minAirQualityHours = 20
+
+    /// The `[start, end)` window for a completed LOCAL day: local midnight of `D`
+    /// through local midnight of `D + 1`. Deliberately computed via `Calendar`
+    /// arithmetic (`startOfDay` + `date(byAdding: .day, ...)`), NOT a naive
+    /// `+86_400`/UTC-calendar shortcut — those silently produce a 24h span even
+    /// across DST transitions or month/year rollovers, which is wrong for a
+    /// LOCAL calendar day (23h on spring-forward, 25h on fall-back).
+    static func completedDayWindow(for day: Date, calendar: Calendar) -> (start: Date, end: Date) {
+        let start = calendar.startOfDay(for: day)
+        let end = calendar.startOfDay(for: calendar.date(byAdding: .day, value: 1, to: day)!)
+        return (start, end)
+    }
+
+    /// Pure reduction over hourly air-pollution HISTORY slots: the mean PM2.5
+    /// across slots whose `dt` falls in the half-open window `[dayStart, dayEnd)`
+    /// — a slot exactly at `dayEnd` belongs to the NEXT day and is excluded.
+    /// Slots are de-duplicated by `dt` first (one pm2.5 per distinct hourly
+    /// timestamp) so a duplicated timestamp can't inflate the coverage count or
+    /// skew the mean; the `minHours` guard is checked against that DISTINCT
+    /// count. Static + network-free so it can be unit-tested directly.
+    static func dailyMeanPM25(slots: [(dt: TimeInterval, pm25: Double)], dayStart: Date, dayEnd: Date, minHours: Int) -> Double? {
+        let start = dayStart.timeIntervalSince1970
+        let end = dayEnd.timeIntervalSince1970
+        let inWindow = slots.filter { $0.dt >= start && $0.dt < end }
+        // De-duplicate by `dt`: keep one pm2.5 reading per distinct hourly timestamp.
+        var byTimestamp: [TimeInterval: Double] = [:]
+        for slot in inWindow {
+            byTimestamp[slot.dt] = slot.pm25
+        }
+        guard byTimestamp.count >= minHours else { return nil }
+        let values = byTimestamp.values
+        return values.reduce(0, +) / Double(values.count)
+    }
+
+    /// GETs the /air_pollution/history endpoint ONCE for the whole `[startDay,
+    /// endDay]` span (spanning `completedDayWindow(startDay).start` through
+    /// `completedDayWindow(endDay).end`), then groups the returned hourly slots
+    /// into each completed LOCAL day in the range via `dailyMeanPM25`. Reuses the
+    /// exact location resolution the other fetches use (manual override →
+    /// LocationService). A transport OR decode failure returns `.fetchError` for
+    /// the WHOLE window — a decode error must trigger a retry of the whole
+    /// window, never be mistaken for per-day absence.
+    func fetchCompletedAirQualityRange(from startDay: Date, through endDay: Date) async -> AQIRangeResult {
+        guard let location = self.resolvedCoordinate() else {
+            Logger.warning("No location available for air quality range fetch.", category: .location)
+            return .fetchError
+        }
+
+        let requestWindow = (
+            start: EnvironmentalDataService.completedDayWindow(for: startDay, calendar: calendar).start,
+            end: EnvironmentalDataService.completedDayWindow(for: endDay, calendar: calendar).end
+        )
+
+        guard let url = APIConfig.airPollutionHistoryURL(
+            latitude: location.latitude,
+            longitude: location.longitude,
+            start: requestWindow.start.timeIntervalSince1970,
+            end: requestWindow.end.timeIntervalSince1970
+        ) else {
+            Logger.error("Invalid URL for air pollution history API", category: .network)
+            return .fetchError
+        }
+
+        do {
+            let (data, _) = try await transport.data(from: url)
+            let decoded = try JSONDecoder().decode(AirPollutionResponse.self, from: data)
+            let slots = decoded.list.map {
+                (dt: $0.dt, pm25: $0.components.pm2_5)
+            }
+
+            // Normalize to local-midnight up front and step whole calendar days from
+            // there, so a caller passing a non-midnight `startDay`/`endDay` (or a
+            // mismatched time-of-day between the two) still terminates and keys
+            // correctly — the loop bound and the dictionary key are the same
+            // `startOfDay` value.
+            var byDay: [Date: AQIDayValue] = [:]
+            var day = calendar.startOfDay(for: startDay)
+            let lastDay = calendar.startOfDay(for: endDay)
+            while day <= lastDay {
+                let window = EnvironmentalDataService.completedDayWindow(for: day, calendar: calendar)
+                let mean = EnvironmentalDataService.dailyMeanPM25(
+                    slots: slots,
+                    dayStart: window.start,
+                    dayEnd: window.end,
+                    minHours: EnvironmentalDataService.minAirQualityHours
+                )
+                byDay[day] = mean.map { AQIDayValue.value(AirQualityIndex.epaAQI(pm25: $0)) } ?? .absent
+                guard let nextDay = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+                day = nextDay
+            }
+            return .days(byDay)
+        } catch {
+            Logger.error(error, message: "Error fetching air quality history range", category: .network)
+            return .fetchError
         }
     }
 
