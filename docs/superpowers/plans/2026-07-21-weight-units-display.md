@@ -292,7 +292,10 @@ Expected: all suites pass **except** the known `SwiftDataMigratorTests` teardown
 - [ ] **Step 5: Commit**
 
 ```bash
-git add "Views/HealthOS/Timeline/TimelineView.swift" "Views/HealthOS/Timeline/TimelineEventRow.swift"
+git add \
+  "Views/HealthOS/Timeline/TimelineView.swift" \
+  "Views/HealthOS/Timeline/TimelineEventRow.swift" \
+  "Views/HealthOS/Shell/HealthOSRootView.swift"
 git commit -m "feat(app): Timeline weight rows honor the profile's kg/lb preference (single parent lookup)"
 ```
 
@@ -302,6 +305,7 @@ git commit -m "feat(app): Timeline weight rows honor the profile's kg/lb prefere
 
 **Files:**
 - Modify: `Views/HealthOS/Timeline/EventDetailView.swift`
+- Modify: `Views/HealthOS/Insights/InsightDetailView.swift` (give its 2 `#Preview`s an in-memory container — they can navigate to the now-`@Query`-backed `EventDetailView`)
 
 **Interfaces:**
 - Consumes: `WeightUnit`, `WeightUnit.resolved(preference:locale:)`, `BodyMetricValueFormatter.line(for:unit:)` (Task 1); `UserProfile.unitPreference`.
@@ -336,6 +340,21 @@ with:
                     if let line = BodyMetricValueFormatter.line(for: displayEvent, unit: weightUnit) ?? WeatherValueFormatter.line(for: displayEvent, unit: TemperatureUnit.resolved(from: rawTempUnit)) ?? EventDisplay.valueLine(for: displayEvent) {
 ```
 
+Then give `InsightDetailView`'s two previews a container — they wrap `InsightDetailPreviewHost()` in a `NavigationStack` that can push the now-`@Query`-backed `EventDetailView` (via `InsightDetailView.swift:56-58`), so without one the drill-down in the canvas would warn/fault. In `Views/HealthOS/Insights/InsightDetailView.swift`, add the modifier to **both** `#Preview`s (`:189-191` and `:193-196`), on the `NavigationStack`:
+```swift
+#Preview("Insight Detail — light") {
+    NavigationStack { InsightDetailPreviewHost() }
+        .modelContainer(for: UserProfile.self, inMemory: true)
+}
+
+#Preview("Insight Detail — dark") {
+    NavigationStack { InsightDetailPreviewHost() }
+        .preferredColorScheme(.dark)
+        .modelContainer(for: UserProfile.self, inMemory: true)
+}
+```
+(Preview-only, like the shell fix in Task 2 — the shipping `InsightDetailView` renders under the app-root container.)
+
 - [ ] **Step 3: Build the app target to verify it compiles**
 
 Run:
@@ -357,7 +376,9 @@ Expected: all suites pass except the known `SwiftDataMigratorTests` teardown cra
 - [ ] **Step 5: Commit**
 
 ```bash
-git add "Views/HealthOS/Timeline/EventDetailView.swift"
+git add \
+  "Views/HealthOS/Timeline/EventDetailView.swift" \
+  "Views/HealthOS/Insights/InsightDetailView.swift"
 git commit -m "feat(app): EventDetailView shows weight in the profile's unit (self-resolved; covers Insights drill-down too)"
 ```
 
