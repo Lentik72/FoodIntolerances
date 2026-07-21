@@ -238,78 +238,71 @@ class EnvironmentalDataService: ObservableObject {
         return true
     }
     
+    /// Fetches the current atmospheric pressure and publishes it (plus temp /
+    /// humidity). This is a plain inline `await` that returns only when the fetch
+    /// resolves — it deliberately does NOT touch `currentAtmosphericTask`.
+    ///
+    /// `fetchAllData()` is the sole owner of the refresh task's lifecycle: when
+    /// this ran as a self-cancelling fire-and-forget inner `Task`, calling it
+    /// from inside `fetchAllData`'s task cancelled that very task, so the
+    /// downstream forecast + air-quality fetches were skipped. Being an ordinary
+    /// awaited call, it now composes cleanly — a new refresh supersedes an old
+    /// one via `fetchAllData`'s outer task + `!Task.isCancelled` gates alone.
     public func fetchAtmosphericPressure() async {
         Logger.debug("Starting atmospheric pressure fetch", category: .network)
 
-        // Cancel any existing task before starting a new one
-        currentAtmosphericTask?.cancel()
+        // Ensure UI shows a loading state immediately.
+        await MainActor.run {
+            self.atmosphericPressureCategory = "Loading..."
+        }
 
-        let newTask = Task {
-            // Ensure UI updates immediately
-            await MainActor.run {
-                self.atmosphericPressureCategory = "Loading..."
-            }
-
-            // Delay to prevent UI flickering
-            try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms debounce
-
-            // Ensure task is not cancelled before proceeding
-            if Task.isCancelled { return }
-            
-            // IMPORTANT: Add a timeout in case location is never available
-            let timeoutTask = Task {
-                try? await Task.sleep(nanoseconds: 5_000_000_000) // 5 seconds
-                if !Task.isCancelled {
-                    await MainActor.run {
-                        if self.atmosphericPressureCategory == "Loading..." {
-                            self.useFallbackPressureData()
-                        }
+        // Local timeout: if location never resolves / the fetch stalls, publish
+        // fallback pressure after 5s so the UI doesn't sit on "Loading..." forever.
+        // Scoped entirely to this call — it never references `currentAtmosphericTask`.
+        let timeoutTask = Task {
+            try? await Task.sleep(nanoseconds: 5_000_000_000) // 5 seconds
+            if !Task.isCancelled {
+                await MainActor.run {
+                    if self.atmosphericPressureCategory == "Loading..." {
+                        self.useFallbackPressureData()
                     }
                 }
             }
+        }
+        defer { timeoutTask.cancel() }
 
-
-            // Check if location is available
-            guard let location = self.resolvedCoordinate() else {
-                // No location available
-                Logger.warning("No location available, using fallback pressure data.", category: .location)
-                timeoutTask.cancel() // Cancel timeout task first
-                await MainActor.run { self.useFallbackPressureData() }
-                return
-            }
-
-            guard let url = APIConfig.weatherURL(latitude: location.latitude, longitude: location.longitude) else {
-                Logger.error("Invalid URL for weather API", category: .network)
-                return
-            }
-
-            do {
-                let (data, _) = try await self.transport.data(from: url)
-                let decodedResponse = try JSONDecoder().decode(WeatherResponse.self, from: data)
-
-                let pressureValue = Double(decodedResponse.main.pressure)
-                let temp = decodedResponse.main.temp
-                let humidity = decodedResponse.main.humidity.map(Double.init)
-
-                await MainActor.run {
-                    self.updateAtmosphericPressure(pressureValue)
-                    self.atmosphericPressure = "\(Int(pressureValue)) hPa"
-                    self.atmosphericPressureCategory = self.categorizePressure(pressureValue)
-                    self.currentTemperatureC = temp
-                    self.currentHumidityPct = humidity
-                    self.lastUpdated = Date()
-                }
-
-            } catch {
-                Logger.error(error, message: "Error fetching atmospheric pressure", category: .network)
-                await MainActor.run { self.useFallbackPressureData() }
-            }
-            
-            timeoutTask.cancel()
-            
+        // Check if location is available
+        guard let location = self.resolvedCoordinate() else {
+            Logger.warning("No location available, using fallback pressure data.", category: .location)
+            await MainActor.run { self.useFallbackPressureData() }
+            return
         }
 
-        currentAtmosphericTask = newTask
+        guard let url = APIConfig.weatherURL(latitude: location.latitude, longitude: location.longitude) else {
+            Logger.error("Invalid URL for weather API", category: .network)
+            return
+        }
+
+        do {
+            let (data, _) = try await self.transport.data(from: url)
+            let decodedResponse = try JSONDecoder().decode(WeatherResponse.self, from: data)
+
+            let pressureValue = Double(decodedResponse.main.pressure)
+            let temp = decodedResponse.main.temp
+            let humidity = decodedResponse.main.humidity.map(Double.init)
+
+            await MainActor.run {
+                self.updateAtmosphericPressure(pressureValue)
+                self.atmosphericPressure = "\(Int(pressureValue)) hPa"
+                self.atmosphericPressureCategory = self.categorizePressure(pressureValue)
+                self.currentTemperatureC = temp
+                self.currentHumidityPct = humidity
+                self.lastUpdated = Date()
+            }
+        } catch {
+            Logger.error(error, message: "Error fetching atmospheric pressure", category: .network)
+            await MainActor.run { self.useFallbackPressureData() }
+        }
     }
 
     /// Pure reduction over 3-hourly forecast slots: the daily high (max temp), low
