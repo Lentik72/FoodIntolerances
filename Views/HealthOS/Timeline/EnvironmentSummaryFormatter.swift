@@ -7,6 +7,11 @@ enum EnvironmentSummaryFormatter {
     /// Collapsed one-liner: temperature range (· humidity) when present; else moon
     /// phase (· season); else the single remaining reading.
     static func headline(_ summary: EnvironmentDaySummary, unit: TemperatureUnit) -> String {
+        // Poor-air days lead with the AQI — the most health-salient signal that day.
+        if let aq = summary.events.first(where: { $0.subtype == "airQuality" }),
+           let v = aq.value, Int(v) >= AirQualityIndex.poorAirThreshold {
+            return "AQI \(Int(v)) · \(AirQualityIndex.category(aqi: Int(v)).name)"
+        }
         if let temp = value("temperature", summary, unit) {
             if let hum = value("humidity", summary, unit) { return "\(temp) · \(hum)" }
             return temp

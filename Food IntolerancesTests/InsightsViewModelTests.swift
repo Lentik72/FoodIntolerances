@@ -120,6 +120,23 @@ struct InsightsViewModelTests {
         #expect(card?.claim.contains("Big temperature swings") == true)  // phrased + labeled via exposure(for:)
     }
 
+    @Test func poorAirDayEdgeSurfacesInActiveWithEstablishedTierAndEnvironmentIcon() async throws {
+        let refNow = Date(timeIntervalSince1970: 1_713_000_000)
+        let db = try AppDatabase.inMemory()
+        let poorAir = Relationship(
+            fromCategory: "poorAirDay", toCategory: "symptom", type: .possibleTrigger,
+            evidenceCount: 6, contradictionCount: 2, confidence: 0.6, strength: 5, lagHours: 12,
+            firstSeen: refNow.addingTimeInterval(-30 * 86_400), lastSeen: refNow, lastRecomputed: refNow,
+            status: .active, edgeKey: "derived:poorAirDay|symptom:migraine|possibleTrigger", toSubtype: "migraine")
+        try await GRDBRelationshipStore(database: db).save(poorAir)
+        let vm = InsightsViewModel(database: db, now: { refNow })
+        await vm.load()
+        let card = vm.feed.sections.first { $0.kind == .active }?.cards.first
+        #expect(card?.tier == .established)                              // no unproven-mechanism tag
+        #expect(card?.exposureCategory == .environment)                  // guards the Step 4 icon fix (else falls to .note)
+        #expect(card?.claim.contains("Poor air quality") == true)        // phrased + labeled via exposure(for:)
+    }
+
     @Test func undoRestoresDismissedCard() async throws {
         let db = try await seedMinedDB()
         let vm = InsightsViewModel(database: db, now: { Date(timeIntervalSince1970: 1_713_000_000) })

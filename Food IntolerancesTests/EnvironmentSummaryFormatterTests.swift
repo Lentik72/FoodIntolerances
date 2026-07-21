@@ -20,6 +20,7 @@ struct EnvironmentSummaryFormatterTests {
     private func moon(_ s: String) -> HealthEvent { ev("moonPhase", meta: ["phase": s]) }
     private func season(_ s: String) -> HealthEvent { ev("season", meta: ["season": s]) }
     private func mercury() -> HealthEvent { ev("mercuryRetrograde") }
+    private func airQuality(_ aqi: Double) -> HealthEvent { ev("airQuality", value: aqi) }
     private let c = TemperatureUnit.celsius, f = TemperatureUnit.fahrenheit
 
     // Headline — all four branches + both degenerate sub-branches.
@@ -42,6 +43,18 @@ struct EnvironmentSummaryFormatterTests {
     }
     @Test func headlineDegenerateMercuryOnlyIsBareLabel() {
         #expect(EnvironmentSummaryFormatter.headline(day([mercury()]), unit: c) == "Mercury retrograde")   // value nil → bare label, never empty
+    }
+    @Test func poorAirDayLeadsHeadlineOverTemperature() {
+        // temperature IS present → proves the AQI branch is FIRST (wins over temp), not merely non-empty.
+        let s = day([temp(24, 12), humidity(69), airQuality(132)])
+        #expect(EnvironmentSummaryFormatter.headline(s, unit: c) == "AQI 132 · Unhealthy for sensitive groups")
+    }
+    @Test func goodAirDoesNotLeadAndSortsAfterHumidity() {
+        let s = day([temp(24, 12), humidity(69), airQuality(42)])
+        #expect(EnvironmentSummaryFormatter.headline(s, unit: c) == "12–24°C · 69%")   // AQI 42 < 101 → temp still leads
+        let rows = EnvironmentSummaryFormatter.detailLines(s, unit: c)
+        #expect(rows.map(\.label) == ["Temperature", "Humidity", "Air quality"])       // pins the canonical position
+        #expect(rows.first(where: { $0.label == "Air quality" })?.value == "42 · Good")
     }
 
     // Detail lines.
