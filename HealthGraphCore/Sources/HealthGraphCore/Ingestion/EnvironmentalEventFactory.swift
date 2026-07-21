@@ -44,45 +44,59 @@ public enum EnvironmentalEventFactory {
         let dayStart = cal.startOfDay(for: r.date)
         var events: [HealthEvent] = []
 
+        // Provenance is intrinsic to each signal's real source: it rides in
+        // metadata (so mining stays fail-closed on `.observedCompletedDay`) AND
+        // scopes the dedup key, so a forecast reading and an observed reading for
+        // the same day+subtype never overwrite one another.
         func event(_ subtype: String, value: Double? = nil, unit: String? = nil,
-                   metadata: [String: String]? = nil) -> HealthEvent {
-            HealthEvent(
+                   metadata: [String: String]? = nil, provenance: TemporalProvenance) -> HealthEvent {
+            var meta = metadata ?? [:]
+            meta["provenance"] = provenance.rawValue
+            return HealthEvent(
                 timestamp: r.date, timezoneID: r.timezoneID,
                 category: .environment, subtype: subtype,
                 value: value, unit: unit, source: .weatherAPI,
-                metadata: metadata.flatMap { try? JSONEncoder().encode($0) },
-                dedupKey: DedupKey.daily(.environment, subtype, dayStart: dayStart)
+                metadata: try? JSONEncoder().encode(meta),
+                dedupKey: DedupKey.daily(.environment, subtype, dayStart: dayStart, provenance: provenance)
             )
         }
 
         if let pressure = r.pressureHPa {
-            events.append(event("pressure", value: pressure, unit: "hPa"))
+            // Barometric pressure is a current-conditions reading.
+            events.append(event("pressure", value: pressure, unit: "hPa", provenance: .currentSnapshot))
             if let previous = r.previousPressureHPa,
                previous - pressure >= pressureDropThresholdHPa {
-                events.append(event("pressureDrop", value: previous - pressure, unit: "hPa"))
+                events.append(event("pressureDrop", value: previous - pressure, unit: "hPa",
+                                    provenance: .currentSnapshot))
             }
         }
         if let moon = r.moonPhaseName {
             let cleaned = moon.filter { $0.isLetter || $0.isWhitespace }
                 .trimmingCharacters(in: .whitespaces)
-            events.append(event("moonPhase", metadata: ["phase": cleaned]))
+            // Deterministic date-fact for a completed local day → mineable.
+            events.append(event("moonPhase", metadata: ["phase": cleaned],
+                                provenance: .observedCompletedDay))
         }
         if r.isMercuryRetrograde {
-            events.append(event("mercuryRetrograde"))
+            events.append(event("mercuryRetrograde", provenance: .observedCompletedDay))
         }
         if let season = r.season {
             // Daily exposure — the engine correlates against season presence,
             // not just the four transition days a year.
-            events.append(event("season", metadata: ["season": season]))
+            events.append(event("season", metadata: ["season": season],
+                                provenance: .observedCompletedDay))
         }
         if let high = r.temperatureHighC, let low = r.temperatureLowC {
-            events.append(event("temperature", value: high, unit: "°C", metadata: ["low": String(low)]))
+            // Weather is forecast-derived → display/warnings only, never mined.
+            events.append(event("temperature", value: high, unit: "°C", metadata: ["low": String(low)],
+                                provenance: .forecast))
         }
         if let humidity = r.humidityPct {
-            events.append(event("humidity", value: humidity, unit: "%"))
+            events.append(event("humidity", value: humidity, unit: "%", provenance: .forecast))
         }
         if let aqi = r.airQualityAQI {
-            events.append(event("airQuality", value: Double(aqi)))
+            // The AQI emitter reads a completed-day observed index → mineable.
+            events.append(event("airQuality", value: Double(aqi), provenance: .observedCompletedDay))
         }
         return events
     }

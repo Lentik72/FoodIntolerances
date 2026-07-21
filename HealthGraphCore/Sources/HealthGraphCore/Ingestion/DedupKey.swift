@@ -17,7 +17,13 @@ public enum DedupKey {
         "\(category.rawValue)|\(subtype ?? "")|\(minute(start))|\(minute(end))"
     }
 
-    public static func daily(_ category: EventCategory, _ subtype: String?, dayStart: Date) -> String {
-        "\(category.rawValue)|\(subtype ?? "")|day|\(minute(dayStart))"
+    /// Daily key, optionally scoped by temporal provenance. A `.forecast` and an
+    /// `.observedCompletedDay` reading for the same day+subtype get DISTINCT keys,
+    /// so they never overwrite one another. Omitting `provenance` (nil) reproduces
+    /// the pre-provenance format exactly, keeping legacy rows matchable.
+    public static func daily(_ category: EventCategory, _ subtype: String?, dayStart: Date,
+                             provenance: TemporalProvenance? = nil) -> String {
+        let p = provenance.map { "|\($0.rawValue)" } ?? ""
+        return "\(category.rawValue)|\(subtype ?? "")\(p)|day|\(minute(dayStart))"
     }
 }
