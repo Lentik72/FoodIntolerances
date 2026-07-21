@@ -5,6 +5,7 @@ import CoreLocation
 import Combine
 import SwiftUI
 import UIKit
+import HealthGraphCore
 
 class EnvironmentalDataService: ObservableObject {
     // Published properties for UI updates
@@ -23,6 +24,10 @@ class EnvironmentalDataService: ObservableObject {
     @Published var forecastHighC: Double? = nil
     @Published var forecastLowC: Double? = nil
     @Published var forecastHumidity: Double? = nil
+    // Next-24h mean PM2.5 → EPA AQI from the /air_pollution/forecast endpoint. Optional
+    // (nil on fetch failure or < 3 in-window slots) so the emitter leaves the air
+    // quality event unemitted rather than writing a false reading.
+    @Published var forecastAQI: Int? = nil
     @Published var moonPhase: String = "Loading..."
     @Published var isMercuryRetrograde: Bool = false
     @Published var lastUpdated: Date = Date()
@@ -72,6 +77,11 @@ class EnvironmentalDataService: ObservableObject {
                 // Fetch the daily high/low + mean humidity from the forecast endpoint
                 if !Task.isCancelled {
                     await fetchDailyForecast()
+                }
+
+                // Fetch the next-24h mean PM2.5 → EPA AQI from the air pollution endpoint
+                if !Task.isCancelled {
+                    await fetchAirQuality()
                 }
 
                 // Final update
@@ -340,6 +350,62 @@ class EnvironmentalDataService: ObservableObject {
         }
     }
 
+    /// Pure reduction over 3-hourly air-pollution forecast slots: the mean PM2.5
+    /// across the slots whose `dt` falls in the next 24h window `[now, now + 86_400]`.
+    /// Requires ≥ 3 in-window slots (mirrors `aggregate24h`); nil otherwise. Static +
+    /// network-free so it can be unit-tested directly.
+    static func meanPM25(slots: [(dt: TimeInterval, pm25: Double)], now: Date) -> Double? {
+        let start = now.timeIntervalSince1970
+        let end = start + 86_400
+        let inWindow = slots.filter { $0.dt >= start && $0.dt <= end }
+        guard inWindow.count >= 3 else { return nil }
+        return inWindow.map(\.pm25).reduce(0, +) / Double(inWindow.count)
+    }
+
+    /// GETs the /air_pollution/forecast endpoint (3-hourly slots) and publishes the
+    /// next-24h EPA AQI derived from mean PM2.5. Reuses the exact location resolution
+    /// the pressure fetch uses (manual override → LocationService); no new location path.
+    public func fetchAirQuality() async {
+        // Resolve location the same way fetchAtmosphericPressure does.
+        let location: CLLocationCoordinate2D
+        if let manualLoc = self.manualLocation {
+            location = manualLoc
+        } else if let serviceLoc = self.locationManager?.currentLocation {
+            location = serviceLoc
+        } else {
+            Logger.warning("No location available for air quality fetch.", category: .location)
+            await MainActor.run {
+                self.forecastAQI = nil
+            }
+            return
+        }
+
+        guard let url = APIConfig.airPollutionURL(latitude: location.latitude, longitude: location.longitude) else {
+            Logger.error("Invalid URL for air pollution API", category: .network)
+            return
+        }
+
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let decoded = try JSONDecoder().decode(AirPollutionResponse.self, from: data)
+            let slots = decoded.list.map {
+                (dt: $0.dt, pm25: $0.components.pm2_5)
+            }
+            // Extract plain scalars BEFORE the MainActor.run block so we don't
+            // cross-actor-capture the (non-Sendable) tuple/decoded state.
+            let mean = EnvironmentalDataService.meanPM25(slots: slots, now: Date())
+            let aqi = mean.map { AirQualityIndex.epaAQI(pm25: $0) }
+            await MainActor.run {
+                self.forecastAQI = aqi
+            }
+        } catch {
+            Logger.error(error, message: "Error fetching air quality", category: .network)
+            await MainActor.run {
+                self.forecastAQI = nil
+            }
+        }
+    }
+
     @MainActor
     func useFallbackPressureData() {
         
@@ -461,6 +527,19 @@ class EnvironmentalDataService: ObservableObject {
             }
             let dt: TimeInterval
             let main: Main
+        }
+        let list: [Slot]
+    }
+
+    /// OpenWeather /air_pollution/forecast payload: 3-hourly slots, each with a Unix
+    /// `dt` and a `components` block carrying PM2.5 concentration (µg/m³).
+    struct AirPollutionResponse: Codable {
+        struct Slot: Codable {
+            struct Components: Codable {
+                let pm2_5: Double
+            }
+            let dt: TimeInterval
+            let components: Components
         }
         let list: [Slot]
     }

@@ -25,7 +25,8 @@ enum EnvironmentalEventEmitter {
             timezoneID: TimeZone.current.identifier,
             temperatureHighC: service.forecastHighC,
             temperatureLowC: service.forecastLowC,
-            humidityPct: service.forecastHumidity
+            humidityPct: service.forecastHumidity,
+            airQualityAQI: service.forecastAQI
         )
         do {
             _ = try await IngestPipeline(database: database)

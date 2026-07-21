@@ -54,4 +54,13 @@ enum APIConfig {
         let urlString = "\(openWeatherBaseURL)/forecast?lat=\(latitude)&lon=\(longitude)&appid=\(apiKey)&units=metric"
         return URL(string: urlString)
     }
+
+    /// Build air pollution forecast API URL for given coordinates (nil if API key not configured)
+    static func airPollutionURL(latitude: Double, longitude: Double) -> URL? {
+        guard let apiKey = openWeatherAPIKey else {
+            return nil
+        }
+        let urlString = "\(openWeatherBaseURL)/air_pollution/forecast?lat=\(latitude)&lon=\(longitude)&appid=\(apiKey)"
+        return URL(string: urlString)
+    }
 }
