@@ -21,7 +21,7 @@ public struct EnvironmentDaySummary: Equatable, Sendable, Identifiable {
 
 public enum EnvironmentDaySummaryBuilder {
     /// Canonical detail/display order. Unknown subtypes sort last (stable).
-    public static let subtypeOrder = ["temperature", "humidity", "pressure",
+    public static let subtypeOrder = ["temperature", "humidity", "airQuality", "pressure",
                                       "pressureDrop", "moonPhase", "season", "mercuryRetrograde"]
 
     /// Folds `.environment` events into one summary per local calendar day, newest

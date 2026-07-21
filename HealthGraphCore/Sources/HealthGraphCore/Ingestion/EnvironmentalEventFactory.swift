@@ -12,11 +12,13 @@ public struct EnvironmentalReading: Sendable {
     public let temperatureHighC: Double?
     public let temperatureLowC: Double?
     public let humidityPct: Double?
+    public let airQualityAQI: Int?
 
     public init(date: Date, pressureHPa: Double?, previousPressureHPa: Double?,
                 moonPhaseName: String?, season: String?,
                 isMercuryRetrograde: Bool, timezoneID: String,
-                temperatureHighC: Double? = nil, temperatureLowC: Double? = nil, humidityPct: Double? = nil) {
+                temperatureHighC: Double? = nil, temperatureLowC: Double? = nil, humidityPct: Double? = nil,
+                airQualityAQI: Int? = nil) {
         self.date = date
         self.pressureHPa = pressureHPa
         self.previousPressureHPa = previousPressureHPa
@@ -27,6 +29,7 @@ public struct EnvironmentalReading: Sendable {
         self.temperatureHighC = temperatureHighC
         self.temperatureLowC = temperatureLowC
         self.humidityPct = humidityPct
+        self.airQualityAQI = airQualityAQI
     }
 }
 
@@ -77,6 +80,9 @@ public enum EnvironmentalEventFactory {
         }
         if let humidity = r.humidityPct {
             events.append(event("humidity", value: humidity, unit: "%"))
+        }
+        if let aqi = r.airQualityAQI {
+            events.append(event("airQuality", value: Double(aqi)))
         }
         return events
     }

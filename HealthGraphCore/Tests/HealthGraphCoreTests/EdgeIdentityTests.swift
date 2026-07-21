@@ -29,6 +29,7 @@ struct EdgeIdentityTests {
         roundTrip(.derived(.coldDay), .symptom("jointPain"))
         roundTrip(.derived(.humidDay), .lowMood)
         roundTrip(.derived(.swingDay), .symptom("migraine"))
+        roundTrip(.derived(.poorAirDay), .symptom("migraine"))
     }
     @Test func goodMoodColumns() {
         let cols = EdgeIdentity.columns(from: .derived(.shortSleep), to: .goodMood)

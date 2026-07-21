@@ -109,4 +109,24 @@ struct EnvironmentalEventFactoryTests {
         #expect(!temps(high: nil, low: 12).contains { $0.subtype == "temperature" })   // high-nil branch
         #expect(temps(high: 24, low: nil).contains { $0.subtype == "humidity" })       // humidity independent
     }
+
+    @Test func emitsAirQualityWhenAQIPresent() {
+        let r = EnvironmentalReading(date: Date(timeIntervalSince1970: 1_700_000_000),
+            pressureHPa: nil, previousPressureHPa: nil, moonPhaseName: nil, season: nil,
+            isMercuryRetrograde: false, timezoneID: "UTC", airQualityAQI: 132)
+        let events = EnvironmentalEventFactory.events(for: r)
+        #expect(events.count == 1)   // no pressure/moon/season/temp/humidity this day
+        let aq = events.first { $0.subtype == "airQuality" }
+        #expect(aq?.value == 132)
+        #expect(aq?.unit == nil)
+        #expect(aq?.dedupKey != nil)
+    }
+
+    @Test func nilAirQualityAQISkipsAirQualityEvent() {
+        let r = EnvironmentalReading(date: Date(timeIntervalSince1970: 1_700_000_000),
+            pressureHPa: nil, previousPressureHPa: nil, moonPhaseName: nil, season: nil,
+            isMercuryRetrograde: false, timezoneID: "UTC")   // airQualityAQI defaults nil
+        let events = EnvironmentalEventFactory.events(for: r)
+        #expect(!events.contains { $0.subtype == "airQuality" })
+    }
 }

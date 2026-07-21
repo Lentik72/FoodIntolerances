@@ -39,6 +39,7 @@ public struct EvidenceEngine {
             MercuryRetrogradeExposureSource(),
             TemperatureExposureSource(config: config),
             HumidityExposureSource(config: config),
+            AirQualityExposureSource(),
         ]
         var exposures: [ExposureKey: [ExposureOccurrence]] = [:]
         for s in sources {

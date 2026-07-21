@@ -21,3 +21,16 @@ struct EventDisplayMoodTests {
         #expect(EventDisplay.valueLine(for: mood(2)) == nil)
     }
 }
+
+struct EventDisplayAirQualityTests {
+    private func airQuality(_ v: Double) -> HealthEvent {
+        HealthEvent(timestamp: Date(timeIntervalSince1970: 100), category: .environment,
+                    subtype: "airQuality", value: v, source: .weatherAPI)
+    }
+    @Test func titleIsAirQuality() {
+        #expect(EventDisplay.title(for: airQuality(132)) == "Air quality")
+    }
+    @Test func valueLineShowsAQIAndCategoryName() {
+        #expect(EventDisplay.valueLine(for: airQuality(132)) == "132 · Unhealthy for sensitive groups")
+    }
+}
