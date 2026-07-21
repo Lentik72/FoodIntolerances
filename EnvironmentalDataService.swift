@@ -44,8 +44,40 @@ class EnvironmentalDataService: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var lastRefreshRequest = Date.distantPast
     private let minimumRefreshInterval: TimeInterval = 300  // 5 minutes
-    
-    init(locationManager: LocationService? = nil) {
+
+    // Dependency-injection seams. Default to real production behavior
+    // (URLSession, wall-clock `Date`, the current calendar/timezone, and the
+    // existing manualLocation → LocationService resolution) so nothing about
+    // runtime behavior changes; tests substitute stubs to make fetches
+    // deterministic.
+    private let transport: HTTPTransport
+    private let now: () -> Date
+    private let calendar: Calendar
+    private let injectedLocation: LocationProviding?
+    /// Lazy because the default provider needs `self` — evaluated on first use,
+    /// well after `init` has finished setting every other stored property.
+    private lazy var locationProvider: LocationProviding = injectedLocation ?? DefaultLocationProvider(service: self)
+
+    /// Reproduces the pre-DI location resolution exactly: a manual override
+    /// (from `setLocation`) wins, otherwise the live `LocationService` reading.
+    /// Nested so it can see `EnvironmentalDataService`'s private storage.
+    private final class DefaultLocationProvider: LocationProviding {
+        private unowned let service: EnvironmentalDataService
+        init(service: EnvironmentalDataService) { self.service = service }
+        var coordinate: CLLocationCoordinate2D? {
+            service.manualLocation ?? service.locationManager?.currentLocation
+        }
+    }
+
+    init(locationManager: LocationService? = nil,
+         transport: HTTPTransport = URLSession.shared,
+         now: @escaping () -> Date = Date.init,
+         calendar: Calendar = { var c = Calendar(identifier: .gregorian); c.timeZone = .current; return c }(),
+         location: LocationProviding? = nil) {
+        self.transport = transport
+        self.now = now
+        self.calendar = calendar
+        self.injectedLocation = location
         if let locationManager = locationManager {
             self.locationManager = locationManager
         } else {
@@ -66,8 +98,8 @@ class EnvironmentalDataService: ObservableObject {
         
         let newTask = Task {
             // Fetch moon phase and Mercury retrograde data
-            await fetchMoonPhase(for: Date())
-            self.isMercuryRetrograde = checkMercuryInRetrograde(for: Date())
+            await fetchMoonPhase(for: now())
+            self.isMercuryRetrograde = checkMercuryInRetrograde(for: now())
             
             // Make sure we're not cancelled before proceeding with potentially expensive operations
             if !Task.isCancelled {
@@ -168,7 +200,7 @@ class EnvironmentalDataService: ObservableObject {
     
     func isMercuryRetrogradeApproaching(for date: Date) -> Bool {
         for period in MercuryRetrograde.periods {
-            let daysUntilRetrograde = Calendar.current.dateComponents([.day], from: date, to: period.start).day ?? Int.max
+            let daysUntilRetrograde = calendar.dateComponents([.day], from: date, to: period.start).day ?? Int.max
             if daysUntilRetrograde >= 0 && daysUntilRetrograde <= 3 {
                 return true
             }
@@ -181,15 +213,21 @@ class EnvironmentalDataService: ObservableObject {
     }
     
     // MARK: - Private Methods
-    
+
+    /// Resolves the coordinate to use for a fetch through the injected
+    /// `LocationProviding` seam (defaults to manualLocation → LocationService).
+    private func resolvedCoordinate() -> CLLocationCoordinate2D? {
+        locationProvider.coordinate
+    }
+
     public func requestRefreshWithCooldown() async -> Bool {
         // Check if it's too soon for another refresh
-        let now = Date()
-        if now.timeIntervalSince(lastRefreshRequest) < minimumRefreshInterval {
+        let currentTime = now()
+        if currentTime.timeIntervalSince(lastRefreshRequest) < minimumRefreshInterval {
             return false
         }
-        
-        lastRefreshRequest = now
+
+        lastRefreshRequest = currentTime
         
         // Cancel current task if any
         currentAtmosphericTask?.cancel()
@@ -232,14 +270,7 @@ class EnvironmentalDataService: ObservableObject {
 
 
             // Check if location is available
-            let location: CLLocationCoordinate2D
-            if let manualLoc = self.manualLocation {
-                // Use manually set location (from refresh)
-                location = manualLoc
-            } else if let serviceLoc = self.locationManager?.currentLocation {
-                // Use location from service
-                location = serviceLoc
-            } else {
+            guard let location = self.resolvedCoordinate() else {
                 // No location available
                 Logger.warning("No location available, using fallback pressure data.", category: .location)
                 timeoutTask.cancel() // Cancel timeout task first
@@ -253,7 +284,7 @@ class EnvironmentalDataService: ObservableObject {
             }
 
             do {
-                let (data, _) = try await URLSession.shared.data(from: url)
+                let (data, _) = try await self.transport.data(from: url)
                 let decodedResponse = try JSONDecoder().decode(WeatherResponse.self, from: data)
 
                 let pressureValue = Double(decodedResponse.main.pressure)
@@ -303,12 +334,7 @@ class EnvironmentalDataService: ObservableObject {
     /// fetch uses (manual override → LocationService); no new location path.
     public func fetchDailyForecast() async {
         // Resolve location the same way fetchAtmosphericPressure does.
-        let location: CLLocationCoordinate2D
-        if let manualLoc = self.manualLocation {
-            location = manualLoc
-        } else if let serviceLoc = self.locationManager?.currentLocation {
-            location = serviceLoc
-        } else {
+        guard let location = self.resolvedCoordinate() else {
             Logger.warning("No location available for daily forecast fetch.", category: .location)
             await MainActor.run {
                 self.forecastHighC = nil
@@ -324,14 +350,14 @@ class EnvironmentalDataService: ObservableObject {
         }
 
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
+            let (data, _) = try await transport.data(from: url)
             let decoded = try JSONDecoder().decode(ForecastResponse.self, from: data)
             let slots = decoded.list.map {
                 (dt: $0.dt, temp: $0.main.temp, humidity: Double($0.main.humidity))
             }
             // Extract plain scalars BEFORE the MainActor.run block so we don't
             // cross-actor-capture the (non-Sendable) tuple/decoded state.
-            let aggregate = EnvironmentalDataService.aggregate24h(slots: slots, now: Date())
+            let aggregate = EnvironmentalDataService.aggregate24h(slots: slots, now: now())
             let high = aggregate?.high
             let low = aggregate?.low
             let humidity = aggregate?.humidity
@@ -367,12 +393,7 @@ class EnvironmentalDataService: ObservableObject {
     /// the pressure fetch uses (manual override → LocationService); no new location path.
     public func fetchAirQuality() async {
         // Resolve location the same way fetchAtmosphericPressure does.
-        let location: CLLocationCoordinate2D
-        if let manualLoc = self.manualLocation {
-            location = manualLoc
-        } else if let serviceLoc = self.locationManager?.currentLocation {
-            location = serviceLoc
-        } else {
+        guard let location = self.resolvedCoordinate() else {
             Logger.warning("No location available for air quality fetch.", category: .location)
             await MainActor.run {
                 self.forecastAQI = nil
@@ -386,14 +407,14 @@ class EnvironmentalDataService: ObservableObject {
         }
 
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
+            let (data, _) = try await transport.data(from: url)
             let decoded = try JSONDecoder().decode(AirPollutionResponse.self, from: data)
             let slots = decoded.list.map {
                 (dt: $0.dt, pm25: $0.components.pm2_5)
             }
             // Extract plain scalars BEFORE the MainActor.run block so we don't
             // cross-actor-capture the (non-Sendable) tuple/decoded state.
-            let mean = EnvironmentalDataService.meanPM25(slots: slots, now: Date())
+            let mean = EnvironmentalDataService.meanPM25(slots: slots, now: now())
             let aqi = mean.map { AirQualityIndex.epaAQI(pm25: $0) }
             await MainActor.run {
                 self.forecastAQI = aqi
@@ -436,22 +457,22 @@ class EnvironmentalDataService: ObservableObject {
     }
     
     private func updateAtmosphericPressure(_ pressure: Double) {
-        let now = Date()
-        
+        let currentTime = now()
+
         // Special handling for first pressure reading
         if isFirstLoad {
-            pressureReadings = [(pressure: pressure, timestamp: now)]
+            pressureReadings = [(pressure: pressure, timestamp: currentTime)]
             currentPressure = pressure
             previousPressure = pressure
             atmosphericPressureCategory = categorizePressure(currentPressure)
             isFirstLoad = false
             return
         }
-        
+
         // Add new reading and remove old ones
-        pressureReadings.append((pressure: pressure, timestamp: now))
+        pressureReadings.append((pressure: pressure, timestamp: currentTime))
         pressureReadings = pressureReadings.filter {
-            now.timeIntervalSince($0.timestamp) < 24 * 3600
+            currentTime.timeIntervalSince($0.timestamp) < 24 * 3600
         }
         
         // Update current pressure
@@ -486,9 +507,8 @@ class EnvironmentalDataService: ObservableObject {
         }
         
         // If no cache, generate a realistic fallback with consistent random seed
-        let calendar = Calendar.current
-        let day = calendar.component(.day, from: Date())
-        let month = calendar.component(.month, from: Date())
+        let day = calendar.component(.day, from: now())
+        let month = calendar.component(.month, from: now())
         
         // Use date components to seed a deterministic "random" value
         let seed = Double(day + month * 31) / 100.0
