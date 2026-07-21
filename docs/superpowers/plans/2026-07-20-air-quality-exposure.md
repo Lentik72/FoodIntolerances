@@ -16,7 +16,8 @@ Design: `docs/superpowers/specs/2026-07-20-air-quality-exposure-design.md`.
 - **AQI source:** US EPA AQI computed from the **day's mean PM2.5** over the next-24h `/air_pollution/forecast` slots (≥3 in-window slots else nil) — same open-time-bias fix as the weather high/low.
 - **Tier:** established — `PlausibilityCatalog` is UNCHANGED (`"poorAirDay"` falls through to the `.established` default). No "unproven mechanism" tag.
 - **Event shape:** `subtype "airQuality"`, `value = Double(aqi)`, `unit nil`, no metadata (category derived from the AQI at display), daily dedupKey.
-- **`.poorAirDay` is additive** to `DerivedExposureKind` — update the two exhaustive switches (`EdgeIdentity.fromToken` at `EdgeIdentity.swift:12-22`, `EvidenceConfig.lagWindow` at `EvidenceConfig.swift:69-85`); grep to confirm those are the only two. Everything else is additive/defaulted, so **the app never breaks** (unlike the weather round) — each task keeps both `swift test` and the app build green.
+- **`.poorAirDay` is additive** to `DerivedExposureKind` — three sites need the arm: the two **compiler-exhaustive** switches (`EdgeIdentity.fromToken`, `EvidenceConfig.lagWindow`) that hard-fail without it, PLUS the **non-exhaustive** `EdgeIdentity.parseFrom` (has a `default:`, so it compiles without the arm but breaks `.poorAirDay` round-trip — Task 2 Step 6 adds it; the round-trip test catches a miss). Grep `case .shortSleep` to confirm the two exhaustive switches are the only two.  Everything else is additive/defaulted, so **the app never breaks** (unlike the weather round) — each task keeps both `swift test` and the app build green.
+- **Separators are byte-identical:** the AQI value line/headline use a **U+00B7 MIDDLE DOT** with surrounding spaces (`"132 · Unhealthy…"`), and temperature ranges use a **U+2013 EN DASH** (`"12–24°C"`). Copy both exactly into impl and test literals — a bullet (U+2022) or hyphen slip is a silent string-equality failure.
 - **Timeline:** air quality folds into the Environment summary row — a detail line always (via `subtypeOrder` + `EventDisplay`, automatic), and it **leads the collapsed headline only on a poor-air day** (AQI ≥ 101). Normal days unchanged.
 - **App-target tests `-parallel-testing-enabled NO`;** the lone `SwiftDataMigratorTests` `** TEST FAILED **` is the KNOWN pre-existing crash. **Simulator:** iPhone 17 Pro (iOS 26.5). New app files under the tracked paths. Ignore SourceKit "No such module"/"Cannot find type" diagnostics (stale-index noise); `swift test`/`xcodebuild` are authoritative.
 
@@ -48,8 +49,14 @@ struct AirQualityIndexTests {
         #expect(AirQualityIndex.epaAQI(pm25: 9999) == 500)   // clamps above the top breakpoint
     }
     @Test func epaAQIInterpolatesWithinABin() {
-        // midpoint of the Good bin (0–12 µg/m³ → 0–50): 6.0 → 25
-        #expect(AirQualityIndex.epaAQI(pm25: 6.0) == 25)
+        #expect(AirQualityIndex.epaAQI(pm25: 6.0) == 25)     // midpoint of Good bin (0–12→0–50)
+        #expect(AirQualityIndex.epaAQI(pm25: 45.0) == 124)   // interior of 35.5–55.4 bin: (49/19.9)*9.5+101 → 124
+    }
+    @Test func epaAQITruncatesConcentrationToTenth() {
+        // Pins the EPA 0.1-truncation: 35.49 → 35.4 → AQI 100 (NOT poor). Without the
+        // truncation the value would round to 101 and flip poorAirDay. (Real meanPM25
+        // output has many decimals, so this step is health-critical near the threshold.)
+        #expect(AirQualityIndex.epaAQI(pm25: 35.49) == 100)
     }
     @Test func categoryNamesAndThreshold() {
         #expect(AirQualityIndex.category(aqi: 50).name == "Good")
@@ -144,7 +151,7 @@ git commit -m "feat(core): AirQualityIndex — EPA AQI from PM2.5 + category (pu
 **Interfaces:** `.derived(.poorAirDay)`, token `"derived:poorAirDay"`, label "Poor air quality", tier `.established`. `AirQualityExposureSource().occurrences(from:)` emits `.poorAirDay` for `airQuality` events with `value ≥ 101`.
 
 - [ ] **Step 1: Write the failing tests first.**
-  - `EnvironmentalEventFactoryTests` — a reading with `airQualityAQI: 132` emits one `airQuality` event, `value == 132`, daily dedupKey; nil AQI → no airQuality event.
+  - `EnvironmentalEventFactoryTests` — a reading with `airQualityAQI: 132` emits exactly one `airQuality` event, `value == 132`, `unit == nil`, non-nil daily dedupKey; a nil-AQI reading → no airQuality event.
   - `AirQualityExposureSourceTests` — three `airQuality` events (values 42, 101, 175) → exactly TWO `.poorAirDay` occurrences (the 101 and 175), keyed on those events; a value-100 event and a non-airQuality env event → none.
   - `EventDisplayTests` — `title` for `airQuality` == "Air quality"; `valueLine` for an `airQuality` event value 132 == `"132 · Unhealthy for sensitive groups"`.
   - `EdgeIdentityTests` — `roundTrip(.derived(.poorAirDay), .symptom("migraine"))`. `InsightPhrasingTests` — `"poorAirDay" → "Poor air quality"`. `PlausibilityCatalogTests` — `tier(forExposureCategory: "poorAirDay") == .established`. `EvidenceConfigTests` — `lagWindow(.derived(.poorAirDay)) == 0...24`.
@@ -155,15 +162,20 @@ git commit -m "feat(core): AirQualityIndex — EPA AQI from PM2.5 + category (pu
         HealthEvent(timestamp: Date(timeIntervalSince1970: Double(i) * 86_400), timezoneID: "UTC",
                     category: .environment, subtype: "airQuality", value: v, source: .weatherAPI)
     }
-    @Test func poorAirDayOnlyAtOrAbove101() {
-        let occ = AirQualityExposureSource().occurrences(from: [aq(42, 0), aq(101, 1), aq(175, 2), aq(100, 3)])
-        #expect(occ.count == 2)
+    @Test func poorAirDayOnlyAtOrAbove101ByEvent() {
+        let good = aq(42, 0), poor1 = aq(101, 1), poor2 = aq(175, 2), boundaryBelow = aq(100, 3)
+        let occ = AirQualityExposureSource().occurrences(from: [good, poor1, poor2, boundaryBelow])
         #expect(occ.allSatisfy { $0.key == .derived(.poorAirDay) })
+        // Exactly the ≥101 events fired — 100 (boundary-below) and 42 excluded. Pins the
+        // threshold AND that the RIGHT events keyed (not just a count).
+        #expect(Set(occ.map(\.sourceEventID)) == Set([poor1.id, poor2.id]))
     }
-    @Test func ignoresNonAirQualitySubtypes() {
-        let other = HealthEvent(timestamp: Date(timeIntervalSince1970: 0), timezoneID: "UTC",
-                                category: .environment, subtype: "humidity", value: 500, source: .weatherAPI)
-        #expect(AirQualityExposureSource().occurrences(from: [other]).isEmpty)
+    @Test func ignoresNonAirQualitySubtypeAndNonEnvironmentCategory() {
+        let humidity = HealthEvent(timestamp: Date(timeIntervalSince1970: 0), timezoneID: "UTC",
+                                   category: .environment, subtype: "humidity", value: 500, source: .weatherAPI)
+        let mislabeled = HealthEvent(timestamp: Date(timeIntervalSince1970: 0), timezoneID: "UTC",
+                                     category: .symptom, subtype: "airQuality", value: 300, source: .manual)
+        #expect(AirQualityExposureSource().occurrences(from: [humidity, mislabeled]).isEmpty)   // subtype + category guards
     }
 ```
 
@@ -243,13 +255,38 @@ git commit -m "feat(core): airQuality event + poorAirDay exposure (AQI>=101, est
 
 **Interfaces:** Consumes `AirQualityIndex` (Task 1) + the reading field (Task 2). Populates real daily AQI going forward.
 
-- [ ] **Step 1: Write the failing test first** in `AirQualityIngestionTests.swift` — `EnvironmentalDataService.meanPM25(slots:now:)` (pure static): mean PM2.5 over slots with `dt ∈ [now, now+24h]`; out-of-window slots excluded; `< 3` in-window → nil.
+- [ ] **Step 1: Write the failing test first** in `AirQualityIngestionTests.swift`:
+
+```swift
+import Testing
+import Foundation
+@testable import Food_Intolerances
+
+struct AirQualityIngestionTests {
+    @Test func meanPM25AveragesInWindowAndExcludesOutside() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let t = now.timeIntervalSince1970
+        // 3 in-window slots average 10; the out-of-window 100s must NOT move the mean.
+        let slots: [(dt: TimeInterval, pm25: Double)] = [
+            (t, 10), (t + 3600, 10), (t + 86_400, 10),   // dt == now and dt == now+24h are INCLUSIVE
+            (t - 1, 100), (t + 86_401, 100),             // just outside both boundaries → excluded
+        ]
+        #expect(EnvironmentalDataService.meanPM25(slots: slots, now: now) == 10)
+    }
+    @Test func meanPM25NilBelowThreeInWindow() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let t = now.timeIntervalSince1970
+        #expect(EnvironmentalDataService.meanPM25(slots: [(t, 10), (t + 3600, 20)], now: now) == nil)   // only 2 → nil
+    }
+}
+```
 
 - [ ] **Step 2: Run to confirm failure.** App test build → FAIL (`meanPM25` unresolved).
 
 - [ ] **Step 3: `airPollutionURL`.** In `APIConfig.swift`, mirror `forecastURL`: `static func airPollutionURL(latitude:longitude:) -> URL?` → `"\(openWeatherBaseURL)/air_pollution/forecast?lat=\(latitude)&lon=\(longitude)&appid=\(apiKey)"` (no `units`).
 
 - [ ] **Step 4: Fetch + aggregate.** In `EnvironmentalDataService.swift`:
+  - **Add `import HealthGraphCore`** at the top — the file currently imports only Foundation/CoreLocation/Combine/SwiftUI/UIKit and has NO `HealthGraphCore` reference, so `AirQualityIndex.epaAQI(...)` below would fail to compile without it.
   - Add the decode model: `struct AirPollutionResponse: Codable { struct Slot: Codable { struct Components: Codable { let pm2_5: Double }; let dt: TimeInterval; let components: Components }; let list: [Slot] }`.
   - Add a **pure static** `meanPM25(slots: [(dt: TimeInterval, pm25: Double)], now: Date) -> Double?` — filter `dt ∈ [now.timeIntervalSince1970, +86_400]`, require `≥ 3`, return the mean (mirrors `aggregate24h`).
   - Add `@Published var forecastAQI: Int? = nil`.
@@ -280,8 +317,26 @@ git commit -m "feat(app): air-quality ingestion — /air_pollution next-24h mean
 - Test: `Food IntolerancesTests/EnvironmentSummaryFormatterTests.swift`, `Food IntolerancesTests/InsightsViewModelTests.swift`
 
 - [ ] **Step 1: Write the failing tests first.**
-  - `EnvironmentSummaryFormatterTests` — a summary with an `airQuality` event value 132 → headline `"AQI 132 · Unhealthy for sensitive groups"` (leads, ignoring temp); a summary with `airQuality` 42 + temperature/humidity → headline still the temp range (`"12–24°C · 69%"`), and `detailLines` contains an `"Air quality"` row with value `"42 · Good"` positioned after Humidity.
-  - `InsightsViewModelTests` — a seeded `derived:poorAirDay → symptom` edge surfaces as **established** (no unproven tag) with exposure category/icon `.environment` (mirror the hotDay test, but assert `tier == .established`).
+  - `EnvironmentSummaryFormatterTests` — reuse the shipped in-file helpers (`day`, `temp`, `humidity`, `ev`, `c`) and add `airQuality(_:)`. The temp literal uses a U+2013 EN DASH; the AQI/`· Good` literals use a U+00B7 MIDDLE DOT — byte-identical to the impl.
+
+```swift
+    private func airQuality(_ aqi: Double) -> HealthEvent { ev("airQuality", value: aqi) }
+
+    @Test func poorAirDayLeadsHeadlineOverTemperature() {
+        // temperature IS present → proves the AQI branch is FIRST (wins over temp), not merely non-empty.
+        let s = day([temp(24, 12), humidity(69), airQuality(132)])
+        #expect(EnvironmentSummaryFormatter.headline(s, unit: c) == "AQI 132 · Unhealthy for sensitive groups")
+    }
+    @Test func goodAirDoesNotLeadAndSortsAfterHumidity() {
+        let s = day([temp(24, 12), humidity(69), airQuality(42)])
+        #expect(EnvironmentSummaryFormatter.headline(s, unit: c) == "12–24°C · 69%")   // AQI 42 < 101 → temp still leads
+        let rows = EnvironmentSummaryFormatter.detailLines(s, unit: c)
+        #expect(rows.map(\.label) == ["Temperature", "Humidity", "Air quality"])       // pins the canonical position
+        #expect(rows.first(where: { $0.label == "Air quality" })?.value == "42 · Good")
+    }
+```
+
+  - `InsightsViewModelTests` — mirror the existing `hotDayEdgeSurfaces…`/`swingDayEdgeSurfaces…` test's edge-seeding exactly, but with the token `derived:poorAirDay → symptom`, and assert BOTH `tier == .established` (NOT contested — pins "no unproven tag") AND the card's `exposureCategory == .environment` (pins the icon fix). Both assertions must be present: without the `InsightPhrasing` + icon wiring the category falls to `.note`; a wrong tier classification would misfire the tag.
 
 - [ ] **Step 2: Run to confirm failure.** App test build → FAIL (headline still leads with temp; poorAirDay icon `.note`).
 
