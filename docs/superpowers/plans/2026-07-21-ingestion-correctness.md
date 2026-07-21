@@ -16,7 +16,9 @@ Design: `docs/superpowers/specs/2026-07-21-ingestion-correctness-design.md`. Bui
 - **Provenance by signal (real ingestion):** temperature/humidity → `.forecast`; airQuality → `.observedCompletedDay`; pressure/pressureDrop → `.currentSnapshot`; moonPhase/season/mercuryRetrograde → `.observedCompletedDay`. The debug seed stamps its weather `.observedCompletedDay` directly (so the dormant card layouts stay verifiable).
 - **Provenance is in metadata**, key `"provenance"`, alongside existing keys (`low`/`phase`/`season`). Accessor `HealthEvent.temporalProvenance` decodes it; **absent/unknown → nil** (fail-closed). No GRDB schema change.
 - **Provenance is in the daily dedup identity:** `"environment|{subtype}|{provenance}|day|{minute}"`.
-- **AQI is retrospective:** the previous completed local calendar day via `/air_pollution/history`, 24h mean PM2.5 → EPA AQI (2024 table), the event **timestamped to D's local NOON**; missed days backfilled over the window **`[yesterday − (maxBackfillDays − 1), yesterday]` (= `maxBackfillDays = 30` days inclusive)**; a day advances the `lastAQIDay` watermark on success OR legitimate-empty, and a network error stops advancement (retry). Partial history (`< minAirQualityHours = 20`) → no event (legitimate absence). The `lastAQIDay` watermark defaults to **`.distantPast`** when unset (so a fresh install backfills the full capped window). Day stepping uses `calendar.date(byAdding: .day, …)`, NOT `+86_400` (DST-safe).
+- **AQI is retrospective (completed local-day mean):** for each completed local calendar day, the mean PM2.5 over that day's `/air_pollution/history` slots → EPA AQI (2024 table), event **timestamped to D's local NOON**. On DST-transition days the window is correctly **23 or 25 hours, not literally 24**. The backfill window is **`[yesterday − (maxBackfillDays − 1), yesterday]` (= 30 days inclusive)**, fetched in **ONE `/air_pollution/history` request** (`start`/`end` span the whole window) whose hourly slots are grouped into local days — NOT 30 sequential calls.
+- **Watermark advances contiguously.** `lastAQIDay` (defaults to **`.distantPast`** unset) advances only through consecutive *resolved* days from the bottom; it STOPS at the first unresolved day so gaps are retried, never skipped. Resolution per day: `.value` → emit + resolved; **old** partial/absent (older than `gracePartialDays = 2` before yesterday) → resolved-absent (advance, don't block forever); **recent** partial/absent (within `gracePartialDays` of yesterday — likely provider lag) → UNRESOLVED (retry next foreground). A whole-range network/decode failure advances nothing (retry). Day stepping uses `calendar.date(byAdding: .day, …)`, NOT `+86_400`. `minAirQualityHours = 20`.
+- **Dedup-key upgrade migration:** adding provenance to the env dedup-key format would orphan existing rows (duplicate pressure/moon/season/temp/humidity on upgrade). Task 2 adds a **GRDB migration** that rewrites existing `category='environment'` events' metadata (`provenance`) + dedupKey to the new format, classified conservatively by subtype: temperature/humidity → `forecast`; pressure/pressureDrop → `currentSnapshot`; moonPhase/season/mercuryRetrograde → `observedCompletedDay`; **legacy airQuality → `forecast` (NEVER observed — it came from the forward-looking next-24h impl)**. So "Reset first" is only for extra safety on the simulator, not required for real data.
 - **Forecast AQI is KEPT, not removed:** `fetchAirQuality()`/`meanPM25`/`forecastAQI` (from the air-quality round) stay — the forecast AQI remains fetched and *available* for the future warnings round (spec §5) and is asserted by the orchestration test — but the emitter does NOT emit it as a mined event (mined AQI comes only from history). This round changes what the emitter *emits*, not what the service *fetches*.
 - **Tasks 2–8 must land together (do not merge mid-sequence).** Between Task 2 (factory stamps `airQuality → .observedCompletedDay`) and Task 8 (emitter stops threading `forecastAQI`), the old emitter would briefly feed forecast AQI into an `.observedCompletedDay`-stamped event — branch-internal only, no test asserts it, corrected by Task 8, and the whole-branch review re-runs before any merge.
 - **`fetchAllData` is the sole cancellation owner** — child fetches are plain `await`ed async funcs (no inner `Task`, no `currentAtmosphericTask?.cancel()`, no fire-and-forget).
@@ -95,9 +97,10 @@ extension HealthEvent {
 
 **Files:**
 - Modify: `HealthGraphCore/Sources/HealthGraphCore/Ingestion/DedupKey.swift`, `Ingestion/EnvironmentalEventFactory.swift`
-- Test: `HealthGraphCoreTests/EnvironmentalEventFactoryTests.swift`, `DedupKeyTests.swift` (if present, else add cases)
+- Modify: the GRDB migrator (find it: `grep -rn "registerMigration" HealthGraphCore/Sources`) — add the env-provenance upgrade migration
+- Test: `HealthGraphCoreTests/EnvironmentalEventFactoryTests.swift`, `DedupKeyTests.swift` (if present, else add cases), `HealthGraphCoreTests/EnvProvenanceMigrationTests.swift`
 
-**Interfaces:** `DedupKey.daily(_:_:dayStart:provenance:)`; every factory env event carries a provenance in metadata + dedup key.
+**Interfaces:** `DedupKey.daily(_:_:dayStart:provenance:)`; every factory env event carries a provenance in metadata + dedup key; a migration upgrades existing env rows.
 
 - [ ] **Step 1: Write the failing tests first.** Assert: a factory `temperature` event has `temporalProvenance == .forecast`; `airQuality` → `.observedCompletedDay`; `pressure` → `.currentSnapshot`; `moonPhase`/`season`/`mercuryRetrograde` → `.observedCompletedDay`. Assert a `.forecast` temperature and an `.observedCompletedDay` temperature for the same day+subtype produce DIFFERENT `DedupKey.daily(...)` strings, and that the key contains the provenance rawValue.
 
@@ -132,7 +135,9 @@ extension HealthEvent {
 
   Then pass provenance at each call: `pressure`/`pressureDrop` → `.currentSnapshot`; `moonPhase`/`mercuryRetrograde`/`season` → `.observedCompletedDay`; `temperature`/`humidity` → `.forecast`; `airQuality` → `.observedCompletedDay`. (Provenance is intrinsic to each signal's real source; document it.)
 
-- [ ] **Step 5: Run + commit** (`feat(core): stamp temporal provenance on env events + provenance-scoped dedup`).
+- [ ] **Step 4b: Upgrade migration (write its test first).** Test: seed a DB (via the existing test store) with legacy `.environment` events (no provenance, OLD dedup-key format) for each subtype, run the migrator, and assert each row now has the conservative provenance in metadata AND a new-format dedupKey — temperature/humidity → `forecast`, pressure/pressureDrop → `currentSnapshot`, moonPhase/season/mercuryRetrograde → `observedCompletedDay`, **legacy airQuality → `forecast`** (assert `temporalProvenance != .observedCompletedDay`, so a legacy forecast-derived AQI is NOT mined by the fail-closed gate). Then register a new migration (idempotent, additive; do NOT edit an already-shipped migration) that, for each non-deleted `category='environment'` row, decodes metadata, sets `metadata["provenance"]` by the subtype table above, and recomputes `dedupKey = DedupKey.daily(.environment, subtype, dayStart:, provenance:)` using the row's own `dayStart` (derive from `timestamp` in the row's `timezoneID`). Unknown subtypes → leave unclassified (nil provenance) rather than guess.
+
+- [ ] **Step 5: Run + commit** (`feat(core): stamp temporal provenance on env events + provenance-scoped dedup + upgrade migration`).
 
 ---
 
@@ -257,20 +262,21 @@ public protocol LocationProviding { var coordinate: CLLocationCoordinate2D? { ge
 - Modify: `APIConfig.swift` (`airPollutionHistoryURL`), `EnvironmentalDataService.swift` (`dailyMeanPM25`, `fetchCompletedAirQuality`)
 - Test: `Food IntolerancesTests/AirQualityHistoryTests.swift`
 
-**Interfaces:** `dailyMeanPM25(slots:dayStart:dayEnd:) -> Double?`; `fetchCompletedAirQuality(dayStart:) async -> AQIDayResult`.
+**Interfaces:** `completedDayWindow(for:calendar:) -> (start: Date, end: Date)`; `dailyMeanPM25(slots:dayStart:dayEnd:minHours:) -> Double?`; `fetchCompletedAirQualityRange(from:through:) async -> AQIRangeResult` (ONE history request grouped into local days).
 
 - [ ] **Step 1: Write the failing tests first.**
   - `dailyMeanPM25` — mean over `dt ∈ [dayStart, dayEnd)`; a mean-CHANGING out-of-window slot is excluded; **boundary: exactly `minAirQualityHours (20)` in-window → value, exactly `19` → nil** (pins `>=` not `>`); **half-open: a slot at exactly `dayEnd` is EXCLUDED** (a `<=` bug would fold next-day midnight in).
-  - **Local-day/DST window** — a helper `completedDayWindow(for:calendar:) -> (start: Date, end: Date)` returning `[startOfDay(D), startOfDay(D+1))`. With an injected **America/Los_Angeles** calendar, assert the window spans **23h on 2025-03-09 (spring-forward)** and **25h on 2025-11-02 (fall-back)**, and that it rolls a month boundary (e.g. D = 2025-01-31) correctly. (A naive `now − 86_400` or a UTC calendar yields 24h and fails these — discriminating.)
-  - `fetchCompletedAirQuality` (stub transport) — full 24-slot history → `.value(aqi)`; `< 20` slots → `.absentData`; transport throws → `.fetchError`; **malformed/garbage JSON (decode throws) → `.fetchError`** (NOT `.absentData` — a decode error must retry, not advance the watermark past a failed day).
+  - **Local-day/DST window** — `completedDayWindow(for:calendar:)` returns `[startOfDay(D), startOfDay(D+1))`. With an injected **America/Los_Angeles** calendar, assert the span is **23h on 2025-03-09 (spring-forward)** and **25h on 2025-11-02 (fall-back)**, and that D = 2025-01-31 rolls the month correctly. (A naive `now − 86_400` or a UTC calendar yields 24h and fails these.)
+  - `fetchCompletedAirQualityRange` (stub transport, ONE request): a 3-day range where every day has ≥20 slots → `.days([:])` maps each day to `.value(aqi)`; a range where ONE day has `< 20` slots → that day is `.absent`, the others `.value` (grouping by local day works); transport throws OR **malformed/garbage JSON (decode throws) → `.fetchError`** (a decode error must retry the whole window, never be mistaken for per-day absence). Assert exactly ONE `transport.data(from:)` call for the whole range (not N).
 
 - [ ] **Step 2: Run to confirm failure.**
 
 - [ ] **Step 3: Implement.**
-  - `APIConfig.airPollutionHistoryURL(latitude:longitude:start:end:)` → `\(base)/air_pollution/history?lat=&lon=&start=\(Int(start))&end=\(Int(end))&appid=` .
-  - `enum AQIDayResult { case value(Int), absentData, fetchError }`.
+  - `APIConfig.airPollutionHistoryURL(latitude:longitude:start:end:)` → `\(base)/air_pollution/history?lat=&lon=&start=\(Int(start))&end=\(Int(end))&appid=`.
+  - `enum AQIDayValue: Equatable { case value(Int), absent }`; `enum AQIRangeResult: Equatable { case fetchError, days([Date: AQIDayValue]) }` (dict keyed by `calendar.startOfDay(for: D)`).
+  - `completedDayWindow(for D: Date, calendar:) -> (start: Date, end: Date)` = `(calendar.startOfDay(for: D), calendar.startOfDay(for: calendar.date(byAdding: .day, value: 1, to: D)!))`.
   - `static func dailyMeanPM25(slots: [(dt: TimeInterval, pm25: Double)], dayStart: Date, dayEnd: Date, minHours: Int) -> Double?` — filter `dt ∈ [dayStart.tis, dayEnd.tis)`, `guard count >= minHours`, return mean.
-  - `func fetchCompletedAirQuality(dayStart: Date) async -> AQIDayResult` — get the window from the tested `completedDayWindow(for: dayStart, calendar:)` (NOT inline `startOfDay` math, so the DST guarantee is exercised on the production path); GET `airPollutionHistoryURL(start:end:)`; on transport OR **decode** throw → `.fetchError`; else `dailyMeanPM25(...)` → nil → `.absentData`, else `.value(AirQualityIndex.epaAQI(pm25: mean))`. Reuse `resolvedCoordinate()`; no location → `.fetchError`.
+  - `func fetchCompletedAirQualityRange(from startDay: Date, through endDay: Date) async -> AQIRangeResult` — `resolvedCoordinate()` (nil → `.fetchError`); ONE GET of `airPollutionHistoryURL(start: completedDayWindow(startDay).start, end: completedDayWindow(endDay).end)`; on transport OR **decode** throw → `.fetchError`; else decode (reuse `AirPollutionResponse`, `components.pm2_5`), map to `(dt, pm25)` slots, and for each day D from `startDay` to `endDay` (calendar day-step) compute `dailyMeanPM25(slots, completedDayWindow(D).start, …end, minAirQualityHours)` → `.value(epaAQI)` else `.absent`, keyed by `startOfDay(D)`; return `.days(byDay)`.
 
 - [ ] **Step 4: Run + commit** (`feat(app): completed-day AQI via /air_pollution/history (DST-correct window, partial-history guard)`).
 
@@ -284,24 +290,52 @@ public protocol LocationProviding { var coordinate: CLLocationCoordinate2D? { ge
 - Test: `Food IntolerancesTests/EnvironmentalEmitterTests.swift`
 - **Do NOT delete** `EnvironmentalDataService.fetchAirQuality`/`meanPM25`/`AirPollutionResponse`/`APIConfig.airPollutionURL`/`forecastAQI` or `Food IntolerancesTests/AirQualityIngestionTests.swift` — the forecast AQI stays fetched + `forecastAQI` populated (available for the future warnings round, asserted by Task 6). This task only stops the EMITTER from turning it into a mined event.
 
-**Interfaces:** foreground emit produces today's forecast weather + pressure + deterministic signals AND backfilled `.observedCompletedDay` AQI for completed days; NO `airQuality` event for today.
+**Interfaces:** `EnvironmentalDataProviding` (the emitter's service seam); foreground emit produces today's forecast weather + pressure + deterministic signals AND backfilled `.observedCompletedDay` AQI for completed days via ONE range request; NO `airQuality` event for today.
 
-- [ ] **Step 1: Write the failing tests first** (inject the clock + calendar + an in-memory `WatermarkStore` + a stub service double whose `fetchCompletedAirQuality` returns scripted `AQIDayResult`s):
-  - **Retry / no lock:** a foreground where a day's fetch returns `.fetchError` does NOT advance `lastAQIDay`, does NOT emit that day, and does NOT block later foregrounds; a subsequent foreground retries that same day and, on `.value`, emits + advances.
-  - **`.absentData` (fully pinned):** the watermark advances PAST D, NO `airQuality` event exists for D, and a subsequent foreground does NOT re-fetch D (no retry loop).
-  - **Today has no observed AQI:** a foreground emits today's `temperature`/`humidity` (`.forecast`) + pressure, but **no `airQuality` event dated today** (guards against a forecast AQI being mislabeled `.observedCompletedDay`).
-  - **Backfill cap:** unset watermark (`.distantPast`) → exactly `maxBackfillDays (30)` days fetched in one foreground (window `[yesterday−29, yesterday]`), each event dated to its own day at local noon.
-  - **DST-safe stepping:** with an America/Los_Angeles calendar and a clock straddling a DST transition, the backfill iterates the correct distinct days (no skipped/repeated day) — a `+86_400` increment would drift.
+- [ ] **Step 1: Write the failing tests first** (inject clock + calendar + an in-memory `WatermarkStore` + a stub `EnvironmentalDataProviding` whose `fetchCompletedAirQualityRange` returns a scripted `AQIRangeResult` and whose published readings are canned):
+  - **Whole-range `.fetchError` → no advance / no lock:** watermark unchanged, no `airQuality` emitted, a later foreground retries.
+  - **Contiguous watermark stops at a gap (the #1-intent test):** a range mapping `[D1 → .value, D2 → recent-absent, D3 → .value]` → D1 and D3 both emit, but the watermark advances only to **D1** (NOT past the D2 gap); the next foreground re-requests from D2. (A `break`-out-of-switch or a skip-the-gap bug would wrongly leave the watermark at D3.)
+  - **Old absent advances (no permanent block):** an absent day OLDER than `gracePartialDays` before yesterday → watermark advances past it, no event.
+  - **Recent absent retried:** yesterday `.absent` (provider lag) → watermark does NOT advance to yesterday; next foreground retries.
+  - **Today has no observed AQI:** a foreground emits today's `temperature`/`humidity` (`.forecast`) + pressure, but **no `airQuality` event dated today**.
+  - **Backfill cap + single request:** unset watermark (`.distantPast`) → exactly ONE `fetchCompletedAirQualityRange` call spanning `[yesterday−29, yesterday]`; emitted events dated to each day's local noon.
+  - **DST-safe stepping:** America/Los_Angeles calendar + a clock straddling a DST transition → the emitted AQI days are the correct distinct local days (no skip/repeat).
   - **Provenance-correct emits:** emitted `airQuality` → `.observedCompletedDay`; emitted `temperature`/`humidity` → `.forecast`.
-  - **Idempotent re-emit:** two foregrounds covering the same completed AQI day produce one event (dedup).
+  - **Idempotent re-emit:** two foregrounds covering the same completed day → one event (dedup).
 
 - [ ] **Step 2: Run to confirm failure.**
 
-- [ ] **Step 3: Rewrite `emitIfNeeded`.** Inject the clock, calendar (timezone), and a `WatermarkStore` (default `UserDefaults`); do all day math through them.
-  - Remove the `lastEmitDayKey` guard. Add the `lastAQIDay` watermark via the injected store; **an unset watermark reads as `.distantPast`.**
-  - Today (past cooldown → `await service.fetchAllData()`): build a today reading (dated `now`) with `pressureHPa`/`previousPressureHPa`, `moonPhaseName`/`season`/`isMercuryRetrograde`, and `temperatureHighC`/`LowC`/`humidityPct` from `service.forecast*` → emit (factory stamps forecast/current/observed per §Global Constraints). Do NOT thread `service.forecastAQI` into the reading — there is NO `airQuality` event for today.
-  - Backfill: `let yesterday = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: now()))!`. Start day `= max(calendar.date(byAdding: .day, value: 1, to: watermark)!, calendar.date(byAdding: .day, value: -(maxBackfillDays - 1), to: yesterday)!)`. Iterate `D` from start to `yesterday` inclusive, advancing with `calendar.date(byAdding: .day, value: 1, to: D)` (DST-safe — NOT `+86_400`): `switch await service.fetchCompletedAirQuality(dayStart: D)` → `.value(aqi)`: emit a reading dated **D's local noon** with only `airQualityAQI` (factory stamps `.observedCompletedDay`, dedupKey for D), then set watermark = D; `.absentData`: set watermark = D (no event); `.fetchError`: `break` (leave the watermark, retry next foreground).
-  - The backfill reading's `date` is `calendar.date(bySettingHour: 12, minute: 0, second: 0, of: D)` (local noon), so the event timestamps + groups under day D.
+- [ ] **Step 3: Rewrite `emitIfNeeded`** — inject the clock, calendar (timezone), a `WatermarkStore` (default `UserDefaults`), and `service: EnvironmentalDataProviding`; do all day math through them.
+  - Define the seam: `protocol EnvironmentalDataProviding { var currentPressure: Double { get }; var previousPressure: Double { get }; var forecastHighC: Double? { get }; var forecastLowC: Double? { get }; var forecastHumidity: Double? { get }; func requestRefreshWithCooldown() async -> Bool; func fetchCompletedAirQualityRange(from: Date, through: Date) async -> AQIRangeResult }`, and `extension EnvironmentalDataService: EnvironmentalDataProviding {}`.
+  - Remove the `lastEmitDayKey` guard. `lastAQIDay` reads via the store; **unset → `.distantPast`.**
+  - **Today:** past cooldown → `await service.requestRefreshWithCooldown()`; build a today reading (dated `now()`) with pressure + `moonPhaseName`/`season`/`isMercuryRetrograde` + `temperatureHighC`/`LowC`/`humidityPct` from `service.forecast*` → emit. Do NOT thread `forecastAQI` — NO `airQuality` for today.
+  - **Backfill (single request, contiguous watermark — NO in-loop `break`):**
+
+```swift
+    let yesterday = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: now()))!
+    let capFloor = calendar.date(byAdding: .day, value: -(maxBackfillDays - 1), to: yesterday)!
+    let start = max(calendar.date(byAdding: .day, value: 1, to: watermark)!, capFloor)
+    guard start <= yesterday else { return }
+    guard case .days(let byDay) = await service.fetchCompletedAirQualityRange(from: start, through: yesterday)
+    else { return }   // .fetchError → watermark unchanged, retry next foreground
+    let graceCutoff = calendar.date(byAdding: .day, value: -gracePartialDays, to: yesterday)!  // days > cutoff are "recent"
+    var newWatermark = watermark, contiguous = true
+    var D = start
+    while D <= yesterday {
+        switch byDay[calendar.startOfDay(for: D)] ?? .absent {
+        case .value(let aqi):
+            emitObservedAQI(aqi, on: D)                 // reading dated D's local noon → .observedCompletedDay
+            if contiguous { newWatermark = D }
+        case .absent:
+            if D > graceCutoff { contiguous = false }   // recent → provider lag; leave for retry, don't advance past
+            else if contiguous { newWatermark = D }     // old gap → resolved-absent; advance so it can't block forever
+        }
+        D = calendar.date(byAdding: .day, value: 1, to: D)!
+    }
+    store.set(newWatermark, for: lastAQIDayKey)
+```
+
+  - `emitObservedAQI(_:on:)` builds a reading with `date = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: D)!` (local noon) and only `airQualityAQI` set → the factory stamps `.observedCompletedDay`, timestamps + groups under day D. Value days beyond a recent gap still emit (dedup-idempotent); only the watermark holds at the gap.
 - [ ] **Step 4: Debug seed** — in `loadWeatherDemo`, stamp provenance on **every** `.environment` event it emits so the demo keys match the new factory format (and the mined ones surface cards): temperature/humidity/airQuality → `.observedCompletedDay` (so Hot/Cold/Swing/Humid + Poor-air cards render); pressure/pressureDrop → `.currentSnapshot`; any moon/season/mercury → `.observedCompletedDay`. Each event gets `"provenance": <raw>` in its metadata AND `provenance: <case>` in its `DedupKey.daily(...)` call. (Do the same for `loadOutsideFactorsDemo`'s moon/mercury events so their keys stay consistent.)
 - [ ] **Step 5: Build + full regression.** App build; `cd HealthGraphCore && swift test` green; app suite green modulo the known crash (incl. the new emitter/orchestration/history tests).
 - [ ] **Step 6: On-device / simulator check** (human's gate; **Reset first** — dedup format changed). Load WEATHER demo → the Environment row shows the forecast temp/humidity range + an observed AQI line on completed days; **Insights shows the Poor-air card + (from the observed demo) Hot/Cold/Swing/Humid cards**; confirm on a REAL run (no demo) that weather cards are absent while the Environment row still shows the forecast range. Light + dark.
