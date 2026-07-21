@@ -102,9 +102,11 @@ struct HealthGraphDebugView: View {
                 Button("Emit environmental events now") {
                     Task {
                         errorMessage = nil
-                        // clear the day guard so the button always works
+                        // Clear the AQI retry-throttle watermark so the button always
+                        // re-attempts the backfill (today's emit runs unconditionally —
+                        // there's no longer a global daily lock).
                         UserDefaults.standard.removeObject(
-                            forKey: EnvironmentalEventEmitter.lastEmitDayKey)
+                            forKey: EnvironmentalEventEmitter.lastAQIAttemptKey)
                         await EnvironmentalEventEmitter.emitIfNeeded(
                             service: EnvironmentalDataService())
                         await refresh()
@@ -278,14 +280,19 @@ struct HealthGraphDebugView: View {
                 events.append(HealthEvent(
                     timestamp: dayStart.addingTimeInterval(12 * 3600), timezoneID: tz,
                     category: .environment, subtype: "moonPhase", source: .weatherAPI,
-                    metadata: try? JSONEncoder().encode(["phase": phase]),
-                    dedupKey: DedupKey.daily(.environment, "moonPhase", dayStart: dayStart)))
+                    metadata: try? JSONEncoder().encode(
+                        ["phase": phase, "provenance": TemporalProvenance.observedCompletedDay.rawValue]),
+                    dedupKey: DedupKey.daily(.environment, "moonPhase", dayStart: dayStart,
+                                             provenance: .observedCompletedDay)))
 
                 if isRetrograde {
                     events.append(HealthEvent(
                         timestamp: dayStart.addingTimeInterval(12 * 3600), timezoneID: tz,
                         category: .environment, subtype: "mercuryRetrograde", source: .weatherAPI,
-                        dedupKey: DedupKey.daily(.environment, "mercuryRetrograde", dayStart: dayStart)))
+                        metadata: try? JSONEncoder().encode(
+                            ["provenance": TemporalProvenance.observedCompletedDay.rawValue]),
+                        dedupKey: DedupKey.daily(.environment, "mercuryRetrograde", dayStart: dayStart,
+                                                 provenance: .observedCompletedDay)))
                 }
 
                 // Correlated headache: ~70% follow on full-moon/retrograde days
@@ -350,12 +357,24 @@ struct HealthGraphDebugView: View {
             var highs: [Double] = []
             var lows: [Double] = []
             var hums: [Double] = []
+            // Synthetic daily-mean PM2.5 (µg/m³), independent of the temperature/humidity
+            // cycles above. Tuned (base 18, amplitude 12, period 200, `d % 13` jitter of
+            // 1.4) so ~20% of days cross the EPA AQI 101 boundary (PM2.5 ≥ 35.5) — verified
+            // against AirQualityIndex.epaAQI while building this seed.
+            var pm25s: [Double] = []
             for d in 0..<days {
                 let high = 20 + 12 * sin(2 * .pi * Double(d) / 365) + Double(d % 7)
                 highs.append(high)
                 lows.append(high - (4 + Double(d % 9)))
                 hums.append(50 + 25 * sin(2 * .pi * Double(d) / 180) + Double(d % 5))
+                pm25s.append(18 + 12 * sin(2 * .pi * Double(d) / 200) + Double(d % 13) * 1.4)
             }
+            var aqis = pm25s.map { AirQualityIndex.epaAQI(pm25: $0) }
+            // Force the most recent day to a comfortably poor-air PM2.5 (48 µg/m³ →
+            // AQI 132, "Unhealthy for sensitive groups") so the Environment row's
+            // "Air quality" line and the collapsed headline's AQI-lead branch are both
+            // demonstrable without waiting on the synthetic series to land there by luck.
+            if days > 0 { aqis[days - 1] = AirQualityIndex.epaAQI(pm25: 48.0) }
             let ranges = zip(highs, lows).map { $0 - $1 }
             func topQuartileCutoff(_ values: [Double]) -> Double {
                 let sorted = values.sorted()
@@ -386,6 +405,7 @@ struct HealthGraphDebugView: View {
             // humidDay). Keeping two clean pairs gives all four buckets headroom.
             var hotIndex = 0, humidIndex = 0, swingIndex = 0, coldIndex = 0
             var otherMigraineIndex = 0, otherJointPainIndex = 0
+            var poorAirIndex = 0, otherCoughIndex = 0
 
             for d in 0..<days {
                 let dayStart = cal.startOfDay(for: now.addingTimeInterval(-Double(days - d) * 86_400))
@@ -404,14 +424,30 @@ struct HealthGraphDebugView: View {
                     timestamp: dayStart.addingTimeInterval(9 * 3600), timezoneID: tz,
                     category: .environment, subtype: "temperature",
                     value: high, unit: "°C", source: .weatherAPI,
-                    metadata: try? JSONEncoder().encode(["low": String(low)]),
-                    dedupKey: DedupKey.daily(.environment, "temperature", dayStart: dayStart)))
+                    metadata: try? JSONEncoder().encode(
+                        ["low": String(low), "provenance": TemporalProvenance.observedCompletedDay.rawValue]),
+                    dedupKey: DedupKey.daily(.environment, "temperature", dayStart: dayStart,
+                                             provenance: .observedCompletedDay)))
 
                 events.append(HealthEvent(
                     timestamp: dayStart.addingTimeInterval(9 * 3600), timezoneID: tz,
                     category: .environment, subtype: "humidity",
                     value: hum, unit: "%", source: .weatherAPI,
-                    dedupKey: DedupKey.daily(.environment, "humidity", dayStart: dayStart)))
+                    metadata: try? JSONEncoder().encode(
+                        ["provenance": TemporalProvenance.observedCompletedDay.rawValue]),
+                    dedupKey: DedupKey.daily(.environment, "humidity", dayStart: dayStart,
+                                             provenance: .observedCompletedDay)))
+
+                let aqi = aqis[d]
+                let isPoorAir = aqi >= AirQualityIndex.poorAirThreshold
+                events.append(HealthEvent(
+                    timestamp: dayStart.addingTimeInterval(9 * 3600), timezoneID: tz,
+                    category: .environment, subtype: "airQuality",
+                    value: Double(aqi), source: .weatherAPI,
+                    metadata: try? JSONEncoder().encode(
+                        ["provenance": TemporalProvenance.observedCompletedDay.rawValue]),
+                    dedupKey: DedupKey.daily(.environment, "airQuality", dayStart: dayStart,
+                                             provenance: .observedCompletedDay)))
 
                 // Pair A — hot/humid → migraine: ~80% follow on top-quartile hot or
                 // humid days (one event even when both coincide), ~4% baseline otherwise.
@@ -454,6 +490,22 @@ struct HealthGraphDebugView: View {
                         timestamp: dayStart.addingTimeInterval(16 * 3600), timezoneID: tz,
                         category: .symptom, subtype: "jointPain", value: 5, source: .manual))
                 }
+
+                // Pair C — poor air (AQI ≥ 101) → cough: same ~80%/~4% shape, its own
+                // symptom so it doesn't compete with pairs A/B for the same signal.
+                var cough = false
+                if isPoorAir {
+                    cough = poorAirIndex % 10 < 8
+                    poorAirIndex += 1
+                } else {
+                    cough = otherCoughIndex % 25 == 0
+                    otherCoughIndex += 1
+                }
+                if cough {
+                    events.append(HealthEvent(
+                        timestamp: dayStart.addingTimeInterval(17 * 3600), timezoneID: tz,
+                        category: .symptom, subtype: "cough", value: 5, source: .manual))
+                }
             }
 
             // Enrich the most recent 3 days with the FULL environment set so the
@@ -468,26 +520,38 @@ struct HealthGraphDebugView: View {
                 events.append(HealthEvent(
                     timestamp: stamp, timezoneID: tz, category: .environment,
                     subtype: "pressure", value: 1013 - Double(d % 5), unit: "hPa", source: .weatherAPI,
-                    dedupKey: DedupKey.daily(.environment, "pressure", dayStart: dayStart)))
+                    metadata: try? JSONEncoder().encode(
+                        ["provenance": TemporalProvenance.currentSnapshot.rawValue]),
+                    dedupKey: DedupKey.daily(.environment, "pressure", dayStart: dayStart,
+                                             provenance: .currentSnapshot)))
                 events.append(HealthEvent(
                     timestamp: stamp, timezoneID: tz, category: .environment, subtype: "moonPhase",
-                    source: .weatherAPI, metadata: try? JSONEncoder().encode(["phase": "Waxing Gibbous"]),
-                    dedupKey: DedupKey.daily(.environment, "moonPhase", dayStart: dayStart)))
+                    source: .weatherAPI, metadata: try? JSONEncoder().encode(
+                        ["phase": "Waxing Gibbous", "provenance": TemporalProvenance.observedCompletedDay.rawValue]),
+                    dedupKey: DedupKey.daily(.environment, "moonPhase", dayStart: dayStart,
+                                             provenance: .observedCompletedDay)))
                 events.append(HealthEvent(
                     timestamp: stamp, timezoneID: tz, category: .environment, subtype: "season",
-                    source: .weatherAPI, metadata: try? JSONEncoder().encode(["season": "Summer"]),
-                    dedupKey: DedupKey.daily(.environment, "season", dayStart: dayStart)))
+                    source: .weatherAPI, metadata: try? JSONEncoder().encode(
+                        ["season": "Summer", "provenance": TemporalProvenance.observedCompletedDay.rawValue]),
+                    dedupKey: DedupKey.daily(.environment, "season", dayStart: dayStart,
+                                             provenance: .observedCompletedDay)))
                 // Most recent day only: a pressure drop (folds into the Air pressure
                 // line) and mercury retrograde (a value-less presence line).
                 if d == days - 1 {
                     events.append(HealthEvent(
                         timestamp: stamp, timezoneID: tz, category: .environment,
                         subtype: "pressureDrop", value: 7, unit: "hPa", source: .weatherAPI,
-                        dedupKey: DedupKey.daily(.environment, "pressureDrop", dayStart: dayStart)))
+                        metadata: try? JSONEncoder().encode(
+                            ["provenance": TemporalProvenance.currentSnapshot.rawValue]),
+                        dedupKey: DedupKey.daily(.environment, "pressureDrop", dayStart: dayStart,
+                                                 provenance: .currentSnapshot)))
                     events.append(HealthEvent(
                         timestamp: stamp, timezoneID: tz, category: .environment, subtype: "mercuryRetrograde",
-                        source: .weatherAPI,
-                        dedupKey: DedupKey.daily(.environment, "mercuryRetrograde", dayStart: dayStart)))
+                        source: .weatherAPI, metadata: try? JSONEncoder().encode(
+                            ["provenance": TemporalProvenance.observedCompletedDay.rawValue]),
+                        dedupKey: DedupKey.daily(.environment, "mercuryRetrograde", dayStart: dayStart,
+                                                 provenance: .observedCompletedDay)))
                 }
             }
 

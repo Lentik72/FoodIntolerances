@@ -207,6 +207,66 @@ public struct AppDatabase: Sendable {
                 """)
         }
 
+        migrator.registerMigration("v6") { db in
+            // Environmental-ingestion correctness: stamp a temporal provenance into
+            // every existing environment row's metadata AND rewrite its dedupKey to
+            // the provenance-scoped format, so a re-emitted event dedups against —
+            // and (for soft-deleted rows) never resurrects — its legacy counterpart.
+            //
+            // Rewrite EVERY category='environment' row INCLUDING soft-deleted ones
+            // (do NOT filter deletedAt): IngestPipeline blocks resurrection by exact
+            // dedupKey match against soft-deleted rows, so a tombstone left on its
+            // legacy key would not match the new provenance-scoped emission and the
+            // user's delete would resurrect. `deletedAt` is preserved (untouched).
+            //
+            // FROZEN BODY: uses raw SQL + Row (not the HealthEvent record — a future
+            // column would crash a record-based migration on fresh install) and an
+            // inlined key builder (not DedupKey.daily — a future key-format change
+            // must not retroactively alter what v6 emits). The parity test pins this
+            // format to today's factory; any future change gets its OWN migration.
+            func v6EnvironmentKey(subtype: String?, provenance: String, dayStart: Date) -> String {
+                "environment|\(subtype ?? "")|\(provenance)|day|\(Int(dayStart.timeIntervalSince1970 / 60))"
+            }
+            // Conservative legacy classification. Weather (temperature/humidity) is
+            // forecast-derived; pressure is a current snapshot; date-facts are
+            // observed. Legacy airQuality → forecast (NEVER observed): it must not be
+            // mined by the fail-closed gate. Unknown subtypes stay unclassified.
+            func v6Provenance(_ subtype: String?) -> String? {
+                switch subtype {
+                case "temperature", "humidity": return "forecast"
+                case "pressure", "pressureDrop": return "currentSnapshot"
+                case "moonPhase", "season", "mercuryRetrograde": return "observedCompletedDay"
+                case "airQuality": return "forecast"
+                default: return nil
+                }
+            }
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT id, subtype, timestamp, timezoneID, metadata
+                FROM health_events WHERE category = 'environment'
+                """)
+            for row in rows {
+                let subtype = row["subtype"] as String?
+                guard let provenance = v6Provenance(subtype) else { continue }
+                guard let timestamp = row["timestamp"] as Date? else { continue }
+                let tzID = row["timezoneID"] as String? ?? "UTC"
+                var cal = Calendar(identifier: .gregorian)
+                cal.timeZone = TimeZone(identifier: tzID) ?? .current
+                let dayStart = cal.startOfDay(for: timestamp)
+                var meta: [String: String] = [:]
+                if let data = row["metadata"] as Data?,
+                   let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
+                    meta = decoded
+                }
+                meta["provenance"] = provenance
+                let metaData = try? JSONEncoder().encode(meta)
+                let newKey = v6EnvironmentKey(subtype: subtype, provenance: provenance, dayStart: dayStart)
+                let id = row["id"] as DatabaseValue
+                try db.execute(
+                    sql: "UPDATE health_events SET metadata = ?, dedupKey = ? WHERE id = ?",
+                    arguments: [metaData, newKey, id])
+            }
+        }
+
         return migrator
     }
 }

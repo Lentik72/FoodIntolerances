@@ -20,6 +20,7 @@ public enum EdgeIdentity {
             case .coldDay: return "derived:coldDay"
             case .humidDay: return "derived:humidDay"
             case .swingDay: return "derived:swingDay"
+            case .poorAirDay: return "derived:poorAirDay"
             }
         }
     }
@@ -77,6 +78,7 @@ public enum EdgeIdentity {
             case "coldDay": return .derived(.coldDay)
             case "humidDay": return .derived(.humidDay)
             case "swingDay": return .derived(.swingDay)
+            case "poorAirDay": return .derived(.poorAirDay)
             default:
                 if kind.hasPrefix("cyclePhase."),
                    let phase = CyclePhase(rawValue: String(kind.dropFirst("cyclePhase.".count))) {

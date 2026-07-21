@@ -15,6 +15,7 @@ struct EvidenceConfigTests {
         #expect(c.lagWindow(for: .derived(.coldDay)) == 0...24)
         #expect(c.lagWindow(for: .derived(.humidDay)) == 0...24)
         #expect(c.lagWindow(for: .derived(.swingDay)) == 0...24)
+        #expect(c.lagWindow(for: .derived(.poorAirDay)) == 0...24)
     }
     @Test func defaultsAreSane() {
         let c = EvidenceConfig.default

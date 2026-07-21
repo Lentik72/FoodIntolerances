@@ -25,7 +25,7 @@ public enum EventDisplay {
         "dietaryFat": "Fat", "dietarySugar": "Sugar", "dietarySodium": "Sodium",
         // environment
         "pressure": "Air pressure", "pressureDrop": "Pressure drop", "moonPhase": "Moon phase",
-        "mercuryRetrograde": "Mercury retrograde", "season": "Season",
+        "mercuryRetrograde": "Mercury retrograde", "season": "Season", "airQuality": "Air quality",
     ]
 
     public static func title(for event: HealthEvent) -> String {
@@ -52,6 +52,9 @@ public enum EventDisplay {
     }
 
     public static func valueLine(for event: HealthEvent) -> String? {
+        if event.category == .environment, event.subtype == "airQuality", let v = event.value {
+            return "\(Int(v)) · \(AirQualityIndex.category(aqi: Int(v)).name)"
+        }
         if event.category == .environment,
            let data = event.metadata,
            let dict = try? JSONDecoder().decode([String: String].self, from: data) {

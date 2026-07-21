@@ -12,5 +12,8 @@ struct PlausibilityCatalogTests {
         #expect(PlausibilityCatalog.tier(forExposureCategory: "coldDay") == .contested)
         #expect(PlausibilityCatalog.tier(forExposureCategory: "humidDay") == .contested)
         #expect(PlausibilityCatalog.tier(forExposureCategory: "swingDay") == .contested)
+        // No catalog entry — falls through to the established default. Regression
+        // guard: pins that poorAirDay stays established (no PlausibilityCatalog change).
+        #expect(PlausibilityCatalog.tier(forExposureCategory: "poorAirDay") == .established)
     }
 }

@@ -109,4 +109,61 @@ struct EnvironmentalEventFactoryTests {
         #expect(!temps(high: nil, low: 12).contains { $0.subtype == "temperature" })   // high-nil branch
         #expect(temps(high: 24, low: nil).contains { $0.subtype == "humidity" })       // humidity independent
     }
+
+    @Test func emitsAirQualityWhenAQIPresent() {
+        let r = EnvironmentalReading(date: Date(timeIntervalSince1970: 1_700_000_000),
+            pressureHPa: nil, previousPressureHPa: nil, moonPhaseName: nil, season: nil,
+            isMercuryRetrograde: false, timezoneID: "UTC", airQualityAQI: 132)
+        let events = EnvironmentalEventFactory.events(for: r)
+        #expect(events.count == 1)   // no pressure/moon/season/temp/humidity this day
+        let aq = events.first { $0.subtype == "airQuality" }
+        #expect(aq?.value == 132)
+        #expect(aq?.unit == nil)
+        #expect(aq?.dedupKey != nil)
+    }
+
+    @Test func nilAirQualityAQISkipsAirQualityEvent() {
+        let r = EnvironmentalReading(date: Date(timeIntervalSince1970: 1_700_000_000),
+            pressureHPa: nil, previousPressureHPa: nil, moonPhaseName: nil, season: nil,
+            isMercuryRetrograde: false, timezoneID: "UTC")   // airQualityAQI defaults nil
+        let events = EnvironmentalEventFactory.events(for: r)
+        #expect(!events.contains { $0.subtype == "airQuality" })
+    }
+
+    // Provenance is intrinsic to each signal's real source (spec: env ingestion
+    // correctness). It rides in metadata AND scopes the dedup key so a forecast
+    // reading never collides with an observed one for the same day.
+    @Test func stampsPerSignalProvenanceOnEveryEvent() {
+        let r = EnvironmentalReading(
+            date: noon, pressureHPa: 1004, previousPressureHPa: 1015,   // pressure + pressureDrop
+            moonPhaseName: "Full Moon 🌕", season: "Summer",
+            isMercuryRetrograde: true, timezoneID: "UTC",
+            temperatureHighC: 24, temperatureLowC: 12, humidityPct: 68, airQualityAQI: 132)
+        let events = EnvironmentalEventFactory.events(for: r)
+        func provenance(_ subtype: String) -> TemporalProvenance? {
+            events.first { $0.subtype == subtype }?.temporalProvenance
+        }
+        // Weather forecasts are future-facing → never mined.
+        #expect(provenance("temperature") == .forecast)
+        #expect(provenance("humidity") == .forecast)
+        // Current-conditions readings.
+        #expect(provenance("pressure") == .currentSnapshot)
+        #expect(provenance("pressureDrop") == .currentSnapshot)
+        // Deterministic date-facts / completed-day observations → mineable.
+        #expect(provenance("moonPhase") == .observedCompletedDay)
+        #expect(provenance("season") == .observedCompletedDay)
+        #expect(provenance("mercuryRetrograde") == .observedCompletedDay)
+        // New emitter: AQI is an observed completed-day reading (mineable). The
+        // migration classifies LEGACY airQuality as forecast — a documented split.
+        #expect(provenance("airQuality") == .observedCompletedDay)
+        // Every env event carries a provenance in metadata.
+        #expect(events.allSatisfy { $0.temporalProvenance != nil })
+    }
+
+    @Test func provenanceIsFoldedIntoTheDedupKey() {
+        let events = EnvironmentalEventFactory.events(for: reading())
+        let moon = events.first { $0.subtype == "moonPhase" }
+        // The observed provenance rawValue appears in the daily key.
+        #expect(moon?.dedupKey?.contains("observedCompletedDay") == true)
+    }
 }

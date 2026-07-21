@@ -7,6 +7,7 @@ public enum DerivedExposureKind: Sendable, Equatable, Hashable {
     case cyclePhase(CyclePhase)
     case fullMoon, mercuryRetrograde
     case hotDay, coldDay, humidDay, swingDay
+    case poorAirDay
 }
 
 public enum ExposureKey: Sendable, Equatable, Hashable {

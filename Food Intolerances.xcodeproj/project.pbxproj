@@ -98,6 +98,7 @@
 		B3FEA0952D349537000727AD /* SearchBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3FEA0942D349537000727AD /* SearchBar.swift */; };
 		B3FEA0972D349559000727AD /* SymptomToggleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3FEA0962D349559000727AD /* SymptomToggleView.swift */; };
 		ENVCONST0000000000001 /* EnvironmentalConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = ENVCONST0000000000002 /* EnvironmentalConstants.swift */; };
+		HTTPTRANSPORT00000001 /* HTTPTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = HTTPTRANSPORT00000002 /* HTTPTransport.swift */; };
 		LOGGER00000000000000001 /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = LOGGER00000000000000002 /* Logger.swift */; };
 /* End PBXBuildFile section */
 
@@ -223,6 +224,7 @@
 		B3FEA0962D349559000727AD /* SymptomToggleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SymptomToggleView.swift; sourceTree = "<group>"; };
 		BD14E6C2FE0047789EC1D2BE /* SaveHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SaveHelper.swift; sourceTree = "<group>"; };
 		ENVCONST0000000000002 /* EnvironmentalConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvironmentalConstants.swift; sourceTree = "<group>"; };
+		HTTPTRANSPORT00000002 /* HTTPTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPTransport.swift; sourceTree = "<group>"; };
 		LOGGER00000000000000002 /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -312,6 +314,7 @@
 				B3C6A4292D8A113000684767 /* QuickSymptomLogger.swift */,
 				B31A1E982D837C0B0024D855 /* NotificationSettingsView.swift */,
 				B31A1E962D837B780024D855 /* EnvironmentalDataService.swift */,
+				HTTPTRANSPORT00000002 /* HTTPTransport.swift */,
 				B31A1E922D833E410024D855 /* BodyRegionUtility.swift */,
 				B31A1E942D833E5F0024D855 /* SymptomManager.swift */,
 				B34C6B352D3C5D9A00ECFFF0 /* ActiveProtocolsSection.swift */,
@@ -597,6 +600,7 @@
 				B3D4856B2D4AF59100F7E3BA /* SymptomSelectionView.swift in Sources */,
 				B34C6B4A2D3CA2F600ECFFF0 /* SeverityTrendChart.swift in Sources */,
 				B3D487B72D55990E00F7E3BA /* GetMoonPhase.swift in Sources */,
+				HTTPTRANSPORT00000001 /* HTTPTransport.swift in Sources */,
 				B3C6A42C2D8A19A900684767 /* MoreView.swift in Sources */,
 				B3D485732D4C22B100F7E3BA /* TabManager.swift in Sources */,
 				B3A0848B2D650550007CB8B5 /* ProtocolStatusView.swift in Sources */,

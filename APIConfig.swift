@@ -54,4 +54,26 @@ enum APIConfig {
         let urlString = "\(openWeatherBaseURL)/forecast?lat=\(latitude)&lon=\(longitude)&appid=\(apiKey)&units=metric"
         return URL(string: urlString)
     }
+
+    /// Build air pollution forecast API URL for given coordinates (nil if API key not configured)
+    static func airPollutionURL(latitude: Double, longitude: Double) -> URL? {
+        guard let apiKey = openWeatherAPIKey else {
+            return nil
+        }
+        let urlString = "\(openWeatherBaseURL)/air_pollution/forecast?lat=\(latitude)&lon=\(longitude)&appid=\(apiKey)"
+        return URL(string: urlString)
+    }
+
+    /// Build air pollution HISTORY API URL for given coordinates and a Unix-epoch
+    /// `[start, end]` span (nil if API key not configured). `start`/`end` are
+    /// `TimeInterval` — callers pass `window.start.timeIntervalSince1970` from a
+    /// `completedDayWindow(...)` result, not `Int(aDate)` (a `Date` doesn't
+    /// convert to `Int`).
+    static func airPollutionHistoryURL(latitude: Double, longitude: Double, start: TimeInterval, end: TimeInterval) -> URL? {
+        guard let apiKey = openWeatherAPIKey else {
+            return nil
+        }
+        let urlString = "\(openWeatherBaseURL)/air_pollution/history?lat=\(latitude)&lon=\(longitude)&start=\(Int(start))&end=\(Int(end))&appid=\(apiKey)"
+        return URL(string: urlString)
+    }
 }

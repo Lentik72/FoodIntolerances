@@ -1,38 +1,162 @@
 import Foundation
 import HealthGraphCore
 
+/// The emitter's narrow view of the environmental service: today's forecast /
+/// current-conditions readings and the one ranged retrospective-AQI fetch. Lets
+/// tests substitute a deterministic stub for `EnvironmentalDataService`.
+protocol EnvironmentalDataProviding {
+    var currentPressure: Double { get }
+    var previousPressure: Double { get }
+    var forecastHighC: Double? { get }
+    var forecastLowC: Double? { get }
+    var forecastHumidity: Double? { get }
+    func requestRefreshWithCooldown() async -> Bool
+    func fetchCompletedAirQualityRange(from: Date, through: Date) async -> AQIRangeResult
+}
+
+extension EnvironmentalDataService: EnvironmentalDataProviding {}
+
+/// Persists the per-signal watermarks (the last successfully-ingested completed
+/// AQI day, and the last AQI-range attempt time). Injectable so day math and
+/// watermarks are deterministic in tests. Values are epoch `Double`s; a missing
+/// key reads back as `nil` (NOT epoch 0).
+protocol WatermarkStore {
+    func date(for key: String) -> Date?
+    func set(_ date: Date, for key: String)
+}
+
+/// Production `WatermarkStore`, backed by `UserDefaults` (epoch `Double`).
+struct UserDefaultsWatermarkStore: WatermarkStore {
+    private let defaults: UserDefaults
+    init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+    func date(for key: String) -> Date? {
+        guard let epoch = defaults.object(forKey: key) as? Double else { return nil }
+        return Date(timeIntervalSince1970: epoch)
+    }
+    func set(_ date: Date, for key: String) {
+        defaults.set(date.timeIntervalSince1970, forKey: key)
+    }
+}
+
 /// Emits daily environment exposure events on app foreground (spec §6.6).
-/// Once per calendar day; dedupKeys make accidental re-runs idempotent
-/// (same-day re-emission updates the pressure value in place).
+///
+/// No global daily lock: today's forecast weather + current pressure + the
+/// deterministic date-facts (moon/season/mercury) emit every foreground (the
+/// service's own cooldown throttles the actual network refresh; dedup keys make
+/// the re-emit idempotent). Retrospective AQI for each COMPLETED local day is
+/// backfilled from a contiguous per-day watermark up to yesterday, via ONE
+/// ranged `/air_pollution/history` request gated by its own retry throttle.
 enum EnvironmentalEventEmitter {
-    static let lastEmitDayKey = "hg.env.lastEmitDay"
+    /// Last completed local day whose observed AQI is ingested + watermarked.
+    static let lastAQIDayKey = "hg.env.lastAQIDay"
+    /// Last time the AQI range was attempted (retry-throttle watermark).
+    static let lastAQIAttemptKey = "hg.env.lastAQIAttempt"
+
+    /// Backfill window cap: at most this many completed days per foreground.
+    static let maxBackfillDays = 30
+    /// The last `gracePartialDays` completed days (yesterday + the day before)
+    /// are "recent": a recent absent day is likely provider lag → hold the
+    /// watermark and retry; the cutoff day itself is OLD.
+    static let gracePartialDays = 2
+    /// Minimum spacing between AQI range fetches. Independent of the pressure /
+    /// forecast cooldown: while the tail day is a recent gap or the range keeps
+    /// failing, `start` stays ≤ yesterday, so without this a rapid foreground
+    /// would re-download the 30-day range every time.
+    static let minAQIRetryInterval: TimeInterval = 3600   // 1 hour
+
+    private static func defaultCalendar() -> Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = .current
+        return c
+    }
 
     @MainActor
     static func emitIfNeeded(database: AppDatabase = HealthGraphProvider.shared,
-                             service: EnvironmentalDataService) async {
-        let today = ISO8601DateFormatter.hgDayString(from: Date())
-        guard UserDefaults.standard.string(forKey: lastEmitDayKey) != today else { return }
+                             service: EnvironmentalDataProviding,
+                             now: @escaping () -> Date = Date.init,
+                             calendar: Calendar = defaultCalendar(),
+                             store: WatermarkStore = UserDefaultsWatermarkStore()) async {
+        let pipeline = IngestPipeline(database: database)
+        let tz = calendar.timeZone.identifier
 
+        // TODAY — forecast weather (display) + current pressure + deterministic
+        // date-facts. The service's own cooldown decides whether this refetches;
+        // we emit today's reading regardless (dedup makes the re-emit idempotent).
+        // NO airQuality: today's completed-day AQI does not exist yet.
         _ = await service.requestRefreshWithCooldown()
-        let now = Date()
-        let reading = EnvironmentalReading(
-            date: now,
+        let today = now()
+        let todayReading = EnvironmentalReading(
+            date: today,
             pressureHPa: service.currentPressure > 0 ? service.currentPressure : nil,
             previousPressureHPa: service.previousPressure > 0 ? service.previousPressure : nil,
-            moonPhaseName: getMoonPhase(for: now),
-            season: getCurrentSeason(for: now),
-            isMercuryRetrograde: MercuryRetrograde.isRetrograde(on: now),
-            timezoneID: TimeZone.current.identifier,
+            moonPhaseName: getMoonPhase(for: today),
+            season: getCurrentSeason(for: today),
+            isMercuryRetrograde: MercuryRetrograde.isRetrograde(on: today),
+            timezoneID: tz,
             temperatureHighC: service.forecastHighC,
             temperatureLowC: service.forecastLowC,
-            humidityPct: service.forecastHumidity
-        )
+            humidityPct: service.forecastHumidity,
+            airQualityAQI: nil)
         do {
-            _ = try await IngestPipeline(database: database)
-                .ingest(EnvironmentalEventFactory.events(for: reading))
-            UserDefaults.standard.set(today, forKey: lastEmitDayKey)
+            _ = try await pipeline.ingest(EnvironmentalEventFactory.events(for: todayReading))
         } catch {
-            Logger.info("Environmental emit failed; will retry on next foreground", category: .data)
+            Logger.info("Environmental today-emit failed; will retry on next foreground", category: .data)
+        }
+
+        // BACKFILL — observed AQI for each completed local day, from a contiguous
+        // watermark up to yesterday, via ONE range request (retry-throttled).
+        let watermark: Date? = store.date(for: lastAQIDayKey)   // nil when unset
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: now()))!
+        let capFloor = calendar.date(byAdding: .day, value: -(maxBackfillDays - 1), to: yesterday)!
+        let start: Date = watermark.map { max(calendar.date(byAdding: .day, value: 1, to: $0)!, capFloor) } ?? capFloor
+        guard start <= yesterday else { return }
+        // Throttle: while the tail day is a recent gap or the range keeps failing,
+        // `start` stays ≤ yesterday, so without this a rapid foreground would
+        // re-download the 30-day range every time (independent of the
+        // pressure/forecast cooldown). Own interval, own attempt watermark.
+        if let last = store.date(for: lastAQIAttemptKey), now().timeIntervalSince(last) < minAQIRetryInterval { return }
+        store.set(now(), for: lastAQIAttemptKey)
+        guard case .days(let byDay) = await service.fetchCompletedAirQualityRange(from: start, through: yesterday)
+        else { return }   // .fetchError → watermark unchanged, retry after the throttle interval
+
+        // "recent" = the last `gracePartialDays` completed days (provider-lag grace).
+        // With gracePartialDays = 2 and yesterday = 2025-06-10: graceCutoff =
+        // 2025-06-08, so recent = {2025-06-09, 2025-06-10} and 2025-06-08 (and
+        // older) are "old".
+        let graceCutoff = calendar.date(byAdding: .day, value: -gracePartialDays, to: yesterday)!
+        var newWatermark: Date? = watermark, contiguous = true
+        var aqiEvents: [HealthEvent] = []
+        // Reading dated D's local noon with ONLY airQualityAQI set → the factory
+        // stamps `.observedCompletedDay`, timestamps + groups under day D.
+        func emitObservedAQI(_ aqi: Int, on day: Date) {
+            let noon = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: day)!
+            let reading = EnvironmentalReading(
+                date: noon, pressureHPa: nil, previousPressureHPa: nil,
+                moonPhaseName: nil, season: nil, isMercuryRetrograde: false,
+                timezoneID: tz, airQualityAQI: aqi)
+            aqiEvents.append(contentsOf: EnvironmentalEventFactory.events(for: reading))
+        }
+        var D = start
+        while D <= yesterday {
+            switch byDay[calendar.startOfDay(for: D)] ?? .absent {
+            case .value(let aqi):
+                emitObservedAQI(aqi, on: D)                 // value days beyond a recent gap still emit (dedup-idempotent)
+                if contiguous { newWatermark = D }
+            case .absent:
+                if D > graceCutoff { contiguous = false }   // recent → provider lag; retry, don't advance past
+                else if contiguous { newWatermark = D }     // old gap → resolved-absent; advance so it can't block forever
+            }
+            D = calendar.date(byAdding: .day, value: 1, to: D)!
+        }
+        // Advance the watermark only once the emitted days are actually persisted;
+        // a failed ingest holds it for retry (same as `.fetchError`).
+        do {
+            if !aqiEvents.isEmpty {
+                _ = try await pipeline.ingest(aqiEvents)
+            }
+            if let nw = newWatermark { store.set(nw, for: lastAQIDayKey) }
+        } catch {
+            Logger.info("Environmental AQI backfill ingest failed; watermark held for retry", category: .data)
         }
     }
 
@@ -61,14 +185,5 @@ enum EnvironmentalEventEmitter {
             events.append(contentsOf: EnvironmentalEventFactory.events(for: reading))
         }
         return try await pipeline.ingest(events)
-    }
-}
-
-extension ISO8601DateFormatter {
-    static func hgDayString(from date: Date) -> String {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withFullDate]
-        f.timeZone = .current
-        return f.string(from: date)
     }
 }

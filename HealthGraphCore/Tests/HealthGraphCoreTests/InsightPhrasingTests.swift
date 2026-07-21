@@ -56,6 +56,7 @@ struct InsightPhrasingTests {
         #expect(InsightPhrasing.derivedExposureLabel(fromCategory: "coldDay") == "Cold days")
         #expect(InsightPhrasing.derivedExposureLabel(fromCategory: "humidDay") == "Humid days")
         #expect(InsightPhrasing.derivedExposureLabel(fromCategory: "swingDay") == "Big temperature swings")
+        #expect(InsightPhrasing.derivedExposureLabel(fromCategory: "poorAirDay") == "Poor air quality")
     }
     @Test func noCausalLanguage() {
         let forbidden = ["cause", "causes", "triggers ", "makes you", "guarantee"]
