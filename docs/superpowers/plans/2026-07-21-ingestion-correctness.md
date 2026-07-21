@@ -17,7 +17,7 @@ Design: `docs/superpowers/specs/2026-07-21-ingestion-correctness-design.md`. Bui
 - **Provenance is in metadata**, key `"provenance"`, alongside existing keys (`low`/`phase`/`season`). Accessor `HealthEvent.temporalProvenance` decodes it; **absent/unknown → nil** (fail-closed). No GRDB schema change.
 - **Provenance is in the daily dedup identity:** `"environment|{subtype}|{provenance}|day|{minute}"`.
 - **AQI is retrospective (completed local-day mean):** for each completed local calendar day, the mean PM2.5 over that day's `/air_pollution/history` slots → EPA AQI (2024 table), event **timestamped to D's local NOON**. On DST-transition days the window is correctly **23 or 25 hours, not literally 24**. The backfill window is **`[yesterday − (maxBackfillDays − 1), yesterday]` (= 30 days inclusive)**, fetched in **ONE `/air_pollution/history` request** (`start`/`end` span the whole window) whose hourly slots are grouped into local days — NOT 30 sequential calls.
-- **Watermark advances contiguously.** `lastAQIDay` (defaults to **`.distantPast`** unset) advances only through consecutive *resolved* days from the bottom; it STOPS at the first unresolved day so gaps are retried, never skipped. Resolution per day: `.value` → emit + resolved; **old** partial/absent (older than `gracePartialDays = 2` before yesterday) → resolved-absent (advance, don't block forever); **recent** partial/absent (within `gracePartialDays` of yesterday — likely provider lag) → UNRESOLVED (retry next foreground). A whole-range network/decode failure advances nothing (retry). Day stepping uses `calendar.date(byAdding: .day, …)`, NOT `+86_400`. `minAirQualityHours = 20`.
+- **Watermark advances contiguously.** `lastAQIDay` is a `Date?` (**`nil` when unset → the backfill starts directly at `capFloor`**, no `.distantPast` arithmetic). It advances only through consecutive *resolved* days from the bottom; it STOPS at the first unresolved day so gaps are retried, never skipped. Resolution per day: `.value` → emit + resolved; **old** partial/absent (older than `gracePartialDays = 2` before yesterday) → resolved-absent (advance, don't block forever); **recent** partial/absent (within `gracePartialDays` of yesterday — likely provider lag) → UNRESOLVED (retry next foreground). A whole-range network/decode failure advances nothing (retry). Day stepping uses `calendar.date(byAdding: .day, …)`, NOT `+86_400`. `minAirQualityHours = 20`.
 - **Dedup-key upgrade migration:** adding provenance to the env dedup-key format would orphan existing rows (duplicate pressure/moon/season/temp/humidity on upgrade). Task 2 adds a **GRDB migration** that rewrites existing `category='environment'` events' metadata (`provenance`) + dedupKey to the new format, classified conservatively by subtype: temperature/humidity → `forecast`; pressure/pressureDrop → `currentSnapshot`; moonPhase/season/mercuryRetrograde → `observedCompletedDay`; **legacy airQuality → `forecast` (NEVER observed — it came from the forward-looking next-24h impl)**. So "Reset first" is only for extra safety on the simulator, not required for real data.
 - **Forecast AQI is KEPT, not removed:** `fetchAirQuality()`/`meanPM25`/`forecastAQI` (from the air-quality round) stay — the forecast AQI remains fetched and *available* for the future warnings round (spec §5) and is asserted by the orchestration test — but the emitter does NOT emit it as a mined event (mined AQI comes only from history). This round changes what the emitter *emits*, not what the service *fetches*.
 - **Tasks 2–8 must land together (do not merge mid-sequence).** Between Task 2 (factory stamps `airQuality → .observedCompletedDay`) and Task 8 (emitter stops threading `forecastAQI`), the old emitter would briefly feed forecast AQI into an `.observedCompletedDay`-stamped event — branch-internal only, no test asserts it, corrected by Task 8, and the whole-branch review re-runs before any merge.
@@ -135,7 +135,10 @@ extension HealthEvent {
 
   Then pass provenance at each call: `pressure`/`pressureDrop` → `.currentSnapshot`; `moonPhase`/`mercuryRetrograde`/`season` → `.observedCompletedDay`; `temperature`/`humidity` → `.forecast`; `airQuality` → `.observedCompletedDay`. (Provenance is intrinsic to each signal's real source; document it.)
 
-- [ ] **Step 4b: Upgrade migration (write its test first).** Test: seed a DB (via the existing test store) with legacy `.environment` events (no provenance, OLD dedup-key format) for each subtype, run the migrator, and assert each row now has the conservative provenance in metadata AND a new-format dedupKey — temperature/humidity → `forecast`, pressure/pressureDrop → `currentSnapshot`, moonPhase/season/mercuryRetrograde → `observedCompletedDay`, **legacy airQuality → `forecast`** (assert `temporalProvenance != .observedCompletedDay`, so a legacy forecast-derived AQI is NOT mined by the fail-closed gate). Then register a new migration (idempotent, additive; do NOT edit an already-shipped migration) that, for each non-deleted `category='environment'` row, decodes metadata, sets `metadata["provenance"]` by the subtype table above, and recomputes `dedupKey = DedupKey.daily(.environment, subtype, dayStart:, provenance:)` using the row's own `dayStart` (derive from `timestamp` in the row's `timezoneID`). Unknown subtypes → leave unclassified (nil provenance) rather than guess.
+- [ ] **Step 4b: Upgrade migration (write its tests first).**
+  - **Classification test:** seed legacy `.environment` events (no provenance, OLD key) for each subtype, run the migrator, assert each row now has the conservative provenance + a new-format dedupKey — temperature/humidity → `forecast`, pressure/pressureDrop → `currentSnapshot`, moonPhase/season/mercuryRetrograde → `observedCompletedDay`, **legacy airQuality → `forecast`** (assert `temporalProvenance != .observedCompletedDay`, so a legacy forecast-derived AQI is NOT mined by the fail-closed gate).
+  - **Tombstone (never-resurrect) test — REQUIRED:** seed a **soft-deleted** (`deletedAt != nil`) legacy env event; run the migration; then `IngestPipeline.ingest(...)` the equivalent NEW-format event and assert it is **skipped and stays hidden** (no new live row). This is why the migration MUST rewrite soft-deleted rows too: `IngestPipeline` blocks resurrection by matching an incoming event's dedupKey against soft-deleted rows — if a tombstone kept its legacy key, the new provenance-scoped emission wouldn't match and the user's delete would be resurrected.
+  - Then register a new migration (idempotent, additive; do NOT edit an already-shipped migration) that rewrites **every** `category='environment'` row — **including soft-deleted ones, preserving `deletedAt`** (do NOT filter on `deletedAt IS NULL`): decode metadata, set `metadata["provenance"]` by the subtype table above, and recompute `dedupKey = DedupKey.daily(.environment, subtype, dayStart:, provenance:)` using the row's own `dayStart` (derive from `timestamp` in the row's `timezoneID`). Unknown subtypes → leave unclassified (nil provenance) rather than guess.
 
 - [ ] **Step 5: Run + commit** (`feat(core): stamp temporal provenance on env events + provenance-scoped dedup + upgrade migration`).
 
@@ -295,8 +298,7 @@ public protocol LocationProviding { var coordinate: CLLocationCoordinate2D? { ge
 - [ ] **Step 1: Write the failing tests first** (inject clock + calendar + an in-memory `WatermarkStore` + a stub `EnvironmentalDataProviding` whose `fetchCompletedAirQualityRange` returns a scripted `AQIRangeResult` and whose published readings are canned):
   - **Whole-range `.fetchError` → no advance / no lock:** watermark unchanged, no `airQuality` emitted, a later foreground retries.
   - **Contiguous watermark stops at a gap (the #1-intent test):** a range mapping `[D1 → .value, D2 → recent-absent, D3 → .value]` → D1 and D3 both emit, but the watermark advances only to **D1** (NOT past the D2 gap); the next foreground re-requests from D2. (A `break`-out-of-switch or a skip-the-gap bug would wrongly leave the watermark at D3.)
-  - **Old absent advances (no permanent block):** an absent day OLDER than `gracePartialDays` before yesterday → watermark advances past it, no event.
-  - **Recent absent retried:** yesterday `.absent` (provider lag) → watermark does NOT advance to yesterday; next foreground retries.
+  - **Grace boundary pinned with named dates** (clock → yesterday = 2025-06-10, `gracePartialDays = 2` → recent = {2025-06-09, 2025-06-10}, graceCutoff = 2025-06-08): an absent **2025-06-07** (old) → watermark advances past it, no event; an absent **2025-06-09** (recent) → watermark does NOT advance past it, retried next foreground; an absent **2025-06-08** (== cutoff) is treated as OLD (advances) — pins `>` vs `>=`.
   - **Today has no observed AQI:** a foreground emits today's `temperature`/`humidity` (`.forecast`) + pressure, but **no `airQuality` event dated today**.
   - **Backfill cap + single request:** unset watermark (`.distantPast`) → exactly ONE `fetchCompletedAirQualityRange` call spanning `[yesterday−29, yesterday]`; emitted events dated to each day's local noon.
   - **DST-safe stepping:** America/Los_Angeles calendar + a clock straddling a DST transition → the emitted AQI days are the correct distinct local days (no skip/repeat).
@@ -312,14 +314,18 @@ public protocol LocationProviding { var coordinate: CLLocationCoordinate2D? { ge
   - **Backfill (single request, contiguous watermark — NO in-loop `break`):**
 
 ```swift
+    let watermark: Date? = store.date(for: lastAQIDayKey)   // nil when unset
     let yesterday = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: now()))!
     let capFloor = calendar.date(byAdding: .day, value: -(maxBackfillDays - 1), to: yesterday)!
-    let start = max(calendar.date(byAdding: .day, value: 1, to: watermark)!, capFloor)
+    let start: Date = watermark.map { max(calendar.date(byAdding: .day, value: 1, to: $0)!, capFloor) } ?? capFloor
     guard start <= yesterday else { return }
     guard case .days(let byDay) = await service.fetchCompletedAirQualityRange(from: start, through: yesterday)
     else { return }   // .fetchError → watermark unchanged, retry next foreground
-    let graceCutoff = calendar.date(byAdding: .day, value: -gracePartialDays, to: yesterday)!  // days > cutoff are "recent"
-    var newWatermark = watermark, contiguous = true
+    // "recent" = the last `gracePartialDays` completed days (provider-lag grace). With
+    // gracePartialDays = 2 and yesterday = 2025-06-10: graceCutoff = 2025-06-08, so
+    // recent = {2025-06-09, 2025-06-10} and 2025-06-08 (and older) are "old".
+    let graceCutoff = calendar.date(byAdding: .day, value: -gracePartialDays, to: yesterday)!
+    var newWatermark: Date? = watermark, contiguous = true
     var D = start
     while D <= yesterday {
         switch byDay[calendar.startOfDay(for: D)] ?? .absent {
@@ -327,12 +333,12 @@ public protocol LocationProviding { var coordinate: CLLocationCoordinate2D? { ge
             emitObservedAQI(aqi, on: D)                 // reading dated D's local noon → .observedCompletedDay
             if contiguous { newWatermark = D }
         case .absent:
-            if D > graceCutoff { contiguous = false }   // recent → provider lag; leave for retry, don't advance past
+            if D > graceCutoff { contiguous = false }   // recent → provider lag; retry, don't advance past
             else if contiguous { newWatermark = D }     // old gap → resolved-absent; advance so it can't block forever
         }
         D = calendar.date(byAdding: .day, value: 1, to: D)!
     }
-    store.set(newWatermark, for: lastAQIDayKey)
+    if let nw = newWatermark { store.set(nw, for: lastAQIDayKey) }
 ```
 
   - `emitObservedAQI(_:on:)` builds a reading with `date = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: D)!` (local noon) and only `airQualityAQI` set → the factory stamps `.observedCompletedDay`, timestamps + groups under day D. Value days beyond a recent gap still emit (dedup-idempotent); only the watermark holds at the gap.
