@@ -3,6 +3,7 @@ import HealthGraphCore
 
 struct TimelineEventRow: View {
     let event: HealthEvent
+    let weightUnit: WeightUnit
     let onTap: (HealthEvent) -> Void
 
     @AppStorage("hg.temperatureUnit") private var rawTempUnit = ""
@@ -16,7 +17,9 @@ struct TimelineEventRow: View {
     }
 
     private var displayValueLine: String? {
-        WeatherValueFormatter.line(for: event, unit: TemperatureUnit.resolved(from: rawTempUnit)) ?? EventDisplay.valueLine(for: event)
+        BodyMetricValueFormatter.line(for: event, unit: weightUnit)
+            ?? WeatherValueFormatter.line(for: event, unit: TemperatureUnit.resolved(from: rawTempUnit))
+            ?? EventDisplay.valueLine(for: event)
     }
 
     var body: some View {

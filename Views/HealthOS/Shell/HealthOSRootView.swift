@@ -57,6 +57,7 @@ struct HealthOSRootView: View {
         .environmentObject(CaptureCoordinator())
         .environmentObject(RedFlagPresenter(muteStore: RedFlagMuteStore()))
         .environmentObject(RedFlagMuteStore())
+        .modelContainer(for: UserProfile.self, inMemory: true)
 }
 
 #Preview("Shell — dark") {
@@ -64,5 +65,6 @@ struct HealthOSRootView: View {
         .environmentObject(CaptureCoordinator())
         .environmentObject(RedFlagPresenter(muteStore: RedFlagMuteStore()))
         .environmentObject(RedFlagMuteStore())
+        .modelContainer(for: UserProfile.self, inMemory: true)
         .preferredColorScheme(.dark)
 }

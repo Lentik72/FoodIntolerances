@@ -1,9 +1,14 @@
 import SwiftUI
+import SwiftData
 import HealthGraphCore
 
 struct TimelineView: View {
     @StateObject private var viewModel = TimelineViewModel(
         store: GRDBEventStore(database: HealthGraphProvider.shared))
+    @Query private var userProfiles: [UserProfile]
+    private var weightUnit: WeightUnit {
+        WeightUnit.resolved(preference: userProfiles.first?.unitPreference)
+    }
     @State private var searchDebounce: Task<Void, Never>?
     @State private var path = NavigationPath()
     @State private var expandedSessions: Set<String> = []
@@ -116,7 +121,7 @@ struct TimelineView: View {
                     ForEach(day.items) { item in
                         switch item {
                         case .event(let event):
-                            TimelineEventRow(event: event) { tapped in
+                            TimelineEventRow(event: event, weightUnit: weightUnit) { tapped in
                                 path.append(tapped)
                             }
                             .padding(.leading, 16)
@@ -234,7 +239,7 @@ struct TimelineView: View {
             Section {
                 ForEach(day.items) { item in
                     if case .event(let e) = item {
-                        TimelineEventRow(event: e) { _ in }
+                        TimelineEventRow(event: e, weightUnit: .kilograms) { _ in }
                             .padding(.leading, 16)
                             .listRowInsets(EdgeInsets())
                             .listRowSeparator(.hidden)
