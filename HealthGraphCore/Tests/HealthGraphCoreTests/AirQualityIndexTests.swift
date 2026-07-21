@@ -4,16 +4,24 @@ import Testing
 struct AirQualityIndexTests {
     @Test func epaAQIAtCategoryBoundaries() {
         #expect(AirQualityIndex.epaAQI(pm25: 0) == 0)
-        #expect(AirQualityIndex.epaAQI(pm25: 12.0) == 50)
-        #expect(AirQualityIndex.epaAQI(pm25: 12.1) == 51)
+        #expect(AirQualityIndex.epaAQI(pm25: 9.0) == 50)
+        #expect(AirQualityIndex.epaAQI(pm25: 9.1) == 51)
+        #expect(AirQualityIndex.epaAQI(pm25: 12.0) == 56)
+        #expect(AirQualityIndex.epaAQI(pm25: 12.1) == 57)
         #expect(AirQualityIndex.epaAQI(pm25: 35.4) == 100)
         #expect(AirQualityIndex.epaAQI(pm25: 35.5) == 101)   // the poorAirDay boundary
         #expect(AirQualityIndex.epaAQI(pm25: 55.4) == 150)
         #expect(AirQualityIndex.epaAQI(pm25: 55.5) == 151)
+        #expect(AirQualityIndex.epaAQI(pm25: 125.4) == 200)
+        #expect(AirQualityIndex.epaAQI(pm25: 125.5) == 201)
+        #expect(AirQualityIndex.epaAQI(pm25: 225.4) == 300)
+        #expect(AirQualityIndex.epaAQI(pm25: 225.5) == 301)
+        #expect(AirQualityIndex.epaAQI(pm25: 325.4) == 500)  // top of the last defined bin
+        #expect(AirQualityIndex.epaAQI(pm25: 325.5) == 500)  // clamp begins just above it
         #expect(AirQualityIndex.epaAQI(pm25: 9999) == 500)   // clamps above the top breakpoint
     }
     @Test func epaAQIInterpolatesWithinABin() {
-        #expect(AirQualityIndex.epaAQI(pm25: 6.0) == 25)     // midpoint of Good bin (0–12→0–50)
+        #expect(AirQualityIndex.epaAQI(pm25: 6.0) == 33)     // interior of Good bin (0–9→0–50): (50/9)*6 → 33.3 → 33
         #expect(AirQualityIndex.epaAQI(pm25: 45.0) == 124)   // interior of 35.5–55.4 bin: (49/19.9)*9.5+101 → 124
     }
     @Test func epaAQITruncatesConcentrationToTenth() {

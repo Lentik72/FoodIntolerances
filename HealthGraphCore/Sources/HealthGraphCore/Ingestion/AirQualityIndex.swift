@@ -7,9 +7,8 @@ public enum AirQualityIndex {
 
     /// EPA 24-hr PM2.5 breakpoints (µg/m³ → AQI), piecewise-linear.
     private static let breakpoints: [(cLo: Double, cHi: Double, iLo: Int, iHi: Int)] = [
-        (0.0, 12.0, 0, 50), (12.1, 35.4, 51, 100), (35.5, 55.4, 101, 150),
-        (55.5, 150.4, 151, 200), (150.5, 250.4, 201, 300),
-        (250.5, 350.4, 301, 400), (350.5, 500.4, 401, 500),
+        (0.0, 9.0, 0, 50), (9.1, 35.4, 51, 100), (35.5, 55.4, 101, 150),
+        (55.5, 125.4, 151, 200), (125.5, 225.4, 201, 300), (225.5, 325.4, 301, 500),
     ]
 
     /// EPA AQI for a PM2.5 concentration (µg/m³). Concentration truncated to 0.1 per
