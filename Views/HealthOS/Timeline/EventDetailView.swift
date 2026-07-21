@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import HealthGraphCore
 
 struct EventDetailView: View {
@@ -8,6 +9,10 @@ struct EventDetailView: View {
     @State private var deleteFailed = false
     @State private var editing = false
     @AppStorage("hg.temperatureUnit") private var rawTempUnit = ""
+    @Query private var userProfiles: [UserProfile]
+    private var weightUnit: WeightUnit {
+        WeightUnit.resolved(preference: userProfiles.first?.unitPreference)
+    }
 
     /// Re-resolves the event by id from the (already `@ObservedObject`) viewModel's
     /// refreshed timeline so the screen reflects a just-saved edit live, falling
@@ -70,7 +75,7 @@ struct EventDetailView: View {
                     Text(style.family.label)
                         .font(.footnote)
                         .foregroundStyle(HealthTheme.inkSecondary)
-                    if let line = WeatherValueFormatter.line(for: displayEvent, unit: TemperatureUnit.resolved(from: rawTempUnit)) ?? EventDisplay.valueLine(for: displayEvent) {
+                    if let line = BodyMetricValueFormatter.line(for: displayEvent, unit: weightUnit) ?? WeatherValueFormatter.line(for: displayEvent, unit: TemperatureUnit.resolved(from: rawTempUnit)) ?? EventDisplay.valueLine(for: displayEvent) {
                         Text("·").foregroundStyle(HealthTheme.inkMuted)
                         Text(line)
                             .font(.footnote)
