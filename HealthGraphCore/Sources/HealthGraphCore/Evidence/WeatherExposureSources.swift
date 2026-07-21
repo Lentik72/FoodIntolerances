@@ -24,7 +24,8 @@ public struct TemperatureExposureSource: ExposureSource {
         // Combined daily events only: value = high, metadata["low"] = low. Old single-value
         // snapshots (no "low") are skipped — clean migration, no data change.
         let days: [DayTemp] = events.compactMap { e in
-            guard e.category == .environment, e.subtype == "temperature", let high = e.value,
+            guard e.category == .environment, e.subtype == "temperature", e.temporalProvenance == .observedCompletedDay,
+                  let high = e.value,
                   let data = e.metadata,
                   let meta = try? JSONDecoder().decode([String: String].self, from: data),
                   let low = meta["low"].flatMap({ Double($0) }) else { return nil }
@@ -61,7 +62,7 @@ public struct HumidityExposureSource: ExposureSource {
     let config: EvidenceConfig
     public init(config: EvidenceConfig) { self.config = config }
     public func occurrences(from events: [HealthEvent]) -> [ExposureOccurrence] {
-        let hums = events.filter { $0.category == .environment && $0.subtype == "humidity" && $0.value != nil }
+        let hums = events.filter { $0.category == .environment && $0.subtype == "humidity" && $0.temporalProvenance == .observedCompletedDay && $0.value != nil }
         guard hums.count >= config.minWeatherReadings else { return [] }
         let sorted = hums.compactMap(\.value).sorted()
         let hi = Percentile.value(sorted, config.weatherHighPercentile)

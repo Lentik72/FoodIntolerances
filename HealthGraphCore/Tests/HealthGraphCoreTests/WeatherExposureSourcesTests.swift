@@ -6,11 +6,12 @@ struct WeatherExposureSourcesTests {
     private func tempDay(high: Double, low: Double, _ i: Int) -> HealthEvent {
         HealthEvent(timestamp: Date(timeIntervalSince1970: Double(i) * 86_400), timezoneID: "UTC",
                     category: .environment, subtype: "temperature", value: high, unit: "°C",
-                    source: .weatherAPI, metadata: try? JSONEncoder().encode(["low": String(low)]))
+                    source: .weatherAPI, metadata: try? JSONEncoder().encode(["low": String(low), "provenance": "observedCompletedDay"]))
     }
     private func humid(_ v: Double, _ i: Int) -> HealthEvent {
         HealthEvent(timestamp: Date(timeIntervalSince1970: Double(i) * 86_400), timezoneID: "UTC",
-                    category: .environment, subtype: "humidity", value: v, unit: "%", source: .weatherAPI)
+                    category: .environment, subtype: "humidity", value: v, unit: "%", source: .weatherAPI,
+                    metadata: try? JSONEncoder().encode(["provenance": "observedCompletedDay"]))
     }
     // Values 1…20 in SHUFFLED input order — the source must sort internally (a dropped
     // `.sorted()` would pass a pre-sorted fixture but fail this one).
@@ -95,5 +96,37 @@ struct WeatherExposureSourcesTests {
             .allSatisfy { $0.key == .derived(.hotDay) || $0.key == .derived(.coldDay) || $0.key == .derived(.swingDay) })
         #expect(HumidityExposureSource(config: .default).occurrences(from: events)
             .allSatisfy { $0.key == .derived(.humidDay) })
+    }
+    // Self-contained: observed → occurrences; forecast → none; NO-flag (legacy) → none.
+    @Test func temperatureMinedOnlyWhenObserved() {
+        func tempDay(_ high: Double, _ low: Double, _ i: Int, _ provenance: String?) -> HealthEvent {
+            var meta = ["low": String(low)]; if let p = provenance { meta["provenance"] = p }
+            return HealthEvent(timestamp: Date(timeIntervalSince1970: Double(i) * 86_400), timezoneID: "UTC",
+                               category: .environment, subtype: "temperature", value: high, unit: "°C",
+                               source: .weatherAPI, metadata: try? JSONEncoder().encode(meta))
+        }
+        func run(_ p: String?) -> [ExposureOccurrence] {
+            TemperatureExposureSource(config: .default)
+                .occurrences(from: shuffled20.enumerated().map { tempDay($0.element, $0.element - 10, $0.offset, p) })
+        }
+        #expect(run("observedCompletedDay").contains { $0.key == .derived(.hotDay) })   // gate isn't just `return []`
+        #expect(run("forecast").isEmpty)                                                 // forecast never mined
+        #expect(run(nil).isEmpty)                                                        // fail-closed: no flag → not mined
+    }
+    // Self-contained: observed → occurrences; forecast → none; NO-flag (legacy) → none.
+    @Test func humidityMinedOnlyWhenObserved() {
+        func humidDay(_ v: Double, _ i: Int, _ provenance: String?) -> HealthEvent {
+            var meta: [String: String] = [:]; if let p = provenance { meta["provenance"] = p }
+            return HealthEvent(timestamp: Date(timeIntervalSince1970: Double(i) * 86_400), timezoneID: "UTC",
+                               category: .environment, subtype: "humidity", value: v, unit: "%",
+                               source: .weatherAPI, metadata: try? JSONEncoder().encode(meta))
+        }
+        func run(_ p: String?) -> [ExposureOccurrence] {
+            HumidityExposureSource(config: .default)
+                .occurrences(from: shuffled20.enumerated().map { humidDay($0.element, $0.offset, p) })
+        }
+        #expect(run("observedCompletedDay").contains { $0.key == .derived(.humidDay) })   // gate isn't just `return []`
+        #expect(run("forecast").isEmpty)                                                   // forecast never mined
+        #expect(run(nil).isEmpty)                                                          // fail-closed: no flag → not mined
     }
 }
