@@ -140,6 +140,7 @@ struct OnboardingContainerView: View {
         // Save
         do {
             try modelContext.save()
+            rawUnitSystem = profile.unitPreference   // publish to the global ONLY after the profile save succeeds
             Logger.info("Onboarding completed successfully", category: .app)
 
             // Build initial AI memories from existing logs
