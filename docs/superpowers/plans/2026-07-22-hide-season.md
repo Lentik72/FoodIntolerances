@@ -4,7 +4,7 @@
 
 **Goal:** Stop emitting the `season` environment event and hide already-stored season rows from every display surface (Environment summary row, search, detail sheet), per `docs/superpowers/specs/2026-07-22-hide-season-design.md`.
 
-**Architecture:** A core retired-subtype policy — `EnvironmentDaySummaryBuilder.retiredSubtypes = ["season"]` — filters stored season rows out of the browse summary (the only browse surface for env events) and, referenced from `TimelineViewModel`, out of search results (the only path to raw env rows and the detail sheet). Emission stops at the source: the `season` field is deleted from `EnvironmentalReading`, the factory's season block (and its inaccurate comment) goes with it, and the now-dead `SeasonService.swift` is removed.
+**Architecture:** A core retired-subtype policy — `EnvironmentDaySummaryBuilder.retiredSubtypes = ["season"]` — enforced entirely in core: the summary builder filters its own input (it is a public direct entry point), and `TimelineDayBuilder.days` filters raw events for EVERY caller and mode (browse summaries AND `groupEnvironment: false` raw/search rows), so no app-layer caller can leak a retired row. `TimelineViewModel` carries no season-specific code. Emission stops at the source: the `season` field is deleted from `EnvironmentalReading`, the factory's season block (and its inaccurate comment) goes with it, and the now-dead `SeasonService.swift` is removed.
 
 **Tech Stack:** Swift / SwiftUI app + HealthGraphCore local SwiftPM package (GRDB). Swift Testing (`@Test`/`#expect`) in both suites.
 
@@ -13,7 +13,7 @@
 - **No migration, no data deletion.** Stored season rows (including tombstones) stay in the DB untouched; the frozen v6 migration (`EnvProvenanceMigrationTests` legacy-season seeding) is NOT modified.
 - **Legacy seasonal path untouched:** `LogEntry.season`, `LogItemViewModel.determineSeason`, the "Seasonal Changes" category, `UserMemoryService` season patterns, `PersonalAIAssistant` season memories all keep working. Only `SeasonService.swift` (sole consumer: the env emitter) is deleted.
 - **`EventDisplay`'s `"season"` title/value mappings are KEPT** (debug view renders raw events; old rows must render sanely).
-- **Single source of truth:** the only place the string `"season"` appears as a hiding rule is `EnvironmentDaySummaryBuilder.retiredSubtypes`; the app search filter references that constant.
+- **Single source of truth:** the only place the string `"season"` appears as a hiding rule is `EnvironmentDaySummaryBuilder.retiredSubtypes`; `TimelineDayBuilder` references that constant. **No app-layer (TimelineViewModel) season filter.**
 - App tests MUST run with `-parallel-testing-enabled NO` (known `SwiftDataMigratorTests` teardown crash under parallel testing). Destination: `platform=iOS Simulator,name=iPhone 17 Pro`.
 - Core tests: `cd /Users/leo/dev/FoodIntolerances/HealthGraphCore && swift test`.
 - Commits: conventional-commit style, trailer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
@@ -356,23 +356,86 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 3: Search filter in TimelineViewModel (+ full verification)
+### Task 3: Raw-row retired filter in TimelineDayBuilder (+ VM integration test, full verification)
 
-Search is the only surface showing raw environment rows (`groupEnvironment: false`), and the detail sheet is only reachable from a search row — one filter closes both. It references the core constant so the rule cannot drift from the builder's.
+Filtering in `TimelineViewModel` would make visibility policy dependent on one caller — `TimelineDayBuilder.days(..., groupEnvironment: false)` would still surface retired season events to any current or future raw-row caller. So the filter lives in `TimelineDayBuilder.days` itself, feeding sessions, summaries, and `rowEvents` from one filtered slice. The summary builder KEEPS its own filter (Task 1) because `EnvironmentDaySummaryBuilder.summaries` is also a public direct entry point. **`TimelineViewModel` gets NO season-specific code** — its search test is an integration check that the core filter reaches the search surface (search flows through `runSearch()` → `TimelineDayBuilder.days(..., groupEnvironment: false)`; note the store fetch + category/source filters live in the private `runSearch()`, which `searchTextChanged()` delegates to).
 
 **Files:**
-- Modify: `Views/HealthOS/Timeline/TimelineViewModel.swift:224-229`
-- Test: `Food IntolerancesTests/TimelineViewModelTests.swift`
+- Modify: `HealthGraphCore/Sources/HealthGraphCore/Timeline/TimelineDayBuilder.swift:74-90`
+- Test: `HealthGraphCore/Tests/HealthGraphCoreTests/TimelineDayBuilderTests.swift`
+- Test: `Food IntolerancesTests/TimelineViewModelTests.swift` (integration only — no `TimelineViewModel` source change)
 
 **Interfaces:**
-- Consumes: `EnvironmentDaySummaryBuilder.retiredSubtypes` (Task 1).
-- Produces: nothing new — behavior only.
+- Consumes: `EnvironmentDaySummaryBuilder.retiredSubtypes` (Task 1; same module).
+- Produces: nothing new — behavior only. `TimelineDayBuilder.days` signature unchanged.
 
-- [ ] **Step 1: Write the failing VM test**
+- [ ] **Step 1: Write the failing core test**
 
-In `Food IntolerancesTests/TimelineViewModelTests.swift`, add after `searchModeGroupsMatchesAndClearingReturnsToBrowse`:
+In `HealthGraphCore/Tests/HealthGraphCoreTests/TimelineDayBuilderTests.swift`, add after `searchLeavesEnvironmentRaw` (same local-`env` idiom):
 
 ```swift
+    /// Retired env subtypes are invisible in RAW mode too — the filter lives in
+    /// days(), not in any one caller (search or otherwise).
+    @Test func rawModeFiltersRetiredEnvironmentSubtypes() {
+        let tz = TimeZone(identifier: "UTC")!
+        func env(_ s: String, value: Double? = nil) -> HealthEvent { HealthEvent(timestamp: Date(timeIntervalSince1970: 43_200),
+            timezoneID: "UTC", category: .environment, subtype: s, value: value, source: .weatherAPI) }
+        let days = TimelineDayBuilder.days(from: [env("season"), env("airQuality", value: 42)], timeZone: tz,
+                                           sessionizeSleep: false, groupEnvironment: false)
+        #expect(days.flatMap(\.events).map(\.subtype) == ["airQuality"])   // season removed, airQuality remains
+        // A retired-only slice yields no day at all, not an empty day.
+        #expect(TimelineDayBuilder.days(from: [env("season")], timeZone: tz,
+                                        sessionizeSleep: false, groupEnvironment: false).isEmpty)
+    }
+```
+
+- [ ] **Step 2: Run the core tests to verify the new one fails**
+
+Run: `cd /Users/leo/dev/FoodIntolerances/HealthGraphCore && swift test --filter TimelineDayBuilderTests 2>&1 | tail -10`
+Expected: FAIL — `rawModeFiltersRetiredEnvironmentSubtypes`: raw mode currently passes the season row straight through to `rowEvents`. All pre-existing builder tests PASS.
+
+- [ ] **Step 3: Implement the raw-event filter in days()**
+
+In `HealthGraphCore/Sources/HealthGraphCore/Timeline/TimelineDayBuilder.swift`, at the top of `days(from:timeZone:sessionizeSleep:groupEnvironment:)` (after the calendar setup, before the sleep-session block), add:
+
+```swift
+        // Stored rows of retired env subtypes (season) must never display, in ANY
+        // mode — raw/search rows included. Filtered here so no caller can leak
+        // them; the summary builder re-filters for its own public callers.
+        let visibleEvents = events.filter {
+            !($0.category == .environment &&
+              EnvironmentDaySummaryBuilder.retiredSubtypes.contains($0.subtype ?? ""))
+        }
+```
+
+Then use `visibleEvents` consistently in the three places that read `events`:
+
+```swift
+        let sessions = sessionizeSleep
+            ? SleepSessionBuilder.sessions(from: visibleEvents.filter(isSessionizable), timeZone: timeZone)
+```
+
+```swift
+        let summaries = groupEnvironment
+            ? EnvironmentDaySummaryBuilder.summaries(from: visibleEvents, timeZone: timeZone)
+            : []
+        var rowEvents = sessionizeSleep ? visibleEvents.filter { !isSessionizable($0) } : visibleEvents
+```
+
+(The `.filter { $0.end.timeIntervalSince($0.start) >= 60 }` line under `sessions` and everything below `rowEvents` are unchanged.)
+
+- [ ] **Step 4: Run the core tests to verify they pass**
+
+Run: `cd /Users/leo/dev/FoodIntolerances/HealthGraphCore && swift test 2>&1 | tail -5`
+Expected: PASS (full core suite).
+
+- [ ] **Step 5: Add the VM search integration test**
+
+In `Food IntolerancesTests/TimelineViewModelTests.swift`, add after `searchModeGroupsMatchesAndClearingReturnsToBrowse` (NO change to `TimelineViewModel` itself — this proves the core filter reaches the search surface end-to-end):
+
+```swift
+    /// Integration: the core retired-subtype filter (TimelineDayBuilder) reaches the
+    /// search surface — no season-specific code exists in TimelineViewModel.
     @Test func searchNeverShowsRetiredEnvironmentSubtypes() async throws {
         let (_, store) = try makeStore()
         let base = Date(timeIntervalSince1970: 1_750_000_000)
@@ -393,7 +456,7 @@ In `Food IntolerancesTests/TimelineViewModelTests.swift`, add after `searchModeG
     }
 ```
 
-- [ ] **Step 2: Run the VM tests to verify the new one fails**
+- [ ] **Step 6: Run the VM tests to verify they pass**
 
 Run:
 ```bash
@@ -401,35 +464,9 @@ cd /Users/leo/dev/FoodIntolerances && xcodebuild test -project "Food Intolerance
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -parallel-testing-enabled NO \
   -only-testing:"Food IntolerancesTests/TimelineViewModelTests" 2>&1 | tail -10
 ```
-Expected: FAIL — `searchNeverShowsRetiredEnvironmentSubtypes`: searching "season" surfaces the stored season row (FTS matches its subtype). All pre-existing VM tests PASS.
+Expected: `** TEST SUCCEEDED **` — the new integration test passes on the strength of the Step 3 core filter alone (it exercises `runSearch()` → `TimelineDayBuilder.days(..., groupEnvironment: false)`).
 
-- [ ] **Step 3: Implement the search filter**
-
-In `Views/HealthOS/Timeline/TimelineViewModel.swift`, `searchTextChanged()`, directly after the two existing filters
-
-```swift
-            if let categoryFilter { results = results.filter { categoryFilter.contains($0.category) } }
-            if let sourceFilter { results = results.filter { sourceFilter.contains($0.source) } }
-```
-
-add:
-
-```swift
-            // Stored rows of retired env subtypes (season) must never display — search is
-            // the only surface that shows raw environment rows (and the only path to the
-            // detail sheet), so this one filter hides them everywhere.
-            results = results.filter { !($0.category == .environment
-                && EnvironmentDaySummaryBuilder.retiredSubtypes.contains($0.subtype ?? "")) }
-```
-
-(`TimelineViewModel` already imports `HealthGraphCore`.)
-
-- [ ] **Step 4: Run the VM tests to verify they pass**
-
-Run: the same command as Step 2.
-Expected: `** TEST SUCCEEDED **`.
-
-- [ ] **Step 5: Full-suite verification (both packages)**
+- [ ] **Step 7: Full-suite verification (both packages)**
 
 Run:
 ```bash
@@ -439,11 +476,13 @@ cd /Users/leo/dev/FoodIntolerances && xcodebuild test -project "Food Intolerance
 ```
 Expected: core suite all pass; app suite `** TEST SUCCEEDED **`.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add "Views/HealthOS/Timeline/TimelineViewModel.swift" "Food IntolerancesTests/TimelineViewModelTests.swift"
-git commit -m "feat(app): search filters retired env subtypes — stored season rows hidden from search + detail sheet
+git add HealthGraphCore/Sources/HealthGraphCore/Timeline/TimelineDayBuilder.swift \
+        HealthGraphCore/Tests/HealthGraphCoreTests/TimelineDayBuilderTests.swift \
+        "Food IntolerancesTests/TimelineViewModelTests.swift"
+git commit -m "feat(core): TimelineDayBuilder filters retired env subtypes in every mode — raw season rows hidden for all callers
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
