@@ -41,6 +41,7 @@ Create `Food IntolerancesTests/MoonPhaseLabelTests.swift`:
 ```swift
 import Testing
 import Foundation
+import UIKit
 import HealthGraphCore
 @testable import Food_Intolerances
 
@@ -56,10 +57,23 @@ struct MoonPhaseLabelTests {
         #expect(moonPhaseSymbolName(for: "Last Quarter") == "moonphase.last.quarter")
         #expect(moonPhaseSymbolName(for: "Waning Crescent") == "moonphase.waning.crescent")
     }
+    // String equality alone can't prove the symbol NAMES are real — resolve each
+    // against the system symbol catalog so a typo'd name fails here, not on device.
+    @Test func allMappedSymbolNamesExist() throws {
+        let phases = [
+            "New Moon", "Waxing Crescent", "First Quarter", "Waxing Gibbous",
+            "Full Moon", "Waning Gibbous", "Last Quarter", "Waning Crescent",
+        ]
+        for phase in phases {
+            let name = try #require(moonPhaseSymbolName(for: phase))
+            #expect(UIImage(systemName: name) != nil)
+        }
+    }
     @Test func normalizesCaseAndWhitespace() {
         #expect(moonPhaseSymbolName(for: "full moon") == "moonphase.full.moon")
         #expect(moonPhaseSymbolName(for: "FULL MOON") == "moonphase.full.moon")
         #expect(moonPhaseSymbolName(for: "  Full Moon ") == "moonphase.full.moon")
+        #expect(moonPhaseSymbolName(for: "Full Moon\n") == "moonphase.full.moon")
     }
     @Test func unknownPhaseReturnsNil() {
         #expect(moonPhaseSymbolName(for: "Blood Moon") == nil)
@@ -110,11 +124,11 @@ import SwiftUI
 import HealthGraphCore
 
 /// The `moonphase.*` SF Symbol for a stored phase name (the factory strips emoji at
-/// ingestion, so stored values are e.g. "Full Moon"). Case-insensitive, whitespace-
-/// trimmed; anything outside the eight canonical names → nil (the label then renders
-/// text-only — fail quiet, never a wrong glyph).
+/// ingestion, so stored values are e.g. "Full Moon"). Case-insensitive, whitespace/
+/// newline-trimmed; anything outside the eight canonical names → nil (the label then
+/// renders text-only — fail quiet, never a wrong glyph).
 func moonPhaseSymbolName(for phase: String) -> String? {
-    switch phase.trimmingCharacters(in: .whitespaces).lowercased() {
+    switch phase.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
     case "new moon":        "moonphase.new.moon"
     case "waxing crescent": "moonphase.waxing.crescent"
     case "first quarter":   "moonphase.first.quarter"
@@ -180,7 +194,7 @@ struct MoonPhaseLabel: View {
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: the same command as Step 2.
-Expected: `** TEST SUCCEEDED **` — all 6 `@Test` cases pass.
+Expected: `** TEST SUCCEEDED **` — all 7 `@Test` cases pass.
 
 - [ ] **Step 5: Commit**
 

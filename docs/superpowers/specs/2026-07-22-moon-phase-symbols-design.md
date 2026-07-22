@@ -37,7 +37,7 @@ Moon phase renders as plain text at five Timeline sites while its sibling enviro
 
 Peer of `Views/HealthOS/Timeline/AQIValueLabel.swift`, three units:
 
-- **`moonPhaseSymbolName(for phase: String) -> String?`** — pure. Trims whitespace, lowercases, and switches over the eight cleaned canonical names (the factory strips emoji at ingestion, so stored values are e.g. `"Full Moon"`, `"Waxing Gibbous"`):
+- **`moonPhaseSymbolName(for phase: String) -> String?`** — pure. Trims whitespace and newlines, lowercases, and switches over the eight cleaned canonical names (the factory strips emoji at ingestion, so stored values are e.g. `"Full Moon"`, `"Waxing Gibbous"`):
 
   | Stored phase | SF Symbol |
   |---|---|
@@ -85,7 +85,8 @@ Styling (font/color/alignment modifiers) is preserved identically across all thr
 
 - **`MoonPhaseLabelTests` (pure, app tests):**
   - All eight canonical names map to their exact `moonphase.*` symbol.
-  - Case-insensitivity (`"full moon"`, `"FULL MOON"`) and whitespace trimming (`"  Full Moon "`) resolve.
+  - Every mapped symbol name resolves against the system catalog (`UIImage(systemName:) != nil`) — string equality alone can't prove the names are real.
+  - Case-insensitivity (`"full moon"`, `"FULL MOON"`), whitespace trimming (`"  Full Moon "`), and newline trimming (`"Full Moon\n"`) resolve.
   - Unknown phase (`"Blood Moon"`, `""`) → nil.
   - Extractor: a well-formed moonPhase event → its phase; wrong subtype (e.g. `"season"`, `"airQuality"`) → nil; non-environment category → nil; missing metadata → nil; undecodable metadata bytes → nil.
 - **`EnvironmentSummaryFormatterTests`:**
