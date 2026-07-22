@@ -76,4 +76,35 @@ struct EnvironmentSummaryFormatterTests {
         #expect(EnvironmentSummaryFormatter.detailLines(day([pressure(1013), drop(7)]), unit: c).count == 1)   // folded → one line → not expandable
         #expect(EnvironmentSummaryFormatter.detailLines(day([temp(24, 12), humidity(69)]), unit: c).count >= 2)
     }
+
+    // Typed detail-line model — subtype preserved; AQI line carries the value for the badge.
+    @Test func airQualityDetailLineCarriesSubtypeAndAQI() {
+        let rows = EnvironmentSummaryFormatter.detailLines(day([temp(24, 12), airQuality(132)]), unit: c)
+        let air = rows.first { $0.subtype == "airQuality" }
+        #expect(air?.aqi == 132)                     // the badge's color input, structural (not label-matched)
+        #expect(air?.value == "132 · Unhealthy for sensitive groups")
+        let tempLine = rows.first { $0.subtype == "temperature" }
+        #expect(tempLine?.aqi == nil)                // non-AQI lines carry no aqi
+        #expect(tempLine?.subtype == "temperature")  // subtype preserved for every line
+        // The detail line badges ALL bands, not just poor air — a good-air line still carries its aqi.
+        let good = EnvironmentSummaryFormatter.detailLines(day([temp(24, 12), airQuality(42)]), unit: c)
+        #expect(good.first { $0.subtype == "airQuality" }?.aqi == 42)   // guards against gating detail aqi to poor-air only
+    }
+    // poorAirAQI — mirrors exactly when the collapsed headline leads with AQI.
+    @Test func poorAirAQIReturnsValueOnlyOnPoorAirDays() {
+        #expect(EnvironmentSummaryFormatter.poorAirAQI(day([temp(24, 12), airQuality(132)])) == 132)   // >= 101 → poor
+        #expect(EnvironmentSummaryFormatter.poorAirAQI(day([temp(24, 12), airQuality(42)])) == nil)    // < 101 → nil (temp leads)
+        #expect(EnvironmentSummaryFormatter.poorAirAQI(day([temp(24, 12)])) == nil)                    // no AQI event → nil
+        #expect(EnvironmentSummaryFormatter.poorAirAQI(day([airQuality(101)])) == 101)                 // == threshold → poor (pins >=, not >)
+        #expect(EnvironmentSummaryFormatter.poorAirAQI(day([airQuality(100)])) == nil)                 // one below → nil
+    }
+    // Two same-day AQI events → each line's aqi matches ITS OWN displayed text (the dot can
+    // never represent one value while the text shows another). The builder keeps both events.
+    @Test func twoAirQualityEventsEachLineMatchesItsOwnValue() {
+        let rows = EnvironmentSummaryFormatter.detailLines(day([airQuality(42), airQuality(180)]), unit: c)
+        let air = rows.filter { $0.subtype == "airQuality" }
+        #expect(air.count == 2)
+        #expect(air.contains { $0.aqi == 42 && $0.value == "42 · Good" })
+        #expect(air.contains { $0.aqi == 180 && $0.value == "180 · Unhealthy" })
+    }
 }

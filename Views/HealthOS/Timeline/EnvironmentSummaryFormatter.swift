@@ -1,6 +1,19 @@
 import Foundation
 import HealthGraphCore
 
+/// One expanded environment reading. `id` is the source event's id — stable SwiftUI
+/// identity even when a day has duplicate subtypes/provenance (avoids duplicate
+/// `ForEach` ids). `subtype` lets the row identify the AQI line structurally; `aqi` is
+/// set ONLY for the airQuality line — the badge's color input. `value == nil` → a
+/// presence line (mercury).
+struct EnvironmentDetailLine: Identifiable {
+    let id: UUID
+    let subtype: String?
+    let label: String
+    let value: String?
+    let aqi: Int?
+}
+
 /// Builds the collapsed headline and expanded detail lines for an Environment
 /// summary row, honoring the user's °C/°F setting for temperature. Pure.
 enum EnvironmentSummaryFormatter {
@@ -8,9 +21,8 @@ enum EnvironmentSummaryFormatter {
     /// phase (· season); else the single remaining reading.
     static func headline(_ summary: EnvironmentDaySummary, unit: TemperatureUnit) -> String {
         // Poor-air days lead with the AQI — the most health-salient signal that day.
-        if let aq = summary.events.first(where: { $0.subtype == "airQuality" }),
-           let v = aq.value, Int(v) >= AirQualityIndex.poorAirThreshold {
-            return "AQI \(Int(v)) · \(AirQualityIndex.category(aqi: Int(v)).name)"
+        if let aqi = poorAirAQI(summary) {
+            return "AQI \(aqi) · \(AirQualityIndex.category(aqi: aqi).name)"
         }
         if let temp = value("temperature", summary, unit) {
             if let hum = value("humidity", summary, unit) { return "\(temp) · \(hum)" }
@@ -26,29 +38,42 @@ enum EnvironmentSummaryFormatter {
         return "Environment"
     }
 
-    /// Ordered (label, value?) rows. `value == nil` → a presence line (mercury).
+    /// The AQI value when the collapsed headline leads with AQI (a poor-air day, AQI
+    /// >= poorAirThreshold), else nil. Shares the poor-air check with `headline` so the
+    /// dot appears exactly when the headline shows the AQI.
+    static func poorAirAQI(_ summary: EnvironmentDaySummary) -> Int? {
+        guard let aq = summary.events.first(where: { $0.subtype == "airQuality" }),
+              let v = aq.value, Int(v) >= AirQualityIndex.poorAirThreshold else { return nil }
+        return Int(v)
+    }
+
+    /// Ordered detail rows. `value == nil` → a presence line (mercury).
     /// pressureDrop is folded into the Air pressure line, not its own row.
-    static func detailLines(_ summary: EnvironmentDaySummary, unit: TemperatureUnit) -> [(label: String, value: String?)] {
-        var rows: [(label: String, value: String?)] = []
+    static func detailLines(_ summary: EnvironmentDaySummary, unit: TemperatureUnit) -> [EnvironmentDetailLine] {
+        var rows: [EnvironmentDetailLine] = []
         for e in summary.events {
-            guard let subtype = e.subtype else { continue }
+            guard let subtype = e.subtype, subtype != "pressureDrop" else { continue }   // nil subtype skipped; pressureDrop folds into pressure
+            // Format the text from THIS event so the value always matches the line's own
+            // aqi/provenance — never a different same-subtype event chosen by a lookup.
+            let text = WeatherValueFormatter.line(for: e, unit: unit) ?? EventDisplay.valueLine(for: e)
             switch subtype {
-            case "pressureDrop":
-                continue   // folded into the pressure line
             case "pressure":
-                var v = EventDisplay.valueLine(for: e)
+                var v = text
                 if let drop = summary.events.first(where: { $0.subtype == "pressureDrop" }), let d = drop.value {
                     v = [v, "↓\(Int(d.rounded())) hPa"].compactMap { $0 }.joined(separator: " · ")
                 }
-                rows.append((EventDisplay.title(for: e), v))
+                rows.append(EnvironmentDetailLine(id: e.id, subtype: subtype, label: EventDisplay.title(for: e), value: v, aqi: nil))
+            case "airQuality":
+                rows.append(EnvironmentDetailLine(id: e.id, subtype: subtype, label: EventDisplay.title(for: e), value: text, aqi: e.value.map { Int($0) }))
             default:
-                rows.append((EventDisplay.title(for: e), value(subtype, summary, unit)))
+                rows.append(EnvironmentDetailLine(id: e.id, subtype: subtype, label: EventDisplay.title(for: e), value: text, aqi: nil))
             }
         }
         // Defensive: a lone pressureDrop with no pressure event still shows.
         if !summary.events.contains(where: { $0.subtype == "pressure" }),
            let drop = summary.events.first(where: { $0.subtype == "pressureDrop" }) {
-            rows.append((EventDisplay.title(for: drop), EventDisplay.valueLine(for: drop)))
+            rows.append(EnvironmentDetailLine(id: drop.id, subtype: drop.subtype, label: EventDisplay.title(for: drop),
+                                              value: EventDisplay.valueLine(for: drop), aqi: nil))
         }
         return rows
     }

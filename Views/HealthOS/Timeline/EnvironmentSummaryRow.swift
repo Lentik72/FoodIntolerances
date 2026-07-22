@@ -16,7 +16,7 @@ struct EnvironmentSummaryRow: View {
     private var unit: TemperatureUnit { .resolved(from: rawTempUnit) }
 
     private var headline: String { EnvironmentSummaryFormatter.headline(summary, unit: unit) }
-    private var detailLines: [(label: String, value: String?)] {
+    private var detailLines: [EnvironmentDetailLine] {
         EnvironmentSummaryFormatter.detailLines(summary, unit: unit)
     }
     private var isExpandable: Bool { detailLines.count >= 2 }
