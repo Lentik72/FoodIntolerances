@@ -18,10 +18,10 @@ protocol EnvironmentalDataProviding {
 
 extension EnvironmentalDataService: EnvironmentalDataProviding {}
 
-/// Persists the per-signal watermarks (the last successfully-ingested completed
-/// AQI day, and the last AQI-range attempt time). Injectable so day math and
-/// watermarks are deterministic in tests. Values are epoch `Double`s; a missing
-/// key reads back as `nil` (NOT epoch 0).
+/// Persists the per-signal watermarks — the last successfully-ingested completed
+/// day and the last attempt time for each backfill (AQI and observed weather).
+/// Injectable so day math and watermarks are deterministic in tests. Values are
+/// epoch `Double`s; a missing key reads back as `nil` (NOT epoch 0).
 protocol WatermarkStore {
     func date(for key: String) -> Date?
     func set(_ date: Date, for key: String)

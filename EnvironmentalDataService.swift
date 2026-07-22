@@ -594,13 +594,15 @@ class EnvironmentalDataService: ObservableObject {
                 // An auth/error body decodes to an empty shell (no temperature) —
                 // but so could a legitimate no-data day. Distinguish: an error body
                 // always carries "message"; treat that as fetchError, else absent.
-                if (try? JSONDecoder().decode(OneCallErrorBody.self, from: data)) != nil {
+                if let errorBody = try? JSONDecoder().decode(OneCallErrorBody.self, from: data) {
+                    Logger.error("One Call day_summary error body: \(errorBody.message)", category: .network)
                     return .fetchError
                 }
                 return .absent
             }
             return .value(highC: high, lowC: low, humidityPct: decoded.humidity?.afternoon)
         } catch {
+            Logger.error(error, message: "Error fetching weather day summary", category: .network)
             return .fetchError
         }
     }
