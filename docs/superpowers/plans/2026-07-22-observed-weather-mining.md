@@ -374,7 +374,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: existing seams — `HTTPTransport`, `resolvedCoordinate()`, injected `calendar`, `APIConfig.openWeatherAPIKey`.
-- Produces (Task 4 relies on these exact names): `enum WeatherDayResult: Equatable { case fetchError; case absent; case value(highC: Double, lowC: Double, humidityPct: Double?) }` and `func fetchCompletedWeatherDay(for day: Date) async -> WeatherDayResult` on `EnvironmentalDataService`; `APIConfig.oneCallDaySummaryURL(latitude:longitude:date:)`.
+- Produces (Task 4 relies on these exact names): `enum WeatherDayResult: Equatable { case fetchError; case absent; case value(highC: Double, lowC: Double, humidityPct: Double?) }` and `func fetchCompletedWeatherDay(for day: Date) async -> WeatherDayResult` on `EnvironmentalDataService`; `APIConfig.oneCallDaySummaryURL(latitude:longitude:date:tz:)`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -480,10 +480,11 @@ struct WeatherHistoryTests {
         let result = await makeService(payload: Data(json.utf8)).fetchCompletedWeatherDay(for: day)
         #expect(result == .fetchError)
     }
-    /// The tz offset is DATE-specific from the injected calendar: a January day
-    /// in Los Angeles is PST (-08:00), a July day PDT (-07:00) — the app's
-    /// calendar controls the provider's aggregation day, not the location.
-    @Test func fetchPassesDateSpecificCalendarTZOffset() async throws {
+    /// The tz offset is DATE-specific from the injected calendar and anchored at
+    /// local NOON: plain PST/PDT days get their standard offsets, and on the DST
+    /// transition days themselves the AFTERNOON offset wins (the midnight offset
+    /// differs there — the noon anchor is what matches humidity.afternoon).
+    @Test func fetchPassesNoonAnchoredCalendarTZOffset() async throws {
         ensureTestAPIKeyConfigured()
         var la = Calendar(identifier: .gregorian)
         la.timeZone = TimeZone(identifier: "America/Los_Angeles")!
@@ -493,12 +494,15 @@ struct WeatherHistoryTests {
             transport: StubTransport(payload: Data(json.utf8), requestedURLs: box),
             calendar: la,
             location: StubLocation(coordinate: CLLocationCoordinate2D(latitude: 34.0, longitude: -118.0)))
-        _ = await service.fetchCompletedWeatherDay(for: la.date(from: DateComponents(year: 2025, month: 1, day: 15))!)
-        _ = await service.fetchCompletedWeatherDay(for: la.date(from: DateComponents(year: 2025, month: 7, day: 15))!)
+        for (m, d) in [(1, 15), (7, 15), (3, 9), (11, 2)] {
+            _ = await service.fetchCompletedWeatherDay(for: la.date(from: DateComponents(year: 2025, month: m, day: d))!)
+        }
         let urls = box.urls.map(\.absoluteString)
-        #expect(urls.count == 2)
+        #expect(urls.count == 4)
         #expect(urls[0].contains("date=2025-01-15") && urls[0].contains("tz=-08:00"))   // PST
         #expect(urls[1].contains("date=2025-07-15") && urls[1].contains("tz=-07:00"))   // PDT
+        #expect(urls[2].contains("date=2025-03-09") && urls[2].contains("tz=-07:00"))   // spring-forward day: noon is PDT
+        #expect(urls[3].contains("date=2025-11-02") && urls[3].contains("tz=-08:00"))   // fall-back day: noon is PST
     }
 
     @Test func noLocationIsFetchError() async {
@@ -590,8 +594,13 @@ And add the fetch + response model after `fetchCompletedAirQualityRange` (after 
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd"
         // The app's calendar timezone is authoritative for the aggregation day —
-        // date-SPECIFIC offset (DST changes it across the backfill window).
-        let seconds = calendar.timeZone.secondsFromGMT(for: day)
+        // date-SPECIFIC offset (DST changes it across the backfill window),
+        // anchored at local NOON: on a DST-transition day the midnight offset
+        // differs from the afternoon whose humidity value is being ingested
+        // (LA 2025-11-02 is -07:00 at midnight but -08:00 that afternoon), and
+        // OpenWeather defines humidity.afternoon as the noon reading.
+        let noon = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: day) ?? day
+        let seconds = calendar.timeZone.secondsFromGMT(for: noon)
         let tzOffset = String(format: "%@%02d:%02d", seconds < 0 ? "-" : "+",
                               abs(seconds) / 3600, (abs(seconds) % 3600) / 60)
         guard let url = APIConfig.oneCallDaySummaryURL(
