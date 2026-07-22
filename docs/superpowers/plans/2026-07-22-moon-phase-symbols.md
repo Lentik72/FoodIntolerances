@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Show a small decorative `moonphase.*` SF Symbol next to the moon-phase name at all four Timeline sites, per `docs/superpowers/specs/2026-07-22-moon-phase-symbols-design.md`.
+**Goal:** Show a small decorative `moonphase.*` SF Symbol next to the moon-phase name at all five Timeline sites, per `docs/superpowers/specs/2026-07-22-moon-phase-symbols-design.md`.
 
 **Architecture:** One new app-side file, `MoonPhaseLabel.swift`, centralizes the pure symbol mapping (`moonPhaseSymbolName(for:)`), the structural event extractor (`moonPhaseName(for event:)`), and the label view (`MoonPhaseLabel`) — mirroring `AQIValueLabel.swift`. The phase flows structurally through `EnvironmentHeadline.moonPhase` and `EnvironmentDetailLine.moonPhase` (exactly how `aqi` was added), and each site becomes a three-way branch: `aqi` → `AQIValueLabel`, `moonPhase` → `MoonPhaseLabel`, else plain `Text`. HealthGraphCore untouched.
 
@@ -212,11 +212,12 @@ In `Food IntolerancesTests/EnvironmentSummaryFormatterTests.swift`, add at the e
 ```swift
     // Structural moon-phase plumbing — the label's input, never inferred from display text.
     @Test func moonDetailLineCarriesPhaseOthersNil() {
-        let rows = EnvironmentSummaryFormatter.detailLines(day([temp(24, 12), moon("Waxing Gibbous"), mercury()]), unit: c)
+        let rows = EnvironmentSummaryFormatter.detailLines(day([temp(24, 12), moon("Waxing Gibbous"), airQuality(132), mercury()]), unit: c)
         let moonLine = rows.first { $0.subtype == "moonPhase" }
         #expect(moonLine?.moonPhase == "Waxing Gibbous")   // from the line's own event metadata
         #expect(moonLine?.value == "Waxing Gibbous")       // display text unchanged
         #expect(rows.first { $0.subtype == "temperature" }?.moonPhase == nil)
+        #expect(rows.first { $0.subtype == "airQuality" }?.moonPhase == nil)      // aqi line carries aqi, never a phase
         #expect(rows.first { $0.subtype == "mercuryRetrograde" }?.moonPhase == nil)
     }
     @Test func headlineCarriesMoonPhaseOnlyWhenMoonLeads() {
@@ -345,14 +346,14 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 3: Site wiring — three-way branches at all four sites (+ full verification)
+### Task 3: Site wiring — three-way branches at all five sites (+ full verification)
 
-Pure view wiring: `aqi` → `AQIValueLabel`, `moonPhase` → `MoonPhaseLabel`, else `Text`, with the existing font/color/alignment modifiers repeated identically on every branch (the AQI round's rule). No formatter or core changes. Verified by build + full suites + device gate (no new unit tests — SwiftUI view code, per the spec's Testing section).
+Pure view wiring: `aqi` → `AQIValueLabel`, `moonPhase` → `MoonPhaseLabel`, else `Text`, with the existing font/color/alignment modifiers repeated identically on every branch (the AQI round's rule). Site 5 (the detail sheet's Details card — found by the plan audit) additionally keeps the RAW metadata key in `metadataRows` so its gate is structural, never the display label. No formatter or core changes. Verified by build + full suites + device gate (no new unit tests — SwiftUI view code, per the spec's Testing section).
 
 **Files:**
 - Modify: `Views/HealthOS/Timeline/EnvironmentSummaryRow.swift:50-60,97-107`
 - Modify: `Views/HealthOS/Timeline/TimelineEventRow.swift:49-59`
-- Modify: `Views/HealthOS/Timeline/EventDetailView.swift:77-88`
+- Modify: `Views/HealthOS/Timeline/EventDetailView.swift:79-88` (header branch), `:122-131` (detailsCard), `:152-163` (row helper), `:179-186` (metadataRows)
 
 **Interfaces:**
 - Consumes: `MoonPhaseLabel(value:phase:)` + `moonPhaseName(for:)` (Task 1); `headlineResult.moonPhase` + `line.moonPhase` (Task 2).
@@ -443,7 +444,61 @@ Replace the header value-line branch (lines ~79-88, inside the `if let line = �
                         }
 ```
 
-- [ ] **Step 4: Full-suite verification**
+- [ ] **Step 4: Wire the `EventDetailView` "Details" card (site 5 — structural gate on the RAW metadata key)**
+
+`metadataRows` (lines ~179-186) currently returns `(label, value)` tuples — the raw key is gone by `ForEach` time, and the ForEach id is the label. Keep the raw key (also a strictly better id: dict keys are unique; labels could theoretically collide):
+
+```swift
+    private var metadataRows: [(key: String, label: String, value: String)] {
+        guard let data = displayEvent.metadata,
+              let dict = try? JSONDecoder().decode([String: String].self, from: data) else { return [] }
+        let labels = ["kcal": "Calories", "distanceKm": "Distance (km)",
+                      "phase": "Moon phase", "season": "Season"]
+        return dict.sorted { $0.key < $1.key }
+            .map { (key: $0.key, label: labels[$0.key] ?? $0.key, value: $0.value) }
+    }
+```
+
+`detailsCard` (lines ~122-131) — the phase row is gated on the RAW key `"phase"` (a storage key, not the display label) AND the event-level extractor, so a non-moon event that happens to carry `"phase"` metadata (e.g. a cycle phase) renders plain text, never a moon glyph:
+
+```swift
+    private var detailsCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(metadataRows, id: \.key) { entry in
+                row(entry.label, entry.value,
+                    moonPhase: entry.key == "phase" ? moonPhaseName(for: displayEvent) : nil)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .hgCard()
+    }
+```
+
+`row(_:_:)` (lines ~152-163) gains an optional `moonPhase` parameter with a nil default, so the `whenCard` call sites (`row("Time", …)`, `row("Until", …)`) are untouched:
+
+```swift
+    private func row(_ label: String, _ value: String, moonPhase: String? = nil) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label)
+                .font(.subheadline)
+                .foregroundStyle(HealthTheme.inkSecondary)
+                .frame(width: 120, alignment: .leading)
+            if let moonPhase {
+                MoonPhaseLabel(value: value, phase: moonPhase)
+                    .font(.subheadline)
+                    .foregroundStyle(HealthTheme.ink)
+            } else {
+                Text(value)
+                    .font(.subheadline)
+                    .foregroundStyle(HealthTheme.ink)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+```
+
+- [ ] **Step 5: Full-suite verification**
 
 Run:
 ```bash
@@ -452,11 +507,11 @@ cd /Users/leo/dev/FoodIntolerances && xcodebuild test -project "Food Intolerance
 ```
 Expected: green modulo the ONE known pre-existing `SwiftDataMigratorTests` teardown crash. (No core changes this round, so the core suite is untouched; running it is optional: `cd HealthGraphCore && swift test` → all pass.)
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add "Views/HealthOS/Timeline/EnvironmentSummaryRow.swift" "Views/HealthOS/Timeline/TimelineEventRow.swift" "Views/HealthOS/Timeline/EventDetailView.swift"
-git commit -m "feat(app): moonphase.* glyph at all 4 Timeline phase-name sites (three-way aqi/moon/text branches)
+git commit -m "feat(app): moonphase.* glyph at all 5 Timeline phase-name sites (three-way aqi/moon/text branches + structural Details-card row)
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
@@ -466,7 +521,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ## Device gate (Leo, after Task 3)
 
 Not a plan task — the round's final verification, per the spec's Testing section:
-1. All four sites show the correct glyph per phase (browse a backfill day for the headline; expand the Environment row for the detail line; search "moon" for the raw row; tap it for the detail header).
+1. All five sites show the correct glyph per phase (browse a backfill day for the headline; expand the Environment row for the detail line; search "moon" for the raw row; tap it for the detail header AND the Details card's "Moon phase" row — both on the same sheet).
 2. Light + dark both legible; hierarchical rendering reads at footnote size.
 3. VoiceOver reads the phase name exactly once at every site (icon silent); the text is always present.
 4. Legacy Dashboard moon icon unchanged; Insights "Full moon" card unchanged.
