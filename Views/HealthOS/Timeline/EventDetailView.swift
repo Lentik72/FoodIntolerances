@@ -80,6 +80,10 @@ struct EventDetailView: View {
                             AQIValueLabel(value: line, aqi: Int(v))
                                 .font(.footnote)
                                 .foregroundStyle(valueLineColor)
+                        } else if let phase = moonPhaseName(for: displayEvent) {
+                            MoonPhaseLabel(value: line, phase: phase)
+                                .font(.footnote)
+                                .foregroundStyle(valueLineColor)
                         } else {
                             Text(line)
                                 .font(.footnote)
@@ -121,8 +125,9 @@ struct EventDetailView: View {
 
     private var detailsCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(metadataRows, id: \.0) { key, value in
-                row(key, value)
+            ForEach(metadataRows, id: \.key) { entry in
+                row(entry.label, entry.value,
+                    moonPhase: entry.key == "phase" ? moonPhaseName(for: displayEvent) : nil)
             }
         }
         .padding(16)
@@ -149,15 +154,21 @@ struct EventDetailView: View {
         .accessibilityHint("Removes the event. You can undo for a few seconds afterwards.")
     }
 
-    private func row(_ label: String, _ value: String) -> some View {
+    private func row(_ label: String, _ value: String, moonPhase: String? = nil) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text(label)
                 .font(.subheadline)
                 .foregroundStyle(HealthTheme.inkSecondary)
                 .frame(width: 120, alignment: .leading)
-            Text(value)
-                .font(.subheadline)
-                .foregroundStyle(HealthTheme.ink)
+            if let moonPhase {
+                MoonPhaseLabel(value: value, phase: moonPhase)
+                    .font(.subheadline)
+                    .foregroundStyle(HealthTheme.ink)
+            } else {
+                Text(value)
+                    .font(.subheadline)
+                    .foregroundStyle(HealthTheme.ink)
+            }
             Spacer(minLength: 0)
         }
     }
@@ -176,12 +187,12 @@ struct EventDetailView: View {
         }
     }
 
-    private var metadataRows: [(String, String)] {
+    private var metadataRows: [(key: String, label: String, value: String)] {
         guard let data = displayEvent.metadata,
               let dict = try? JSONDecoder().decode([String: String].self, from: data) else { return [] }
         let labels = ["kcal": "Calories", "distanceKm": "Distance (km)",
                       "phase": "Moon phase", "season": "Season"]
         return dict.sorted { $0.key < $1.key }
-            .map { (labels[$0.key] ?? $0.key, $0.value) }
+            .map { (key: $0.key, label: labels[$0.key] ?? $0.key, value: $0.value) }
     }
 }

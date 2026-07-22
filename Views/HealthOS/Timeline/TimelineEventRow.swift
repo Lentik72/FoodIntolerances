@@ -51,6 +51,10 @@ struct TimelineEventRow: View {
                             AQIValueLabel(value: line, aqi: Int(v))
                                 .font(.footnote)
                                 .foregroundStyle(valueLineColor)
+                        } else if let phase = moonPhaseName(for: event) {
+                            MoonPhaseLabel(value: line, phase: phase)
+                                .font(.footnote)
+                                .foregroundStyle(valueLineColor)
                         } else {
                             Text(line)
                                 .font(.footnote)
