@@ -26,6 +26,17 @@ enum HealthTheme {
     static let danger   = dyn(light: 0xC0442E, dark: 0xD65C44)
     static let onDanger = dyn(light: 0xFFFFFF, dark: 0xFFFFFF)
 
+    /// EPA AirNow AQI category colors, **accessibility-adjusted** for legibility on
+    /// the cream/dark surfaces (NOT verbatim official hex — pure AirNow yellow is
+    /// invisible on cream, maroon is lightened for dark). Ref: airnow.gov/aqi/aqi-basics.
+    /// Rendered as a small dot beside the always-present AQI number + category text.
+    static let aqiGood               = dyn(light: 0x2E9E4F, dark: 0x3FD06B)   // green
+    static let aqiModerate           = dyn(light: 0xB08A00, dark: 0xE8C33A)   // yellow → readable gold (light ≥3:1 on paper)
+    static let aqiUnhealthySensitive = dyn(light: 0xD96500, dark: 0xFF9A3D)   // orange (light ≥3:1 on paper)
+    static let aqiUnhealthy          = dyn(light: 0xD42A2A, dark: 0xFF5C5C)   // red
+    static let aqiVeryUnhealthy      = dyn(light: 0x8F3F97, dark: 0xB667BE)   // purple
+    static let aqiHazardous          = dyn(light: 0x7E0023, dark: 0xC64B6B)   // maroon
+
     // MARK: type — semantic styles only, so Dynamic Type scales everything
     static func screenTitle() -> Font { .system(.largeTitle, design: .serif, weight: .semibold) }
     static func sectionHeader() -> Font { .system(.title3, design: .serif, weight: .semibold) }
