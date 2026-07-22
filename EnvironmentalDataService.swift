@@ -23,6 +23,18 @@ enum AQIRangeResult: Equatable {
     case days([Date: AQIDayValue])
 }
 
+/// Result of a completed-day weather fetch (One Call day_summary): the request
+/// failed (transport OR decode OR auth-error body — always retryable, never
+/// conflated with absence), the provider has no temperature for the day, or the
+/// day's observed values. `humidityPct` is the provider's observed AFTERNOON
+/// humidity and can be missing independently of temperature (nil → the emitter
+/// writes no observed humidity event for that day).
+enum WeatherDayResult: Equatable {
+    case fetchError
+    case absent
+    case value(highC: Double, lowC: Double, humidityPct: Double?)
+}
+
 class EnvironmentalDataService: ObservableObject {
     // Published properties for UI updates
     @Published var atmosphericPressure: String = ""
@@ -535,6 +547,70 @@ class EnvironmentalDataService: ObservableObject {
             Logger.error(error, message: "Error fetching air quality history range", category: .network)
             return .fetchError
         }
+    }
+
+    /// One Call 3.0 day_summary decode target — only the fields this feature reads.
+    private struct DaySummaryResponse: Decodable {
+        struct Temperature: Decodable { let min: Double?; let max: Double? }
+        struct Humidity: Decodable { let afternoon: Double? }
+        let temperature: Temperature?
+        let humidity: Humidity?
+    }
+
+    /// GETs One Call day_summary for ONE completed local day. Same location
+    /// resolution as every other fetch. A 401 "requires a separate subscription"
+    /// body has no `temperature` field and fails decode-shape checks → treated as
+    /// `.fetchError` (graceful degradation; the emitter's throttle paces retries).
+    func fetchCompletedWeatherDay(for day: Date) async -> WeatherDayResult {
+        guard let location = self.resolvedCoordinate() else {
+            Logger.warning("No location available for weather day fetch.", category: .location)
+            return .fetchError
+        }
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        // The app's calendar timezone is authoritative for the aggregation day —
+        // date-SPECIFIC offset (DST changes it across the backfill window),
+        // anchored at local NOON: on a DST-transition day the midnight offset
+        // differs from the afternoon whose humidity value is being ingested
+        // (LA 2025-11-02 is -07:00 at midnight but -08:00 that afternoon), and
+        // OpenWeather defines humidity.afternoon as the noon reading.
+        let noon = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: day) ?? day
+        let seconds = calendar.timeZone.secondsFromGMT(for: noon)
+        let tzOffset = String(format: "%@%02d:%02d", seconds < 0 ? "-" : "+",
+                              abs(seconds) / 3600, (abs(seconds) % 3600) / 60)
+        guard let url = APIConfig.oneCallDaySummaryURL(
+            latitude: location.latitude, longitude: location.longitude,
+            date: formatter.string(from: day), tz: tzOffset) else {
+            Logger.error("Invalid URL for One Call day_summary API", category: .network)
+            return .fetchError
+        }
+        do {
+            let (data, _) = try await transport.data(from: url)
+            let decoded = try JSONDecoder().decode(DaySummaryResponse.self, from: data)
+            guard let high = decoded.temperature?.max, let low = decoded.temperature?.min else {
+                // An auth/error body decodes to an empty shell (no temperature) —
+                // but so could a legitimate no-data day. Distinguish: an error body
+                // always carries "message"; treat that as fetchError, else absent.
+                if (try? JSONDecoder().decode(OneCallErrorBody.self, from: data)) != nil {
+                    return .fetchError
+                }
+                return .absent
+            }
+            return .value(highC: high, lowC: low, humidityPct: decoded.humidity?.afternoon)
+        } catch {
+            return .fetchError
+        }
+    }
+
+    /// One Call error envelope — a "message" field marks an API error body (401
+    /// not-subscribed, 404 bad date, …), which must be retryable, not absent.
+    /// (Keyed on "message" alone: OpenWeather's "cod" is inconsistently typed —
+    /// Int on some endpoints, String on others.)
+    private struct OneCallErrorBody: Decodable {
+        let message: String
     }
 
     @MainActor

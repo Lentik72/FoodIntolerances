@@ -76,4 +76,24 @@ enum APIConfig {
         let urlString = "\(openWeatherBaseURL)/air_pollution/history?lat=\(latitude)&lon=\(longitude)&start=\(Int(start))&end=\(Int(end))&appid=\(apiKey)"
         return URL(string: urlString)
     }
+
+    /// Base URL for OpenWeather One Call 3.0 (separate subscription; a 401 error
+    /// body — not a transport failure — is what "not subscribed" looks like).
+    static let openWeatherOneCallBaseURL = "https://api.openweathermap.org/data/3.0"
+
+    /// Build a One Call day_summary URL for observed completed-day weather.
+    /// `date` is a local "yyyy-MM-dd" string; `tz` is the "±HH:MM" offset that
+    /// controls the provider's aggregation day (WITHOUT it, OpenWeather derives
+    /// the timezone from the location — for a remote manual location that would
+    /// disagree with the app's stored local day, so the caller always supplies
+    /// the app calendar's date-specific offset). "+" is percent-encoded (%2B) so
+    /// no query parser can read it as a space. Nil if the API key is missing.
+    static func oneCallDaySummaryURL(latitude: Double, longitude: Double, date: String, tz: String) -> URL? {
+        guard let apiKey = openWeatherAPIKey else {
+            return nil
+        }
+        let encodedTZ = tz.replacingOccurrences(of: "+", with: "%2B")
+        let urlString = "\(openWeatherOneCallBaseURL)/onecall/day_summary?lat=\(latitude)&lon=\(longitude)&date=\(date)&tz=\(encodedTZ)&units=metric&appid=\(apiKey)"
+        return URL(string: urlString)
+    }
 }
