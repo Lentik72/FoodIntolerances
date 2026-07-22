@@ -52,6 +52,11 @@ struct EnvironmentSummaryRow: View {
                             .font(.footnote)
                             .foregroundStyle(HealthTheme.inkMuted)
                             .multilineTextAlignment(.trailing)
+                    } else if let phase = headlineResult.moonPhase {
+                        MoonPhaseLabel(value: headline, phase: phase)
+                            .font(.footnote)
+                            .foregroundStyle(HealthTheme.inkMuted)
+                            .multilineTextAlignment(.trailing)
                     } else {
                         Text(headline)
                             .font(.footnote)
@@ -97,6 +102,10 @@ struct EnvironmentSummaryRow: View {
                     if let value = line.value {
                         if let aqi = line.aqi {
                             AQIValueLabel(value: value, aqi: aqi)
+                                .font(.footnote)
+                                .foregroundStyle(HealthTheme.ink)
+                        } else if let phase = line.moonPhase {
+                            MoonPhaseLabel(value: value, phase: phase)
                                 .font(.footnote)
                                 .foregroundStyle(HealthTheme.ink)
                         } else {

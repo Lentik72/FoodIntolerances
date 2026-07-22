@@ -122,4 +122,26 @@ struct EnvironmentSummaryFormatterTests {
         #expect(air.contains { $0.aqi == 42 && $0.value == "42 · Good" })
         #expect(air.contains { $0.aqi == 180 && $0.value == "180 · Unhealthy" })
     }
+
+    // Structural moon-phase plumbing — the label's input, never inferred from display text.
+    @Test func moonDetailLineCarriesPhaseOthersNil() {
+        let rows = EnvironmentSummaryFormatter.detailLines(day([temp(24, 12), moon("Waxing Gibbous"), airQuality(132), mercury()]), unit: c)
+        let moonLine = rows.first { $0.subtype == "moonPhase" }
+        #expect(moonLine?.moonPhase == "Waxing Gibbous")   // from the line's own event metadata
+        #expect(moonLine?.value == "Waxing Gibbous")       // display text unchanged
+        #expect(rows.first { $0.subtype == "temperature" }?.moonPhase == nil)
+        #expect(rows.first { $0.subtype == "airQuality" }?.moonPhase == nil)      // aqi line carries aqi, never a phase
+        #expect(rows.first { $0.subtype == "mercuryRetrograde" }?.moonPhase == nil)
+    }
+    @Test func headlineCarriesMoonPhaseOnlyWhenMoonLeads() {
+        // Backfill fallback: moon leads → phase set, aqi nil.
+        let moonLead = EnvironmentSummaryFormatter.headlineResult(day([moon("Full Moon")]), unit: c)
+        #expect(moonLead.text == "Full Moon")
+        #expect(moonLead.moonPhase == "Full Moon")
+        #expect(moonLead.aqi == nil)
+        // Temperature leads → no moon phase on the headline.
+        #expect(EnvironmentSummaryFormatter.headlineResult(day([temp(24, 12), moon("Full Moon")]), unit: c).moonPhase == nil)
+        // Poor air leads → no moon phase on the headline.
+        #expect(EnvironmentSummaryFormatter.headlineResult(day([moon("Full Moon"), airQuality(132)]), unit: c).moonPhase == nil)
+    }
 }
