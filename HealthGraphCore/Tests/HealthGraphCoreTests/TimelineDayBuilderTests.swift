@@ -245,4 +245,20 @@ struct TimelineDayBuilderTests {
         #expect(TimelineDayBuilder.days(from: [env("season")], timeZone: tz,
                                         sessionizeSleep: false, groupEnvironment: false).isEmpty)
     }
+
+    /// Observed-wins precedence applies in RAW mode too — the filter lives in
+    /// days(), so search can never show a completed day's forecast next to its actuals.
+    @Test func rawModeAppliesObservedPrecedence() {
+        let tz = TimeZone(identifier: "UTC")!
+        func weather(_ provenance: TemporalProvenance) -> HealthEvent {
+            HealthEvent(timestamp: Date(timeIntervalSince1970: 43_200), timezoneID: "UTC",
+                        category: .environment, subtype: "temperature", value: 20, source: .weatherAPI,
+                        metadata: try! JSONEncoder().encode(["provenance": provenance.rawValue]))
+        }
+        let days = TimelineDayBuilder.days(from: [weather(.forecast), weather(.observedCompletedDay)], timeZone: tz,
+                                           sessionizeSleep: false, groupEnvironment: false)
+        let temps = days.flatMap(\.events).filter { $0.subtype == "temperature" }
+        #expect(temps.count == 1)
+        #expect(temps.first?.temporalProvenance == .observedCompletedDay)
+    }
 }

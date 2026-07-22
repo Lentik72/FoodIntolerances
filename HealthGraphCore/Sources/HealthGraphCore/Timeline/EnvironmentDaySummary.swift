@@ -30,6 +30,47 @@ public enum EnvironmentDaySummaryBuilder {
     /// hemisphere-aware exposure could regenerate the history via backfill.
     public static let retiredSubtypes: Set<String> = ["season"]
 
+    /// Weather subtypes where an observed completed-day reading supersedes the
+    /// morning forecast IN DISPLAY for the same local day ("observed wins").
+    static let observedPrecedenceSubtypes: Set<String> = ["temperature", "humidity"]
+
+    /// Presentation-only precedence: per local day + subtype, when at least one
+    /// `.observedCompletedDay` event exists, that day+subtype's `.forecast` events
+    /// are dropped and duplicate observed events resolve deterministically (latest
+    /// `createdAt`, then `id.uuidString`). ONLY those two drops are licensed —
+    /// any other or missing provenance passes through untouched. Resolved
+    /// independently per day+subtype — an observed temperature never suppresses
+    /// humidity or another day. Stored events are untouched; mining reads the
+    /// store, not this filter.
+    public static func observedPrecedenceFiltered(_ events: [HealthEvent], timeZone: TimeZone) -> [HealthEvent] {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        struct Key: Hashable { let day: Date; let subtype: String }
+        var winner: [Key: HealthEvent] = [:]
+        for e in events where e.category == .environment
+            && observedPrecedenceSubtypes.contains(e.subtype ?? "")
+            && e.temporalProvenance == .observedCompletedDay {
+            let key = Key(day: calendar.startOfDay(for: e.timestamp), subtype: e.subtype ?? "")
+            if let cur = winner[key] {
+                if (e.createdAt, e.id.uuidString) > (cur.createdAt, cur.id.uuidString) { winner[key] = e }
+            } else {
+                winner[key] = e
+            }
+        }
+        guard !winner.isEmpty else { return events }
+        return events.filter { e in
+            guard e.category == .environment,
+                  let subtype = e.subtype, observedPrecedenceSubtypes.contains(subtype),
+                  let w = winner[Key(day: calendar.startOfDay(for: e.timestamp), subtype: subtype)]
+            else { return true }               // not a precedence subtype, or no observed that day → untouched
+            switch e.temporalProvenance {
+            case .forecast?:             return false          // superseded by the observed sibling
+            case .observedCompletedDay?: return e.id == w.id   // deterministic winner among observed
+            default:                     return true           // .currentSnapshot / nil / future kinds: not ours to drop
+            }
+        }
+    }
+
     /// Folds `.environment` events into one summary per local calendar day, newest
     /// day first. Pure; accepts any unsorted slice; input order never affects the
     /// result. Non-environment events are ignored. (All env events for a day share
@@ -37,8 +78,9 @@ public enum EnvironmentDaySummaryBuilder {
     public static func summaries(from events: [HealthEvent], timeZone: TimeZone) -> [EnvironmentDaySummary] {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
-        let env = events.filter { $0.category == .environment
-            && !retiredSubtypes.contains($0.subtype ?? "") }
+        let env = observedPrecedenceFiltered(events, timeZone: timeZone)
+            .filter { $0.category == .environment
+                && !retiredSubtypes.contains($0.subtype ?? "") }
         guard !env.isEmpty else { return [] }
         let byDay = Dictionary(grouping: env) { calendar.startOfDay(for: $0.timestamp) }
         return byDay.map { day, evs in
