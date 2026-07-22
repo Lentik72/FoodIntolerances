@@ -192,7 +192,11 @@ struct EventDetailView: View {
               let dict = try? JSONDecoder().decode([String: String].self, from: data) else { return [] }
         let labels = ["kcal": "Calories", "distanceKm": "Distance (km)",
                       "phase": "Moon phase", "season": "Season"]
-        return dict.sorted { $0.key < $1.key }
+        // "provenance" is the engine's TemporalProvenance flag, not health information —
+        // presentation-only filter (the stored metadata keeps it; mining depends on it).
+        // ONLY this key: other unknown keys stay visible, they may carry imported data.
+        return dict.filter { $0.key != "provenance" }
+            .sorted { $0.key < $1.key }
             .map { (key: $0.key, label: labels[$0.key] ?? $0.key, value: $0.value) }
     }
 }
