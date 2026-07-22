@@ -6,7 +6,6 @@ public struct EnvironmentalReading: Sendable {
     public let pressureHPa: Double?
     public let previousPressureHPa: Double?
     public let moonPhaseName: String?
-    public let season: String?
     public let isMercuryRetrograde: Bool
     public let timezoneID: String
     public let temperatureHighC: Double?
@@ -15,7 +14,7 @@ public struct EnvironmentalReading: Sendable {
     public let airQualityAQI: Int?
 
     public init(date: Date, pressureHPa: Double?, previousPressureHPa: Double?,
-                moonPhaseName: String?, season: String?,
+                moonPhaseName: String?,
                 isMercuryRetrograde: Bool, timezoneID: String,
                 temperatureHighC: Double? = nil, temperatureLowC: Double? = nil, humidityPct: Double? = nil,
                 airQualityAQI: Int? = nil) {
@@ -23,7 +22,6 @@ public struct EnvironmentalReading: Sendable {
         self.pressureHPa = pressureHPa
         self.previousPressureHPa = previousPressureHPa
         self.moonPhaseName = moonPhaseName
-        self.season = season
         self.isMercuryRetrograde = isMercuryRetrograde
         self.timezoneID = timezoneID
         self.temperatureHighC = temperatureHighC
@@ -79,12 +77,6 @@ public enum EnvironmentalEventFactory {
         }
         if r.isMercuryRetrograde {
             events.append(event("mercuryRetrograde", provenance: .observedCompletedDay))
-        }
-        if let season = r.season {
-            // Daily exposure — the engine correlates against season presence,
-            // not just the four transition days a year.
-            events.append(event("season", metadata: ["season": season],
-                                provenance: .observedCompletedDay))
         }
         if let high = r.temperatureHighC, let low = r.temperatureLowC {
             // Weather is forecast-derived → display/warnings only, never mined.
