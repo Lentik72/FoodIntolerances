@@ -46,10 +46,17 @@ struct EnvironmentSummaryRow: View {
                         .foregroundStyle(HealthTheme.ink)
                         .lineLimit(2)
                     Spacer(minLength: 8)
-                    Text(headline)
-                        .font(.footnote)
-                        .foregroundStyle(HealthTheme.inkMuted)
-                        .multilineTextAlignment(.trailing)
+                    if let aqi = EnvironmentSummaryFormatter.poorAirAQI(summary) {
+                        AQIValueLabel(value: headline, aqi: aqi)
+                            .font(.footnote)
+                            .foregroundStyle(HealthTheme.inkMuted)
+                            .multilineTextAlignment(.trailing)
+                    } else {
+                        Text(headline)
+                            .font(.footnote)
+                            .foregroundStyle(HealthTheme.inkMuted)
+                            .multilineTextAlignment(.trailing)
+                    }
                     if isExpandable {
                         Image(systemName: "chevron.right")
                             .font(.caption.weight(.semibold))
@@ -80,16 +87,22 @@ struct EnvironmentSummaryRow: View {
 
     private var breakdown: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(detailLines, id: \.label) { line in
+            ForEach(detailLines) { line in
                 HStack(spacing: 8) {
                     Text(line.label)
                         .font(.footnote)
                         .foregroundStyle(HealthTheme.inkSecondary)
                     Spacer()
                     if let value = line.value {
-                        Text(value)
-                            .font(.footnote)
-                            .foregroundStyle(HealthTheme.ink)
+                        if let aqi = line.aqi {
+                            AQIValueLabel(value: value, aqi: aqi)
+                                .font(.footnote)
+                                .foregroundStyle(HealthTheme.ink)
+                        } else {
+                            Text(value)
+                                .font(.footnote)
+                                .foregroundStyle(HealthTheme.ink)
+                        }
                     }
                 }
                 .accessibilityElement(children: .combine)
