@@ -43,6 +43,20 @@ struct EnvironmentalEmitterTests {
             lastThrough = through
             return rangeResult
         }
+
+        /// Scripted per-day weather; days not listed return `weatherDefault`.
+        /// Default `.fetchError` keeps every pre-existing AQI/orchestration test
+        /// meaningful unchanged: the weather pass aborts, emits nothing.
+        var weatherByDay: [Date: WeatherDayResult] = [:]
+        var weatherDefault: WeatherDayResult = .fetchError
+        private(set) var weatherCallCount = 0
+        private(set) var weatherDaysRequested: [Date] = []
+
+        func fetchCompletedWeatherDay(for day: Date) async -> WeatherDayResult {
+            weatherCallCount += 1
+            weatherDaysRequested.append(day)
+            return weatherByDay[day] ?? weatherDefault
+        }
     }
 
     /// In-memory `WatermarkStore` (no `UserDefaults`).
@@ -339,5 +353,125 @@ struct EnvironmentalEmitterTests {
         #expect(aqi.count == 2)                                     // 06-08 + 06-10, not duplicated
         let day10 = aqi.filter { cal.startOfDay(for: $0.timestamp) == cal.startOfDay(for: day(cal, 6, 10)) }
         #expect(day10.count == 1)
+    }
+
+    // MARK: - Observed-weather backfill
+
+    private let weatherDayKey = EnvironmentalEventEmitter.lastWeatherDayKey
+
+    private func observedWeatherDays(_ db: AppDatabase, _ cal: Calendar) async throws -> Set<Date> {
+        let events = try await allEvents(db)
+        return Set(events.filter { $0.subtype == "temperature" && $0.temporalProvenance == .observedCompletedDay }
+            .map { cal.startOfDay(for: $0.timestamp) })
+    }
+
+    /// Value days emit observed temp (+humidity when present) and advance the
+    /// weather watermark; a nil afternoon humidity emits NO humidity event.
+    @Test func weatherBackfillEmitsObservedDaysAndMissingHumidityEmitsNoEvent() async throws {
+        let cal = utc
+        let db = try AppDatabase.inMemory()
+        let stub = StubProvider()
+        let store = MemoryWatermarkStore()
+        let now = day(cal, 6, 10).addingTimeInterval(9 * 3600)   // 2025-06-10 09:00
+        let d8 = day(cal, 6, 8), d9 = day(cal, 6, 9)
+        store.set(day(cal, 6, 7), for: weatherDayKey)            // watermark → start = 06-08
+        stub.weatherByDay = [d8: .value(highC: 24, lowC: 12, humidityPct: 64),
+                             d9: .value(highC: 30, lowC: 18, humidityPct: nil)]
+        await EnvironmentalEventEmitter.emitIfNeeded(database: db, service: stub,
+                                                     now: { now }, calendar: cal, store: store)
+        let events = try await allEvents(db)
+        let observed = try await observedWeatherDays(db, cal)
+        #expect(observed == [d8, d9])
+        let d8Humidity = events.first { $0.subtype == "humidity" && cal.startOfDay(for: $0.timestamp) == d8 }
+        #expect(d8Humidity?.temporalProvenance == .observedCompletedDay)
+        #expect(d8Humidity?.value == 64)
+        #expect(!events.contains { $0.subtype == "humidity" && $0.temporalProvenance == .observedCompletedDay
+            && cal.startOfDay(for: $0.timestamp) == d9 })        // nil afternoon → no observed humidity event
+        #expect(store.date(for: weatherDayKey) == d9)
+        #expect(stub.weatherCallCount == 2)
+        // Today's forecast events are still forecast — precedence is display-side, not ingest-side.
+        #expect(events.contains { $0.subtype == "temperature" && $0.temporalProvenance == .forecast })
+    }
+
+    /// A per-day fetchError aborts the WHOLE pass: nothing ingested, watermark held.
+    @Test func weatherFetchErrorAbortsPassWithoutIngestOrAdvance() async throws {
+        let cal = utc
+        let db = try AppDatabase.inMemory()
+        let stub = StubProvider()
+        let store = MemoryWatermarkStore()
+        let now = day(cal, 6, 10).addingTimeInterval(9 * 3600)
+        store.set(day(cal, 6, 7), for: weatherDayKey)
+        stub.weatherByDay = [day(cal, 6, 8): .value(highC: 24, lowC: 12, humidityPct: 64)]
+        // 06-09 falls to weatherDefault = .fetchError → abort; even 06-08's fetched value must not ingest.
+        await EnvironmentalEventEmitter.emitIfNeeded(database: db, service: stub,
+                                                     now: { now }, calendar: cal, store: store)
+        #expect(try await observedWeatherDays(db, cal).isEmpty)
+        #expect(store.date(for: weatherDayKey) == day(cal, 6, 7))   // held
+    }
+
+    /// Recent absent day (grace) holds the contiguous watermark; old absent advances it.
+    @Test func weatherWatermarkStopsAtRecentGapButAdvancesOverOldGap() async throws {
+        let cal = utc
+        let db = try AppDatabase.inMemory()
+        let stub = StubProvider()
+        let store = MemoryWatermarkStore()
+        let now = day(cal, 6, 10).addingTimeInterval(9 * 3600)   // yesterday = 06-09; graceCutoff = 06-07
+        store.set(day(cal, 6, 5), for: weatherDayKey)            // start = 06-06
+        stub.weatherByDay = [day(cal, 6, 6): .absent,             // old gap → resolved-absent, advances
+                             day(cal, 6, 7): .value(highC: 20, lowC: 10, humidityPct: 50),
+                             day(cal, 6, 8): .absent,             // RECENT gap → holds contiguity
+                             day(cal, 6, 9): .value(highC: 22, lowC: 11, humidityPct: 55)]
+        await EnvironmentalEventEmitter.emitIfNeeded(database: db, service: stub,
+                                                     now: { now }, calendar: cal, store: store)
+        let observed = try await observedWeatherDays(db, cal)
+        #expect(observed == [day(cal, 6, 7), day(cal, 6, 9)])     // beyond-gap value still emits (idempotent)
+        #expect(store.date(for: weatherDayKey) == day(cal, 6, 7)) // stopped before the recent gap
+    }
+
+    /// Unset watermark → the weather loop requests EXACTLY the capped window:
+    /// 30 distinct calendar days, yesterday−29 through yesterday, stepped
+    /// correctly across the LA fall-back DST transition (its own loop — the AQI
+    /// cap test cannot protect it).
+    @Test func weatherNilWatermarkRequestsExactlyThirtyDaysAcrossDSTFallBack() async throws {
+        let cal = losAngeles
+        let db = try AppDatabase.inMemory()
+        let stub = StubProvider()
+        let store = MemoryWatermarkStore()
+        stub.weatherDefault = .absent                             // every day resolves; loop must run the full window
+        let now = day(cal, 11, 9).addingTimeInterval(9 * 3600)    // 2025-11-09 09:00 PST; fall-back was 11-02
+        await EnvironmentalEventEmitter.emitIfNeeded(database: db, service: stub,
+                                                     now: { now }, calendar: cal, store: store)
+        #expect(stub.weatherCallCount == 30)
+        let requested = stub.weatherDaysRequested.map { cal.startOfDay(for: $0) }
+        #expect(Set(requested).count == 30)                       // 30 DISTINCT local days (no DST double-step)
+        #expect(requested.first == day(cal, 10, 10))              // yesterday − 29
+        #expect(requested.last == day(cal, 11, 8))                // yesterday
+        var expected = day(cal, 10, 10)
+        for d in requested {                                      // contiguous local-day stepping
+            #expect(d == expected)
+            expected = cal.date(byAdding: .day, value: 1, to: expected)!
+        }
+    }
+
+    /// The weather throttle is independent: a second foreground within the hour
+    /// makes no weather calls; after the hour it retries.
+    @Test func weatherRetryThrottleIsIndependentOfAQI() async throws {
+        let cal = utc
+        let db = try AppDatabase.inMemory()
+        let stub = StubProvider()
+        let store = MemoryWatermarkStore()
+        var now = day(cal, 6, 10).addingTimeInterval(9 * 3600)
+        await EnvironmentalEventEmitter.emitIfNeeded(database: db, service: stub,
+                                                     now: { now }, calendar: cal, store: store)
+        let firstCalls = stub.weatherCallCount
+        #expect(firstCalls >= 1)
+        now = now.addingTimeInterval(600)                        // +10 min → throttled
+        await EnvironmentalEventEmitter.emitIfNeeded(database: db, service: stub,
+                                                     now: { now }, calendar: cal, store: store)
+        #expect(stub.weatherCallCount == firstCalls)
+        now = now.addingTimeInterval(3600)                       // past the hour → retries
+        await EnvironmentalEventEmitter.emitIfNeeded(database: db, service: stub,
+                                                     now: { now }, calendar: cal, store: store)
+        #expect(stub.weatherCallCount > firstCalls)
     }
 }
