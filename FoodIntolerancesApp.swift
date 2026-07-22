@@ -38,6 +38,9 @@ struct FoodIntolerancesApp: App {
         _redFlagPresenter = StateObject(wrappedValue: RedFlagPresenter(muteStore: muteStore))
 
         setupGlobalErrorHandling()
+
+        // Flash-free: reconcile the measurement preference before the scene renders.
+        UnitPreferenceBootstrap.reconcileAtLaunch(container: sharedModelContainer)
     }
     
     var sharedModelContainer: ModelContainer = {
@@ -107,25 +110,7 @@ struct FoodIntolerancesApp: App {
                             .environmentObject(redFlagPresenter)
                     }
                 }
-                .modelContainer(for: [
-                    LogEntry.self,
-                    TrackedItem.self,
-                    Symptom.self,
-                    TherapyProtocol.self,
-                    TherapyProtocolItem.self,
-                    CabinetItem.self,
-                    AvoidedItem.self,
-                    OngoingSymptom.self,
-                    SymptomCheckIn.self,
-                    MoodEntry.self,
-                    ProtocolRequirement.self,
-                    // AI Assistant Models
-                    UserProfile.self,
-                    UserAllergy.self,
-                    AIMemory.self,
-                    HealthTestResult.self,
-                    HealthScreeningSchedule.self
-                ])
+                .modelContainer(sharedModelContainer)
                 .resetSwiftDataCache()
                 .onAppear {
                     Logger.debug("App started in DEBUG mode", category: .app)
