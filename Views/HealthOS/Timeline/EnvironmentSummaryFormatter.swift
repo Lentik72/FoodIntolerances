@@ -27,7 +27,7 @@ struct EnvironmentHeadline {
 /// summary row, honoring the user's °C/°F setting for temperature. Pure.
 enum EnvironmentSummaryFormatter {
     /// Collapsed one-liner + the AQI it displays (if any). Temperature range (· humidity)
-    /// when present; else moon phase (· season); else the single remaining reading. A
+    /// when present; else moon phase; else the single remaining reading. A
     /// poor-air day leads with the AQI; a day whose only/first reading is airQuality shows
     /// it via the degenerate fallback — both set `aqi` so the row badges them.
     static func headlineResult(_ summary: EnvironmentDaySummary, unit: TemperatureUnit) -> EnvironmentHeadline {
@@ -40,7 +40,6 @@ enum EnvironmentSummaryFormatter {
             return EnvironmentHeadline(text: temp, aqi: nil)
         }
         if let moon = value("moonPhase", summary, unit) {
-            if let season = value("season", summary, unit) { return EnvironmentHeadline(text: "\(moon) · \(season)", aqi: nil) }
             return EnvironmentHeadline(text: moon, aqi: nil)
         }
         if let first = detailLines(summary, unit: unit).first {

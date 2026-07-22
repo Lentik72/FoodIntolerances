@@ -510,7 +510,7 @@ struct HealthGraphDebugView: View {
 
             // Enrich the most recent 3 days with the FULL environment set so the
             // collapsed "Environment" Timeline row demonstrates every detail line —
-            // Air pressure (with the pressure-drop fold) / Moon phase / Season /
+            // Air pressure (with the pressure-drop fold) / Moon phase /
             // Mercury retrograde (a value-less presence line) — alongside Temperature
             // + Humidity. These subtypes are otherwise emitted only by real live
             // logging, so a weather-demo day never shows the complete row without this.
@@ -529,12 +529,6 @@ struct HealthGraphDebugView: View {
                     source: .weatherAPI, metadata: try? JSONEncoder().encode(
                         ["phase": "Waxing Gibbous", "provenance": TemporalProvenance.observedCompletedDay.rawValue]),
                     dedupKey: DedupKey.daily(.environment, "moonPhase", dayStart: dayStart,
-                                             provenance: .observedCompletedDay)))
-                events.append(HealthEvent(
-                    timestamp: stamp, timezoneID: tz, category: .environment, subtype: "season",
-                    source: .weatherAPI, metadata: try? JSONEncoder().encode(
-                        ["season": "Summer", "provenance": TemporalProvenance.observedCompletedDay.rawValue]),
-                    dedupKey: DedupKey.daily(.environment, "season", dayStart: dayStart,
                                              provenance: .observedCompletedDay)))
                 // Most recent day only: a pressure drop (folds into the Air pressure
                 // line) and mercury retrograde (a value-less presence line).

@@ -41,7 +41,7 @@ struct UserDefaultsWatermarkStore: WatermarkStore {
 /// Emits daily environment exposure events on app foreground (spec §6.6).
 ///
 /// No global daily lock: today's forecast weather + current pressure + the
-/// deterministic date-facts (moon/season/mercury) emit every foreground (the
+/// deterministic date-facts (moon/mercury) emit every foreground (the
 /// service's own cooldown throttles the actual network refresh; dedup keys make
 /// the re-emit idempotent). Retrospective AQI for each COMPLETED local day is
 /// backfilled from a contiguous per-day watermark up to yesterday, via ONE
@@ -90,7 +90,6 @@ enum EnvironmentalEventEmitter {
             pressureHPa: service.currentPressure > 0 ? service.currentPressure : nil,
             previousPressureHPa: service.previousPressure > 0 ? service.previousPressure : nil,
             moonPhaseName: getMoonPhase(for: today),
-            season: getCurrentSeason(for: today),
             isMercuryRetrograde: MercuryRetrograde.isRetrograde(on: today),
             timezoneID: tz,
             temperatureHighC: service.forecastHighC,
@@ -132,7 +131,7 @@ enum EnvironmentalEventEmitter {
             let noon = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: day)!
             let reading = EnvironmentalReading(
                 date: noon, pressureHPa: nil, previousPressureHPa: nil,
-                moonPhaseName: nil, season: nil, isMercuryRetrograde: false,
+                moonPhaseName: nil, isMercuryRetrograde: false,
                 timezoneID: tz, airQualityAQI: aqi)
             aqiEvents.append(contentsOf: EnvironmentalEventFactory.events(for: reading))
         }
@@ -160,8 +159,8 @@ enum EnvironmentalEventEmitter {
         }
     }
 
-    /// Historical backfill of the date-derived signals (moon phase, season,
-    /// Mercury retrograde) — pure functions of the date, so a year of exposure
+    /// Historical backfill of the date-derived signals (moon phase, Mercury
+    /// retrograde) — pure functions of the date, so a year of exposure
     /// history is free (spec §5 cold-start rationale). No historical pressure:
     /// the weather API has no history. Idempotent via daily dedupKeys.
     /// NOTE: MercuryRetrograde.periods covers 2025–2026 only; days before its
@@ -178,7 +177,6 @@ enum EnvironmentalEventEmitter {
             let reading = EnvironmentalReading(
                 date: date, pressureHPa: nil, previousPressureHPa: nil,
                 moonPhaseName: getMoonPhase(for: date),
-                season: getCurrentSeason(for: date),
                 isMercuryRetrograde: MercuryRetrograde.isRetrograde(on: date),
                 timezoneID: tz
             )

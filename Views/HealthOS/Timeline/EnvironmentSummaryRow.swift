@@ -2,7 +2,7 @@ import SwiftUI
 import HealthGraphCore
 
 /// One expandable per-day environment row. Collapsed: "Environment" + a headline
-/// that leads with weather (`12–24°C · 69%`) and falls back to moon · season.
+/// that leads with weather (`12–24°C · 69%`) and falls back to the moon phase.
 /// Expanded: the full labeled reading list. Auto-logged environment data is a
 /// display-time aggregate — never navigable, editable, or deletable.
 struct EnvironmentSummaryRow: View {

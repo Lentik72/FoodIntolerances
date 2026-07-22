@@ -74,19 +74,27 @@ public enum TimelineDayBuilder {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
 
+        // Stored rows of retired env subtypes (season) must never display, in ANY
+        // mode — raw/search rows included. Filtered here so no caller can leak
+        // them; the summary builder re-filters for its own public callers.
+        let visibleEvents = events.filter {
+            !($0.category == .environment &&
+              EnvironmentDaySummaryBuilder.retiredSubtypes.contains($0.subtype ?? ""))
+        }
+
         // Sleep duration events feed the session builder INCLUDING sub-minute
         // fragments — totals must be exact even though such rows never render.
         let isSessionizable: (HealthEvent) -> Bool = { $0.category == .sleep && $0.endTimestamp != nil }
         let sessions = sessionizeSleep
-            ? SleepSessionBuilder.sessions(from: events.filter(isSessionizable), timeZone: timeZone)
+            ? SleepSessionBuilder.sessions(from: visibleEvents.filter(isSessionizable), timeZone: timeZone)
                 // Parity with the >=60s row filter below: an isolated sub-minute
                 // fragment must not become a permanent "0m" session row.
                 .filter { $0.end.timeIntervalSince($0.start) >= 60 }
             : []
         let summaries = groupEnvironment
-            ? EnvironmentDaySummaryBuilder.summaries(from: events, timeZone: timeZone)
+            ? EnvironmentDaySummaryBuilder.summaries(from: visibleEvents, timeZone: timeZone)
             : []
-        var rowEvents = sessionizeSleep ? events.filter { !isSessionizable($0) } : events
+        var rowEvents = sessionizeSleep ? visibleEvents.filter { !isSessionizable($0) } : visibleEvents
         if groupEnvironment { rowEvents = rowEvents.filter { $0.category != .environment } }
 
         // HealthKit emits sub-30-second stages that would otherwise render as

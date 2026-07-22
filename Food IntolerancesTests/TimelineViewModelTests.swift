@@ -70,6 +70,27 @@ struct TimelineViewModelTests {
         #expect(vm.days.flatMap(\.events).count == 2)
     }
 
+    /// Integration: the core retired-subtype filter (TimelineDayBuilder) reaches the
+    /// search surface — no season-specific code exists in TimelineViewModel.
+    @Test func searchNeverShowsRetiredEnvironmentSubtypes() async throws {
+        let (_, store) = try makeStore()
+        let base = Date(timeIntervalSince1970: 1_750_000_000)
+        try await store.save([
+            HealthEvent(timestamp: base, category: .environment, subtype: "season",
+                        source: .weatherAPI, createdAt: base),
+            HealthEvent(timestamp: base.addingTimeInterval(60), category: .environment, subtype: "airQuality",
+                        value: 42, source: .weatherAPI, createdAt: base),
+        ])
+        let vm = TimelineViewModel(store: store, timeZone: TimeZone(identifier: "UTC")!, pageSize: 50)
+        vm.searchText = "season"
+        await vm.searchTextChanged()
+        #expect(vm.isSearchActive)
+        #expect(vm.days.flatMap(\.events).isEmpty)   // the stored season row must never display
+        vm.searchText = "airquality"
+        await vm.searchTextChanged()
+        #expect(vm.days.flatMap(\.events).map(\.subtype) == ["airQuality"])   // other env subtypes still pass
+    }
+
     @Test func deleteRemovesLocallyAndUndoRestores() async throws {
         let (_, store) = try makeStore()
         let events = try await seed(store, count: 3)

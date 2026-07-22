@@ -231,4 +231,18 @@ struct TimelineDayBuilderTests {
         #expect(days[0].items.allSatisfy { if case .event = $0 { true } else { false } })   // raw rows, no summary
         #expect(days[0].events.count == 2)
     }
+
+    /// Retired env subtypes are invisible in RAW mode too — the filter lives in
+    /// days(), not in any one caller (search or otherwise).
+    @Test func rawModeFiltersRetiredEnvironmentSubtypes() {
+        let tz = TimeZone(identifier: "UTC")!
+        func env(_ s: String, value: Double? = nil) -> HealthEvent { HealthEvent(timestamp: Date(timeIntervalSince1970: 43_200),
+            timezoneID: "UTC", category: .environment, subtype: s, value: value, source: .weatherAPI) }
+        let days = TimelineDayBuilder.days(from: [env("season"), env("airQuality", value: 42)], timeZone: tz,
+                                           sessionizeSleep: false, groupEnvironment: false)
+        #expect(days.flatMap(\.events).map(\.subtype) == ["airQuality"])   // season removed, airQuality remains
+        // A retired-only slice yields no day at all, not an empty day.
+        #expect(TimelineDayBuilder.days(from: [env("season")], timeZone: tz,
+                                        sessionizeSleep: false, groupEnvironment: false).isEmpty)
+    }
 }

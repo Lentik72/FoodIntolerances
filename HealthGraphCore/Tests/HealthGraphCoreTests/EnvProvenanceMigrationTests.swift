@@ -124,7 +124,7 @@ struct EnvProvenanceMigrationTests {
         // Re-emit the equivalent NEW-format event.
         let reading = EnvironmentalReading(
             date: Self.ts, pressureHPa: nil, previousPressureHPa: nil,
-            moonPhaseName: "Full Moon", season: nil,
+            moonPhaseName: "Full Moon",
             isMercuryRetrograde: false, timezoneID: Self.tz)
         let newEvents = EnvironmentalEventFactory.events(for: reading)
         #expect(newEvents.first { $0.subtype == "moonPhase" }?.dedupKey == newKey) // keys align

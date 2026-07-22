@@ -6,17 +6,17 @@ struct EnvironmentalEventFactoryTests {
     let noon = Date(timeIntervalSince1970: 1_750_075_200)
 
     func reading(date: Date? = nil, pressure: Double? = 1013, previous: Double? = 1015,
-                 moon: String? = "Full Moon 🌕", season: String? = "Summer",
-                 retrograde: Bool = false) -> EnvironmentalReading {
+                 moon: String? = "Full Moon 🌕", retrograde: Bool = false) -> EnvironmentalReading {
         EnvironmentalReading(
             date: date ?? noon, pressureHPa: pressure, previousPressureHPa: previous,
-            moonPhaseName: moon, season: season,
+            moonPhaseName: moon,
             isMercuryRetrograde: retrograde, timezoneID: "UTC")
     }
 
-    @Test func emitsPressureMoonAndSeasonOnAQuietDay() throws {
+    @Test func emitsPressureAndMoonOnAQuietDay() throws {
         let events = EnvironmentalEventFactory.events(for: reading())
-        #expect(events.count == 3) // pressure + moonPhase + season; no drop, no retrograde
+        #expect(events.count == 2) // pressure + moonPhase; no drop, no retrograde
+        #expect(!events.contains { $0.subtype == "season" })   // season retired — never emitted
         #expect(events.allSatisfy { $0.category == .environment })
         #expect(events.allSatisfy { $0.source == .weatherAPI })
         #expect(events.allSatisfy { $0.dedupKey != nil })
@@ -26,9 +26,6 @@ struct EnvironmentalEventFactoryTests {
         let moon = try #require(events.first { $0.subtype == "moonPhase" })
         let moonMeta = try JSONDecoder().decode([String: String].self, from: moon.metadata ?? Data())
         #expect(moonMeta["phase"] == "Full Moon") // emoji stripped
-        let season = try #require(events.first { $0.subtype == "season" })
-        let seasonMeta = try JSONDecoder().decode([String: String].self, from: season.metadata ?? Data())
-        #expect(seasonMeta["season"] == "Summer") // daily exposure, not a transition marker
     }
 
     @Test func emitsPressureDropAtThreshold() {
@@ -52,7 +49,6 @@ struct EnvironmentalEventFactoryTests {
         #expect(!events.contains { $0.subtype == "pressure" })
         #expect(!events.contains { $0.subtype == "pressureDrop" })
         #expect(events.contains { $0.subtype == "moonPhase" })
-        #expect(events.contains { $0.subtype == "season" })
     }
 
     @Test func distinctDaysProduceDistinctDailyKeys() {
@@ -70,14 +66,14 @@ struct EnvironmentalEventFactoryTests {
         _ = try await pipeline.ingest(EnvironmentalEventFactory.events(for: reading()))
         _ = try await pipeline.ingest(EnvironmentalEventFactory.events(for: reading(pressure: 1012)))
         let store = GRDBEventStore(database: db)
-        #expect(try await store.count() == 3) // same day: updated, not duplicated
+        #expect(try await store.count() == 2) // same day: updated, not duplicated (pressure + moonPhase)
         let pressure = try await store.recentEvents(limit: 10).first { $0.subtype == "pressure" }
         #expect(pressure?.value == 1012) // latest reading wins (equal rank -> update)
     }
 
     @Test func emitsNoTempHumidityWhenNil() {
         let r = EnvironmentalReading(date: Date(timeIntervalSince1970: 1_700_000_000),
-            pressureHPa: 1013, previousPressureHPa: nil, moonPhaseName: nil, season: nil,
+            pressureHPa: 1013, previousPressureHPa: nil, moonPhaseName: nil,
             isMercuryRetrograde: false, timezoneID: "UTC")   // temp/humidity default nil
         let events = EnvironmentalEventFactory.events(for: r)
         #expect(!events.contains { $0.subtype == "temperature" || $0.subtype == "humidity" })
@@ -85,7 +81,7 @@ struct EnvironmentalEventFactoryTests {
 
     @Test func emitsExactlyOneCombinedTemperatureWithLowInMetadata() {
         let r = EnvironmentalReading(date: Date(timeIntervalSince1970: 1_700_000_000),
-            pressureHPa: nil, previousPressureHPa: nil, moonPhaseName: nil, season: nil,
+            pressureHPa: nil, previousPressureHPa: nil, moonPhaseName: nil,
             isMercuryRetrograde: false, timezoneID: "UTC",
             temperatureHighC: 24, temperatureLowC: 12, humidityPct: 68)
         let events = EnvironmentalEventFactory.events(for: r)
@@ -101,7 +97,7 @@ struct EnvironmentalEventFactoryTests {
         func temps(high: Double?, low: Double?) -> [HealthEvent] {
             EnvironmentalEventFactory.events(for: EnvironmentalReading(
                 date: Date(timeIntervalSince1970: 1_700_000_000),
-                pressureHPa: nil, previousPressureHPa: nil, moonPhaseName: nil, season: nil,
+                pressureHPa: nil, previousPressureHPa: nil, moonPhaseName: nil,
                 isMercuryRetrograde: false, timezoneID: "UTC",
                 temperatureHighC: high, temperatureLowC: low, humidityPct: 55))
         }
@@ -112,10 +108,10 @@ struct EnvironmentalEventFactoryTests {
 
     @Test func emitsAirQualityWhenAQIPresent() {
         let r = EnvironmentalReading(date: Date(timeIntervalSince1970: 1_700_000_000),
-            pressureHPa: nil, previousPressureHPa: nil, moonPhaseName: nil, season: nil,
+            pressureHPa: nil, previousPressureHPa: nil, moonPhaseName: nil,
             isMercuryRetrograde: false, timezoneID: "UTC", airQualityAQI: 132)
         let events = EnvironmentalEventFactory.events(for: r)
-        #expect(events.count == 1)   // no pressure/moon/season/temp/humidity this day
+        #expect(events.count == 1)   // no pressure/moon/temp/humidity this day
         let aq = events.first { $0.subtype == "airQuality" }
         #expect(aq?.value == 132)
         #expect(aq?.unit == nil)
@@ -124,7 +120,7 @@ struct EnvironmentalEventFactoryTests {
 
     @Test func nilAirQualityAQISkipsAirQualityEvent() {
         let r = EnvironmentalReading(date: Date(timeIntervalSince1970: 1_700_000_000),
-            pressureHPa: nil, previousPressureHPa: nil, moonPhaseName: nil, season: nil,
+            pressureHPa: nil, previousPressureHPa: nil, moonPhaseName: nil,
             isMercuryRetrograde: false, timezoneID: "UTC")   // airQualityAQI defaults nil
         let events = EnvironmentalEventFactory.events(for: r)
         #expect(!events.contains { $0.subtype == "airQuality" })
@@ -136,7 +132,7 @@ struct EnvironmentalEventFactoryTests {
     @Test func stampsPerSignalProvenanceOnEveryEvent() {
         let r = EnvironmentalReading(
             date: noon, pressureHPa: 1004, previousPressureHPa: 1015,   // pressure + pressureDrop
-            moonPhaseName: "Full Moon 🌕", season: "Summer",
+            moonPhaseName: "Full Moon 🌕",
             isMercuryRetrograde: true, timezoneID: "UTC",
             temperatureHighC: 24, temperatureLowC: 12, humidityPct: 68, airQualityAQI: 132)
         let events = EnvironmentalEventFactory.events(for: r)
@@ -151,7 +147,6 @@ struct EnvironmentalEventFactoryTests {
         #expect(provenance("pressureDrop") == .currentSnapshot)
         // Deterministic date-facts / completed-day observations → mineable.
         #expect(provenance("moonPhase") == .observedCompletedDay)
-        #expect(provenance("season") == .observedCompletedDay)
         #expect(provenance("mercuryRetrograde") == .observedCompletedDay)
         // New emitter: AQI is an observed completed-day reading (mineable). The
         // migration classifies LEGACY airQuality as forecast — a documented split.
