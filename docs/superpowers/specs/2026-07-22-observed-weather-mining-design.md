@@ -30,7 +30,7 @@ A forced sub-problem: once observed weather lands, a completed day holds BOTH a 
 
 ### A. Fetch (app service)
 
-- **`APIConfig`**: new `oneCallDaySummaryURL(latitude:longitude:date:)` against a new `data/3.0` base (`https://api.openweathermap.org/data/3.0/onecall/day_summary?lat=…&lon=…&date=YYYY-MM-DD&units=metric&appid=…`); nil when the key is missing, like the existing builders.
+- **`APIConfig`**: new `oneCallDaySummaryURL(latitude:longitude:date:tz:)` against a new `data/3.0` base (`https://api.openweathermap.org/data/3.0/onecall/day_summary?lat=…&lon=…&date=YYYY-MM-DD&tz=±HH:MM&units=metric&appid=…`); nil when the key is missing, like the existing builders.
 - **`EnvironmentalDataService`**: new completed-weather-day fetch (shape mirroring `fetchCompletedAirQualityRange`'s result discipline), returning per day:
   - `.value(highC: Double, lowC: Double, humidityPct: Double?)` — from `temperature.max`, `temperature.min`, `humidity.afternoon` (humidity optional per Decision 5);
   - `.absent` — the provider has no data for that day;
