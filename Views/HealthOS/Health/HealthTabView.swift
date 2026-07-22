@@ -1,14 +1,30 @@
 import SwiftUI
+import SwiftData
 
 struct HealthTabView: View {
     #if DEBUG
     @State private var showingLegacyApp = false
     #endif
     @AppStorage("hg.temperatureUnit") private var rawTempUnit = ""
+    @AppStorage("hg.measurementSystem") private var rawUnitSystem = ""
+    @Query private var userProfiles: [UserProfile]
+    @Environment(\.modelContext) private var modelContext
 
     private var tempUnitBinding: Binding<TemperatureUnit> {
         Binding(get: { TemperatureUnit.resolved(from: rawTempUnit) },
                 set: { rawTempUnit = $0.rawValue })
+    }
+
+    private var unitSystemBinding: Binding<UnitSystem> {
+        Binding(get: { UnitSystem.resolved(from: rawUnitSystem) },
+                set: { newValue in
+                    rawUnitSystem = newValue.rawValue                      // global is the source of truth
+                    if let profile = userProfiles.first {                  // mirror; never create one
+                        profile.unitPreference = newValue.rawValue
+                        do { try modelContext.save() }
+                        catch { Logger.error(error, message: "Failed to mirror units to profile", category: .data) }
+                    }
+                })
     }
 
     private let comingRows: [(icon: String, name: String, detail: String)] = [
@@ -86,6 +102,23 @@ struct HealthTabView: View {
                         .labelsHidden()
                         .accessibilityLabel("Temperature unit")
                         .frame(width: 116)
+                    }
+                    .padding(16)
+                    Divider().padding(.leading, 16)
+                    HStack {
+                        Image(systemName: "ruler")
+                            .foregroundStyle(HealthTheme.accent)
+                        Text("Units")
+                            .foregroundStyle(HealthTheme.ink)
+                        Spacer()
+                        Picker("Measurement system", selection: unitSystemBinding) {
+                            Text("Imperial").tag(UnitSystem.imperial)
+                            Text("Metric").tag(UnitSystem.metric)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .accessibilityLabel("Measurement system")
+                        .frame(width: 160)
                     }
                     .padding(16)
                     #if DEBUG
