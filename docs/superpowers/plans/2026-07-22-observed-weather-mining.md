@@ -796,9 +796,9 @@ Add at the end of `EnvironmentalEmitterTests` (reusing the file's `utc`/`day(_:_
         #expect(stub.weatherCallCount == 30)
         let requested = stub.weatherDaysRequested.map { cal.startOfDay(for: $0) }
         #expect(Set(requested).count == 30)                       // 30 DISTINCT local days (no DST double-step)
-        #expect(requested.first == day(cal, 10, 11))              // yesterday − 29
+        #expect(requested.first == day(cal, 10, 10))              // yesterday − 29
         #expect(requested.last == day(cal, 11, 8))                // yesterday
-        var expected = day(cal, 10, 11)
+        var expected = day(cal, 10, 10)
         for d in requested {                                      // contiguous local-day stepping
             #expect(d == expected)
             expected = cal.date(byAdding: .day, value: 1, to: expected)!
