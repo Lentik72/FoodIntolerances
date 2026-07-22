@@ -161,4 +161,34 @@ struct EnvironmentalEventFactoryTests {
         // The observed provenance rawValue appears in the daily key.
         #expect(moon?.dedupKey?.contains("observedCompletedDay") == true)
     }
+
+    // weatherProvenance: default keeps forecast; the observed backfill stamps mineable.
+    @Test func observedWeatherProvenanceStampsTempAndHumidity() throws {
+        let r = EnvironmentalReading(date: Date(timeIntervalSince1970: 1_700_000_000),
+            pressureHPa: nil, previousPressureHPa: nil, moonPhaseName: nil,
+            isMercuryRetrograde: false, timezoneID: "UTC",
+            temperatureHighC: 24, temperatureLowC: 12, humidityPct: 64,
+            weatherProvenance: .observedCompletedDay)
+        let events = EnvironmentalEventFactory.events(for: r)
+        #expect(events.first { $0.subtype == "temperature" }?.temporalProvenance == .observedCompletedDay)
+        #expect(events.first { $0.subtype == "humidity" }?.temporalProvenance == .observedCompletedDay)
+        // Provenance scopes the dedup key → observed and forecast same-day coexist.
+        let observedKey = try #require(events.first { $0.subtype == "temperature" }?.dedupKey)
+        let forecastKey = try #require(EnvironmentalEventFactory.events(for: EnvironmentalReading(
+            date: Date(timeIntervalSince1970: 1_700_000_000),
+            pressureHPa: nil, previousPressureHPa: nil, moonPhaseName: nil,
+            isMercuryRetrograde: false, timezoneID: "UTC",
+            temperatureHighC: 24, temperatureLowC: 12)).first { $0.subtype == "temperature" }?.dedupKey)
+        #expect(observedKey != forecastKey)
+    }
+    @Test func observedReadingWithNilHumidityEmitsNoHumidityEvent() {
+        let r = EnvironmentalReading(date: Date(timeIntervalSince1970: 1_700_000_000),
+            pressureHPa: nil, previousPressureHPa: nil, moonPhaseName: nil,
+            isMercuryRetrograde: false, timezoneID: "UTC",
+            temperatureHighC: 24, temperatureLowC: 12, humidityPct: nil,
+            weatherProvenance: .observedCompletedDay)
+        let events = EnvironmentalEventFactory.events(for: r)
+        #expect(events.contains { $0.subtype == "temperature" })
+        #expect(!events.contains { $0.subtype == "humidity" })   // missing afternoon humidity → no observed event
+    }
 }
