@@ -76,9 +76,15 @@ struct EventDetailView: View {
                         .foregroundStyle(HealthTheme.inkSecondary)
                     if let line = BodyMetricValueFormatter.line(for: displayEvent, unit: weightUnit) ?? WeatherValueFormatter.line(for: displayEvent, unit: TemperatureUnit.resolved(from: rawTempUnit)) ?? EventDisplay.valueLine(for: displayEvent) {
                         Text("·").foregroundStyle(HealthTheme.inkMuted)
-                        Text(line)
-                            .font(.footnote)
-                            .foregroundStyle(valueLineColor)
+                        if displayEvent.category == .environment, displayEvent.subtype == "airQuality", let v = displayEvent.value {
+                            AQIValueLabel(value: line, aqi: Int(v))
+                                .font(.footnote)
+                                .foregroundStyle(valueLineColor)
+                        } else {
+                            Text(line)
+                                .font(.footnote)
+                                .foregroundStyle(valueLineColor)
+                        }
                     }
                 }
             }

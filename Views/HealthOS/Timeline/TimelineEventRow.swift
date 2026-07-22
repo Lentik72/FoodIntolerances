@@ -47,9 +47,15 @@ struct TimelineEventRow: View {
                         .foregroundStyle(HealthTheme.ink)
                         .lineLimit(2)
                     if let line = displayValueLine {
-                        Text(line)
-                            .font(.footnote)
-                            .foregroundStyle(valueLineColor)
+                        if event.category == .environment, event.subtype == "airQuality", let v = event.value {
+                            AQIValueLabel(value: line, aqi: Int(v))
+                                .font(.footnote)
+                                .foregroundStyle(valueLineColor)
+                        } else {
+                            Text(line)
+                                .font(.footnote)
+                                .foregroundStyle(valueLineColor)
+                        }
                     }
                 }
                 Spacer(minLength: 8)
