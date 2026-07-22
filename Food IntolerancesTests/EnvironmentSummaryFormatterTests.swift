@@ -49,6 +49,20 @@ struct EnvironmentSummaryFormatterTests {
         let s = day([temp(24, 12), humidity(69), airQuality(132)])
         #expect(EnvironmentSummaryFormatter.headline(s, unit: c) == "AQI 132 · Unhealthy for sensitive groups")
     }
+    // headlineResult.aqi — the badge fires whenever the SELECTED headline shows an AQI value.
+    @Test func headlineResultCarriesAQIWheneverTheHeadlineShowsIt() {
+        // AQI-only day → degenerate "Air quality: 42 · Good" fallback still carries its aqi.
+        let aqiOnly = EnvironmentSummaryFormatter.headlineResult(day([airQuality(42)]), unit: c)
+        #expect(aqiOnly.text == "Air quality: 42 · Good")
+        #expect(aqiOnly.aqi == 42)
+        // Temperature present + good air → headline is temperature (not AQI) → no badge.
+        let tempGood = EnvironmentSummaryFormatter.headlineResult(day([temp(24, 12), airQuality(42)]), unit: c)
+        #expect(tempGood.aqi == nil)
+        // Temperature present + poor air → poor-air AQI leads over temperature → carries 132.
+        let poor = EnvironmentSummaryFormatter.headlineResult(day([temp(24, 12), airQuality(132)]), unit: c)
+        #expect(poor.text == "AQI 132 · Unhealthy for sensitive groups")
+        #expect(poor.aqi == 132)
+    }
     @Test func goodAirDoesNotLeadAndSortsAfterHumidity() {
         let s = day([temp(24, 12), humidity(69), airQuality(42)])
         #expect(EnvironmentSummaryFormatter.headline(s, unit: c) == "12–24°C · 69%")   // AQI 42 < 101 → temp still leads

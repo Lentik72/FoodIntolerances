@@ -15,7 +15,8 @@ struct EnvironmentSummaryRow: View {
     private var style: CategoryStyle { .style(for: .environment) }
     private var unit: TemperatureUnit { .resolved(from: rawTempUnit) }
 
-    private var headline: String { EnvironmentSummaryFormatter.headline(summary, unit: unit) }
+    private var headlineResult: EnvironmentHeadline { EnvironmentSummaryFormatter.headlineResult(summary, unit: unit) }
+    private var headline: String { headlineResult.text }
     private var detailLines: [EnvironmentDetailLine] {
         EnvironmentSummaryFormatter.detailLines(summary, unit: unit)
     }
@@ -46,7 +47,7 @@ struct EnvironmentSummaryRow: View {
                         .foregroundStyle(HealthTheme.ink)
                         .lineLimit(2)
                     Spacer(minLength: 8)
-                    if let aqi = EnvironmentSummaryFormatter.poorAirAQI(summary) {
+                    if let aqi = headlineResult.aqi {
                         AQIValueLabel(value: headline, aqi: aqi)
                             .font(.footnote)
                             .foregroundStyle(HealthTheme.inkMuted)

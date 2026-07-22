@@ -36,7 +36,7 @@ struct AQIValueLabel: View {
     let value: String
     let aqi: Int
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
             AQIBadge(aqi: aqi)
             Text(value)
         }
