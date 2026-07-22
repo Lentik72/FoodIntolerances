@@ -89,7 +89,7 @@ Styling (font/color/alignment modifiers) is preserved identically across all thr
   - Extractor: a well-formed moonPhase event → its phase; wrong subtype (e.g. `"season"`, `"airQuality"`) → nil; non-environment category → nil; missing metadata → nil; undecodable metadata bytes → nil.
 - **`EnvironmentSummaryFormatterTests`:**
   - The moonPhase detail line carries `moonPhase == "<stored phase>"`; temperature/AQI/mercury lines carry nil.
-  - Headline: moon-fallback day → `moonPhase` set (and `aqi` nil); degenerate moon-only day → set; temperature-led and poor-air-led days → nil.
+  - Headline: moon-fallback day → `moonPhase` set (and `aqi` nil); temperature-led and poor-air-led days → nil. (The degenerate branch carries `first.moonPhase` as defensive symmetry with `first.aqi`, but the state is unreachable in practice — a moon event WITH metadata is always caught by the moon-fallback branch first, and one WITHOUT metadata has no phase to carry — so it gets no dedicated test.)
 - **Device (visual):** all four sites show the correct glyph per phase; light + dark legible; hierarchical rendering reads at footnote size; VoiceOver reads the phase once at every site; text always present. (SwiftUI view code is build + device gate, per the AQI precedent.)
 
 ## 6. Out of scope
