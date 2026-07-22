@@ -44,8 +44,8 @@ In `Views/HealthOS/Theme/HealthTheme.swift`, after the `danger`/`onDanger` block
     /// invisible on cream, maroon is lightened for dark). Ref: airnow.gov/aqi/aqi-basics.
     /// Rendered as a small dot beside the always-present AQI number + category text.
     static let aqiGood               = dyn(light: 0x2E9E4F, dark: 0x3FD06B)   // green
-    static let aqiModerate           = dyn(light: 0xC9A200, dark: 0xE8C33A)   // yellow → readable gold
-    static let aqiUnhealthySensitive = dyn(light: 0xE8730C, dark: 0xFF9A3D)   // orange
+    static let aqiModerate           = dyn(light: 0xB08A00, dark: 0xE8C33A)   // yellow → readable gold (light ≥3:1 on paper)
+    static let aqiUnhealthySensitive = dyn(light: 0xD96500, dark: 0xFF9A3D)   // orange (light ≥3:1 on paper)
     static let aqiUnhealthy          = dyn(light: 0xD42A2A, dark: 0xFF5C5C)   // red
     static let aqiVeryUnhealthy      = dyn(light: 0x8F3F97, dark: 0xB667BE)   // purple
     static let aqiHazardous          = dyn(light: 0x7E0023, dark: 0xC64B6B)   // maroon
@@ -169,6 +169,15 @@ In `Food IntolerancesTests/EnvironmentSummaryFormatterTests.swift`, add these `@
         #expect(EnvironmentSummaryFormatter.poorAirAQI(day([airQuality(101)])) == 101)                 // == threshold → poor (pins >=, not >)
         #expect(EnvironmentSummaryFormatter.poorAirAQI(day([airQuality(100)])) == nil)                 // one below → nil
     }
+    // Two same-day AQI events → each line's aqi matches ITS OWN displayed text (the dot can
+    // never represent one value while the text shows another). The builder keeps both events.
+    @Test func twoAirQualityEventsEachLineMatchesItsOwnValue() {
+        let rows = EnvironmentSummaryFormatter.detailLines(day([airQuality(42), airQuality(180)]), unit: c)
+        let air = rows.filter { $0.subtype == "airQuality" }
+        #expect(air.count == 2)
+        #expect(air.contains { $0.aqi == 42 && $0.value == "42 · Good" })
+        #expect(air.contains { $0.aqi == 180 && $0.value == "180 · Unhealthy" })
+    }
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -185,10 +194,13 @@ Expected: FAILS to compile — `value of type '...' has no member 'subtype'` / `
 
 In `Views/HealthOS/Timeline/EnvironmentSummaryFormatter.swift`, add the model at the top of the file (after the imports):
 ```swift
-/// One expanded environment reading. `subtype` is the source event's subtype (so the
-/// row can identify the AQI line structurally); `aqi` is set ONLY for the airQuality
-/// line — the badge's color input. `value == nil` → a presence line (mercury).
-struct EnvironmentDetailLine {
+/// One expanded environment reading. `id` is the source event's id — stable SwiftUI
+/// identity even when a day has duplicate subtypes/provenance (avoids duplicate
+/// `ForEach` ids). `subtype` lets the row identify the AQI line structurally; `aqi` is
+/// set ONLY for the airQuality line — the badge's color input. `value == nil` → a
+/// presence line (mercury).
+struct EnvironmentDetailLine: Identifiable {
+    let id: UUID
     let subtype: String?
     let label: String
     let value: String?
@@ -218,34 +230,33 @@ Replace `detailLines`'s signature + body to build `EnvironmentDetailLine`s (keep
     static func detailLines(_ summary: EnvironmentDaySummary, unit: TemperatureUnit) -> [EnvironmentDetailLine] {
         var rows: [EnvironmentDetailLine] = []
         for e in summary.events {
-            guard let subtype = e.subtype else { continue }
+            guard let subtype = e.subtype, subtype != "pressureDrop" else { continue }   // nil subtype skipped; pressureDrop folds into pressure
+            // Format the text from THIS event so the value always matches the line's own
+            // aqi/provenance — never a different same-subtype event chosen by a lookup.
+            let text = WeatherValueFormatter.line(for: e, unit: unit) ?? EventDisplay.valueLine(for: e)
             switch subtype {
-            case "pressureDrop":
-                continue   // folded into the pressure line
             case "pressure":
-                var v = EventDisplay.valueLine(for: e)
+                var v = text
                 if let drop = summary.events.first(where: { $0.subtype == "pressureDrop" }), let d = drop.value {
                     v = [v, "↓\(Int(d.rounded())) hPa"].compactMap { $0 }.joined(separator: " · ")
                 }
-                rows.append(EnvironmentDetailLine(subtype: subtype, label: EventDisplay.title(for: e), value: v, aqi: nil))
+                rows.append(EnvironmentDetailLine(id: e.id, subtype: subtype, label: EventDisplay.title(for: e), value: v, aqi: nil))
             case "airQuality":
-                rows.append(EnvironmentDetailLine(subtype: subtype, label: EventDisplay.title(for: e),
-                                                  value: value(subtype, summary, unit), aqi: e.value.map { Int($0) }))
+                rows.append(EnvironmentDetailLine(id: e.id, subtype: subtype, label: EventDisplay.title(for: e), value: text, aqi: e.value.map { Int($0) }))
             default:
-                rows.append(EnvironmentDetailLine(subtype: subtype, label: EventDisplay.title(for: e),
-                                                  value: value(subtype, summary, unit), aqi: nil))
+                rows.append(EnvironmentDetailLine(id: e.id, subtype: subtype, label: EventDisplay.title(for: e), value: text, aqi: nil))
             }
         }
         // Defensive: a lone pressureDrop with no pressure event still shows.
         if !summary.events.contains(where: { $0.subtype == "pressure" }),
            let drop = summary.events.first(where: { $0.subtype == "pressureDrop" }) {
-            rows.append(EnvironmentDetailLine(subtype: drop.subtype, label: EventDisplay.title(for: drop),
+            rows.append(EnvironmentDetailLine(id: drop.id, subtype: drop.subtype, label: EventDisplay.title(for: drop),
                                               value: EventDisplay.valueLine(for: drop), aqi: nil))
         }
         return rows
     }
 ```
-(`value(_:_:_:)` private helper is unchanged.)
+(`value(_:_:_:)` private helper is unchanged — it is still used by `headline` to look up specific subtypes by name.)
 
 Then, in `Views/HealthOS/Timeline/EnvironmentSummaryRow.swift`, **retype the bridging computed property** (line 19) — its explicit tuple annotation no longer matches the formatter's new return type, so the app target won't compile (which the Step 4 test run needs) until this changes. The badge wiring itself is Task 3; this is only the type:
 ```swift
@@ -305,7 +316,7 @@ with a poor-air branch (the row's own `.accessibilityLabel("Environment, \(headl
 
 - [ ] **Step 2: Badge the "Air quality" detail line**
 
-In the `breakdown` view, replace the value `Text` (currently lines ~89-93):
+First, since `EnvironmentDetailLine` is now `Identifiable` (Task 2), switch the breakdown's `ForEach` off the label key onto the model's stable id — replace `ForEach(detailLines, id: \.label) { line in` (line ~83) with `ForEach(detailLines) { line in` (prevents duplicate SwiftUI ids when a day has two same-subtype lines). Then, in the same `breakdown`, replace the value `Text` (currently lines ~89-93):
 ```swift
                     if let value = line.value {
                         Text(value)
@@ -327,7 +338,7 @@ with a branch keyed on the typed model's `aqi` (structural, not the label string
                         }
                     }
 ```
-(The `detailLines` property was already retyped to `[EnvironmentDetailLine]` in Task 2; `ForEach(…, id: \.label)` and `detailLines.count` are otherwise unchanged. This step only adds the `line.aqi` badge branch.)
+(The `detailLines` property was retyped in Task 2; `detailLines.count` is unchanged. This step switches the `ForEach` to the `Identifiable` id and adds the `line.aqi` badge branch.)
 
 - [ ] **Step 3: Build and run the suite**
 
@@ -435,7 +446,7 @@ git commit -m "feat(app): AQI dot on the raw search row + event detail header"
 
 On the booted iPhone 17 Pro, with AQI data (a poor-air demo day + a good-air day; the WEATHER demo seeds observed AQI):
 1. All four sites show a dot in the **correct band color**: collapsed poor-air Environment headline, the expanded **Air quality** detail line (any band), the **raw AQI row** in search (type "air"), and the **event detail** header (tap that row).
-2. **Light and dark** both legible — especially **Moderate gold** on cream and **maroon** on dark; tune any color in `HealthTheme` that reads poorly.
+2. **Light and dark** both legible — each dot should clear roughly **3:1 contrast against BOTH `paper` and `card`** surfaces (Moderate gold and Orange are the tight ones on cream; maroon on dark). The 0.5pt border defines the shape but does NOT substitute for fill contrast on an 8pt dot. Tune any color in `HealthTheme` that reads poorly.
 3. The **number + category text** are always present next to the dot.
 4. **VoiceOver** reads the value once (e.g. "132 · Unhealthy for sensitive groups"); the dot is silent.
 

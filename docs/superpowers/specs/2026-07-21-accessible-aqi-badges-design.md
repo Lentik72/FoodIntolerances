@@ -39,13 +39,13 @@ Six **tuned** dynamic `Color`s in `HealthTheme` (via the existing `dyn(light:dar
 | Band (`AQICategory`) | AirNow ref | light | dark |
 |---|---|---|---|
 | good | green | `0x2E9E4F` | `0x3FD06B` |
-| moderate | yellow | `0xC9A200` | `0xE8C33A` |
-| unhealthySensitive | orange | `0xE8730C` | `0xFF9A3D` |
+| moderate | yellow | `0xB08A00` | `0xE8C33A` |
+| unhealthySensitive | orange | `0xD96500` | `0xFF9A3D` |
 | unhealthy | red | `0xD42A2A` | `0xFF5C5C` |
 | veryUnhealthy | purple | `0x8F3F97` | `0xB667BE` |
 | hazardous | maroon | `0x7E0023` | `0xC64B6B` |
 
-A doc comment on these records that they are **accessibility-adjusted versions of the official AirNow categories, not verbatim official hex** (link: https://www.airnow.gov/aqi/aqi-basics/).
+Each light variant is chosen to clear roughly **3:1 contrast against the `paper`/`card` surfaces** (the 0.5pt border defines the shape but does not substitute for fill contrast on an 8pt dot — so light Moderate and Orange are darkened from raw AirNow). A doc comment on these records that they are **accessibility-adjusted versions of the official AirNow categories, not verbatim official hex** (link: https://www.airnow.gov/aqi/aqi-basics/). The device gate re-verifies all six against both surfaces in both themes.
 
 ### B. `AQIBadge` + `AQIValueLabel` (one reusable component)
 
@@ -57,9 +57,11 @@ All four sites render `AQIValueLabel(value:, aqi:)` where they currently render 
 
 ### C. Typed detail-line model (no label-string matching)
 
-`EnvironmentSummaryFormatter` changes so the row identifies the AQI line **structurally**:
-- `detailLines(...)` returns `[EnvironmentDetailLine]` where `struct EnvironmentDetailLine { let subtype: String?; let label: String; let value: String?; let aqi: Int? }` (`aqi` non-nil only for the `airQuality` line — the badge's color input). Replaces the current `(label, value?)` tuple.
-- New `static func poorAirAQI(_ summary:) -> Int?` — the AQI value when the headline leads with AQI (poor-air day), else nil; shares a private helper with `headline(...)` so the two can't diverge. (`headline(...)` keeps returning `String` for the row's a11y label.)
+`EnvironmentSummaryFormatter` changes so the row identifies the AQI line **structurally** and stays correct when a day has duplicate readings:
+- `detailLines(...)` returns `[EnvironmentDetailLine]` where `struct EnvironmentDetailLine: Identifiable { let id: UUID; let subtype: String?; let label: String; let value: String?; let aqi: Int? }` (`id` = the source event's id; `aqi` non-nil only for the `airQuality` line — the badge's color input). Replaces the current `(label, value?)` tuple.
+- Each line's **value text is formatted from its OWN event** (`WeatherValueFormatter.line(for: e, …) ?? EventDisplay.valueLine(for: e)`), not via a same-subtype lookup — so the dot's `aqi` and the displayed text can never disagree when two same-day AQI events exist.
+- The row iterates `ForEach(detailLines)` on the `Identifiable` id (not `id: \.label`), so duplicate subtypes/provenance can't collide on a SwiftUI identifier.
+- New `static func poorAirAQI(_ summary:) -> Int?` — the AQI value when the headline leads with AQI (poor-air day), else nil; shares the poor-air check with `headline(...)` so the two can't diverge. (`headline(...)` keeps returning `String` for the row's a11y label.)
 
 The row then renders the dot exactly when: `poorAirAQI != nil` (headline, site 1) or `line.aqi != nil` (detail line, site 2).
 
@@ -83,7 +85,9 @@ The row then renders the dot exactly when: `poorAirAQI != nil` (headline, site 1
 
 - **`EnvironmentSummaryFormatter` (pure, app tests):**
   - `detailLines` returns typed `EnvironmentDetailLine`s: the air-quality line has `subtype == "airQuality"` and `aqi == <event value>`; other lines carry their own subtype and `aqi == nil`. (Update existing assertions to the struct.)
-  - `poorAirAQI`: returns the AQI Int on a poor-air day (≥ `poorAirThreshold`), `nil` on a clean-air day (< threshold), and `nil` when no `airQuality` event exists — mirroring exactly when the headline leads with AQI.
+  - `poorAirAQI`: returns the AQI Int on a poor-air day (≥ `poorAirThreshold`), `nil` on a clean-air day (< threshold), and `nil` when no `airQuality` event exists — mirroring exactly when the headline leads with AQI (pin the 101/100 boundary).
+  - A good-air detail line still carries its `aqi` (the detail line badges ALL bands, not only poor air).
+  - Two same-day AQI events: each line's `aqi` matches its OWN displayed text (value formatted per-event, never by a same-subtype lookup).
 - **Device (visual):** all four sites show the dot in the correct band color; **light and dark** both legible (esp. Moderate gold on cream, maroon on dark); the number + category text are always present; VoiceOver reads the value once (dot silent). Tune any color that reads poorly.
 - (The SwiftUI `AQIBadge`/`AQIValueLabel`/color-switch are view code — verified by build + the device gate, not a unit test; `Color` equality isn't reliably assertable and the category bands are already covered by `AirQualityIndexTests`.)
 
