@@ -32,14 +32,15 @@ struct EnvironmentSummaryFormatterTests {
     @Test func headlineTempOnlyHasNoTrailingSeparator() {
         #expect(EnvironmentSummaryFormatter.headline(day([temp(24, 12)]), unit: c) == "12–24°C")   // no " · "
     }
-    @Test func headlineBackfillMoonAndSeason() {
-        #expect(EnvironmentSummaryFormatter.headline(day([moon("Waxing gibbous"), season("Summer")]), unit: c) == "Waxing gibbous · Summer")
+    @Test func headlineBackfillMoonWithStoredSeasonFiltered() {
+        // A stored legacy season event is retired by the builder → the backfill headline is the moon alone.
+        #expect(EnvironmentSummaryFormatter.headline(day([moon("Waxing gibbous"), season("Summer")]), unit: c) == "Waxing gibbous")
     }
     @Test func headlineMoonOnly() {
         #expect(EnvironmentSummaryFormatter.headline(day([moon("Full moon")]), unit: c) == "Full moon")   // no season → no separator
     }
-    @Test func headlineDegenerateSeasonOnly() {
-        #expect(EnvironmentSummaryFormatter.headline(day([season("Summer")]), unit: c) == "Season: Summer")
+    @Test func headlineDegeneratePressureOnlyIsLabeled() {
+        #expect(EnvironmentSummaryFormatter.headline(day([pressure(1013)]), unit: c) == "Air pressure: 1013 hPa")
     }
     @Test func headlineDegenerateMercuryOnlyIsBareLabel() {
         #expect(EnvironmentSummaryFormatter.headline(day([mercury()]), unit: c) == "Mercury retrograde")   // value nil → bare label, never empty
@@ -75,7 +76,7 @@ struct EnvironmentSummaryFormatterTests {
     @Test func detailLinesOrderedLabeledAndFolded() {
         let s = day([temp(24, 12), humidity(69), pressure(1013), drop(7), moon("Waxing gibbous"), season("Summer"), mercury()])
         let rows = EnvironmentSummaryFormatter.detailLines(s, unit: c)
-        #expect(rows.map(\.label) == ["Temperature", "Humidity", "Air pressure", "Moon phase", "Season", "Mercury retrograde"])
+        #expect(rows.map(\.label) == ["Temperature", "Humidity", "Air pressure", "Moon phase", "Mercury retrograde"])   // Season retired → filtered by the builder
         #expect(rows.first(where: { $0.label == "Air pressure" })?.value == "1013 hPa · ↓7 hPa")   // drop folded, no separate row
         #expect(rows.first(where: { $0.label == "Mercury retrograde" })?.value == nil)               // presence line
         #expect(rows.first(where: { $0.label == "Temperature" })?.value == "12–24°C")
@@ -86,7 +87,7 @@ struct EnvironmentSummaryFormatterTests {
 
     // Expandability seam — the row uses detailLines(...).count >= 2 (see spec §3D).
     @Test func detailLineCountDrivesExpandability() {
-        #expect(EnvironmentSummaryFormatter.detailLines(day([season("Summer")]), unit: c).count == 1)          // one line → not expandable
+        #expect(EnvironmentSummaryFormatter.detailLines(day([mercury()]), unit: c).count == 1)          // one line → not expandable
         #expect(EnvironmentSummaryFormatter.detailLines(day([pressure(1013), drop(7)]), unit: c).count == 1)   // folded → one line → not expandable
         #expect(EnvironmentSummaryFormatter.detailLines(day([temp(24, 12), humidity(69)]), unit: c).count >= 2)
     }

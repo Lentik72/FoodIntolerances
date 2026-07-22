@@ -18,13 +18,13 @@ struct EnvironmentDaySummaryBuilderTests {
         let summaries = EnvironmentDaySummaryBuilder.summaries(from: events, timeZone: tz)
         #expect(summaries.count == 1)
         #expect(summaries[0].events.map { $0.subtype } ==
-                ["temperature", "humidity", "moonPhase", "season", "mercuryRetrograde"])   // canonical
+                ["temperature", "humidity", "moonPhase", "mercuryRetrograde"])   // canonical; season retired → filtered
         #expect(summaries[0].dayStart == Date(timeIntervalSince1970: 0))
     }
     @Test func idIsDeterministicPerDayAndDistinctAcrossDays() {
-        let a = EnvironmentDaySummaryBuilder.summaries(from: [env("season", 5)], timeZone: tz)[0]
-        let a2 = EnvironmentDaySummaryBuilder.summaries(from: [env("season", 5)], timeZone: tz)[0]
-        let b = EnvironmentDaySummaryBuilder.summaries(from: [env("season", 6)], timeZone: tz)[0]
+        let a = EnvironmentDaySummaryBuilder.summaries(from: [env("moonPhase", 5)], timeZone: tz)[0]
+        let a2 = EnvironmentDaySummaryBuilder.summaries(from: [env("moonPhase", 5)], timeZone: tz)[0]
+        let b = EnvironmentDaySummaryBuilder.summaries(from: [env("moonPhase", 6)], timeZone: tz)[0]
         #expect(a.id == a2.id && a.id != b.id)
     }
     @Test func ignoresNonEnvironmentAndEmptyWhenNone() {
@@ -36,7 +36,11 @@ struct EnvironmentDaySummaryBuilderTests {
         #expect(mixed.count == 1 && mixed[0].events.count == 1)
     }
     @Test func multipleDaysSortNewestFirst() {
-        let s = EnvironmentDaySummaryBuilder.summaries(from: [env("season", 1), env("season", 3)], timeZone: tz)
+        let s = EnvironmentDaySummaryBuilder.summaries(from: [env("moonPhase", 1), env("moonPhase", 3)], timeZone: tz)
         #expect(s.map { $0.dayStart } == [Date(timeIntervalSince1970: 3 * 86_400), Date(timeIntervalSince1970: 86_400)])
+    }
+    @Test func retiredSubtypeOnlyDayProducesNoSummary() {
+        // Filter runs BEFORE grouping — a stored-season-only day yields no row, not an empty row.
+        #expect(EnvironmentDaySummaryBuilder.summaries(from: [env("season", 0)], timeZone: tz).isEmpty)
     }
 }

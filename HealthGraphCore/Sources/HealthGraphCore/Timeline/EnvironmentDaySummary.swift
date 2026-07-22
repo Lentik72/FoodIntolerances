@@ -22,7 +22,13 @@ public struct EnvironmentDaySummary: Equatable, Sendable, Identifiable {
 public enum EnvironmentDaySummaryBuilder {
     /// Canonical detail/display order. Unknown subtypes sort last (stable).
     public static let subtypeOrder = ["temperature", "humidity", "airQuality", "pressure",
-                                      "pressureDrop", "moonPhase", "season", "mercuryRetrograde"]
+                                      "pressureDrop", "moonPhase", "mercuryRetrograde"]
+
+    /// Subtypes that may still exist as stored rows but must never display.
+    /// `season` is retired: it was never mined (no exposure source exists) and its
+    /// calculation was Northern-Hemisphere-only. It is a pure date-fact, so a future
+    /// hemisphere-aware exposure could regenerate the history via backfill.
+    public static let retiredSubtypes: Set<String> = ["season"]
 
     /// Folds `.environment` events into one summary per local calendar day, newest
     /// day first. Pure; accepts any unsorted slice; input order never affects the
@@ -31,7 +37,8 @@ public enum EnvironmentDaySummaryBuilder {
     public static func summaries(from events: [HealthEvent], timeZone: TimeZone) -> [EnvironmentDaySummary] {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
-        let env = events.filter { $0.category == .environment }
+        let env = events.filter { $0.category == .environment
+            && !retiredSubtypes.contains($0.subtype ?? "") }
         guard !env.isEmpty else { return [] }
         let byDay = Dictionary(grouping: env) { calendar.startOfDay(for: $0.timestamp) }
         return byDay.map { day, evs in
