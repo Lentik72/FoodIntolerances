@@ -202,6 +202,31 @@ In `HealthGraphCore/Tests/HealthGraphCoreTests/EnvironmentDaySummaryBuilderTests
             #expect(s[0].events.map(\.id) == [newer.id])
         }
     }
+    /// Secondary tie-break: identical createdAt → the documented winner is the
+    /// larger id.uuidString, regardless of input order.
+    @Test func duplicateObservedWithEqualCreatedAtTieBreaksOnUUIDString() {
+        let low = weather("temperature", day: 0, provenance: .observedCompletedDay, created: 100,
+                          id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
+        let high = weather("temperature", day: 0, provenance: .observedCompletedDay, created: 100,
+                           id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!)
+        for input in [[low, high], [high, low]] {
+            let s = EnvironmentDaySummaryBuilder.summaries(from: input, timeZone: tz)
+            #expect(s[0].events.map(\.id) == [high.id])
+        }
+    }
+    /// Only forecast + duplicate observed are dropped — .currentSnapshot and
+    /// provenance-less events of the same day+subtype pass through untouched.
+    @Test func precedenceDropsOnlyForecastAndDuplicateObserved() {
+        let observed = weather("temperature", day: 0, provenance: .observedCompletedDay)
+        let forecast = weather("temperature", day: 0, provenance: .forecast)
+        let snapshot = weather("temperature", day: 0, provenance: .currentSnapshot)
+        let unflagged = HealthEvent(timestamp: Date(timeIntervalSince1970: 43_200),
+                                    timezoneID: "UTC", category: .environment, subtype: "temperature",
+                                    value: 20, source: .weatherAPI)   // no provenance metadata at all
+        let s = EnvironmentDaySummaryBuilder.summaries(from: [observed, forecast, snapshot, unflagged], timeZone: tz)
+        let ids = Set(s[0].events.map(\.id))
+        #expect(ids == Set([observed.id, snapshot.id, unflagged.id]))   // forecast gone; others preserved
+    }
     @Test func forecastOnlyDayAndNonWeatherSubtypesPassThrough() {
         let events = [weather("temperature", day: 0, provenance: .forecast),
                       weather("humidity", day: 0, provenance: .forecast),
@@ -214,7 +239,7 @@ In `HealthGraphCore/Tests/HealthGraphCoreTests/EnvironmentDaySummaryBuilderTests
 - [ ] **Step 2: Run to verify the new tests fail**
 
 Run: `cd /Users/leo/dev/FoodIntolerances/HealthGraphCore && swift test --filter EnvironmentDaySummaryBuilderTests 2>&1 | tail -8`
-Expected: FAIL — `observedSuppressesSameDaySameSubtypeForecastOnly` (both temperature events present) and `duplicateObservedResolvesDeterministicallyByCreatedAt` (both observed present). `forecastOnlyDayAndNonWeatherSubtypesPassThrough` PASSES already (nothing is filtered yet).
+Expected: FAIL — `observedSuppressesSameDaySameSubtypeForecastOnly`, `duplicateObservedResolvesDeterministicallyByCreatedAt`, `duplicateObservedWithEqualCreatedAtTieBreaksOnUUIDString`, and `precedenceDropsOnlyForecastAndDuplicateObserved` (nothing is filtered yet). `forecastOnlyDayAndNonWeatherSubtypesPassThrough` PASSES already.
 
 - [ ] **Step 3: Implement the helper and apply it in `summaries`**
 
@@ -226,11 +251,13 @@ In `HealthGraphCore/Sources/HealthGraphCore/Timeline/EnvironmentDaySummary.swift
     static let observedPrecedenceSubtypes: Set<String> = ["temperature", "humidity"]
 
     /// Presentation-only precedence: per local day + subtype, when at least one
-    /// `.observedCompletedDay` event exists, all of that day+subtype's `.forecast`
-    /// events are dropped and duplicate observed events resolve deterministically
-    /// (latest `createdAt`, then `id.uuidString`). Resolved independently per
-    /// day+subtype — an observed temperature never suppresses humidity or another
-    /// day. Stored events are untouched; mining reads the store, not this filter.
+    /// `.observedCompletedDay` event exists, that day+subtype's `.forecast` events
+    /// are dropped and duplicate observed events resolve deterministically (latest
+    /// `createdAt`, then `id.uuidString`). ONLY those two drops are licensed —
+    /// any other or missing provenance passes through untouched. Resolved
+    /// independently per day+subtype — an observed temperature never suppresses
+    /// humidity or another day. Stored events are untouched; mining reads the
+    /// store, not this filter.
     public static func observedPrecedenceFiltered(_ events: [HealthEvent], timeZone: TimeZone) -> [HealthEvent] {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
@@ -252,7 +279,11 @@ In `HealthGraphCore/Sources/HealthGraphCore/Timeline/EnvironmentDaySummary.swift
                   let subtype = e.subtype, observedPrecedenceSubtypes.contains(subtype),
                   let w = winner[Key(day: calendar.startOfDay(for: e.timestamp), subtype: subtype)]
             else { return true }               // not a precedence subtype, or no observed that day → untouched
-            return e.id == w.id                // keep only the winner (drops forecast + duplicate observed)
+            switch e.temporalProvenance {
+            case .forecast?:             return false          // superseded by the observed sibling
+            case .observedCompletedDay?: return e.id == w.id   // deterministic winner among observed
+            default:                     return true           // .currentSnapshot / nil / future kinds: not ours to drop
+            }
         }
     }
 ```
@@ -362,7 +393,19 @@ struct WeatherHistoryTests {
     private struct StubTransport: HTTPTransport {
         let payload: Data
         let makeError: Bool
+        let requestedURLs: URLBox
+        init(payload: Data, makeError: Bool = false, requestedURLs: URLBox = URLBox()) {
+            self.payload = payload
+            self.makeError = makeError
+            self.requestedURLs = requestedURLs
+        }
+        final class URLBox: @unchecked Sendable {
+            private let lock = NSLock()
+            private(set) var urls: [URL] = []
+            func append(_ url: URL) { lock.lock(); urls.append(url); lock.unlock() }
+        }
         func data(from url: URL) async throws -> (Data, URLResponse) {
+            requestedURLs.append(url)
             struct StubError: Error {}
             if makeError { throw StubError() }
             let response = URLResponse(url: url, mimeType: "application/json",
@@ -390,14 +433,19 @@ struct WeatherHistoryTests {
 
     // MARK: - URL builder
 
-    @Test func daySummaryURLUsesOneCallBaseAndDate() throws {
+    @Test func daySummaryURLUsesOneCallBaseDateAndEncodedTZ() throws {
         ensureTestAPIKeyConfigured()
-        let url = try #require(APIConfig.oneCallDaySummaryURL(latitude: 40.0, longitude: -74.0, date: "2025-06-15"))
+        let url = try #require(APIConfig.oneCallDaySummaryURL(latitude: 40.0, longitude: -74.0,
+                                                              date: "2025-06-15", tz: "+00:00"))
         let s = url.absoluteString
         #expect(s.contains("/data/3.0/onecall/day_summary"))
         #expect(s.contains("date=2025-06-15"))
+        #expect(s.contains("tz=%2B00:00"))            // "+" must be percent-encoded
         #expect(s.contains("units=metric"))
         #expect(s.contains("lat=40.0") && s.contains("lon=-74.0"))
+        let negative = try #require(APIConfig.oneCallDaySummaryURL(latitude: 40.0, longitude: -74.0,
+                                                                   date: "2025-01-15", tz: "-08:00"))
+        #expect(negative.absoluteString.contains("tz=-08:00"))   // "-" needs no encoding
     }
 
     // MARK: - fetchCompletedWeatherDay
@@ -432,6 +480,27 @@ struct WeatherHistoryTests {
         let result = await makeService(payload: Data(json.utf8)).fetchCompletedWeatherDay(for: day)
         #expect(result == .fetchError)
     }
+    /// The tz offset is DATE-specific from the injected calendar: a January day
+    /// in Los Angeles is PST (-08:00), a July day PDT (-07:00) — the app's
+    /// calendar controls the provider's aggregation day, not the location.
+    @Test func fetchPassesDateSpecificCalendarTZOffset() async throws {
+        ensureTestAPIKeyConfigured()
+        var la = Calendar(identifier: .gregorian)
+        la.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        let box = StubTransport.URLBox()
+        let json = #"{"temperature":{"min":1.0,"max":2.0},"humidity":{"afternoon":50.0}}"#
+        let service = EnvironmentalDataService(
+            transport: StubTransport(payload: Data(json.utf8), requestedURLs: box),
+            calendar: la,
+            location: StubLocation(coordinate: CLLocationCoordinate2D(latitude: 34.0, longitude: -118.0)))
+        _ = await service.fetchCompletedWeatherDay(for: la.date(from: DateComponents(year: 2025, month: 1, day: 15))!)
+        _ = await service.fetchCompletedWeatherDay(for: la.date(from: DateComponents(year: 2025, month: 7, day: 15))!)
+        let urls = box.urls.map(\.absoluteString)
+        #expect(urls.count == 2)
+        #expect(urls[0].contains("date=2025-01-15") && urls[0].contains("tz=-08:00"))   // PST
+        #expect(urls[1].contains("date=2025-07-15") && urls[1].contains("tz=-07:00"))   // PDT
+    }
+
     @Test func noLocationIsFetchError() async {
         ensureTestAPIKeyConfigured()
         let service = EnvironmentalDataService(
@@ -463,12 +532,18 @@ Append to `APIConfig.swift` (inside the enum, after `airPollutionHistoryURL`):
     static let openWeatherOneCallBaseURL = "https://api.openweathermap.org/data/3.0"
 
     /// Build a One Call day_summary URL for observed completed-day weather.
-    /// `date` is a local "yyyy-MM-dd" string (nil if the API key is not configured).
-    static func oneCallDaySummaryURL(latitude: Double, longitude: Double, date: String) -> URL? {
+    /// `date` is a local "yyyy-MM-dd" string; `tz` is the "±HH:MM" offset that
+    /// controls the provider's aggregation day (WITHOUT it, OpenWeather derives
+    /// the timezone from the location — for a remote manual location that would
+    /// disagree with the app's stored local day, so the caller always supplies
+    /// the app calendar's date-specific offset). "+" is percent-encoded (%2B) so
+    /// no query parser can read it as a space. Nil if the API key is missing.
+    static func oneCallDaySummaryURL(latitude: Double, longitude: Double, date: String, tz: String) -> URL? {
         guard let apiKey = openWeatherAPIKey else {
             return nil
         }
-        let urlString = "\(openWeatherOneCallBaseURL)/onecall/day_summary?lat=\(latitude)&lon=\(longitude)&date=\(date)&units=metric&appid=\(apiKey)"
+        let encodedTZ = tz.replacingOccurrences(of: "+", with: "%2B")
+        let urlString = "\(openWeatherOneCallBaseURL)/onecall/day_summary?lat=\(latitude)&lon=\(longitude)&date=\(date)&tz=\(encodedTZ)&units=metric&appid=\(apiKey)"
         return URL(string: urlString)
     }
 ```
@@ -514,9 +589,14 @@ And add the fetch + response model after `fetchCompletedAirQualityRange` (after 
         formatter.timeZone = calendar.timeZone
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd"
+        // The app's calendar timezone is authoritative for the aggregation day —
+        // date-SPECIFIC offset (DST changes it across the backfill window).
+        let seconds = calendar.timeZone.secondsFromGMT(for: day)
+        let tzOffset = String(format: "%@%02d:%02d", seconds < 0 ? "-" : "+",
+                              abs(seconds) / 3600, (abs(seconds) % 3600) / 60)
         guard let url = APIConfig.oneCallDaySummaryURL(
             latitude: location.latitude, longitude: location.longitude,
-            date: formatter.string(from: day)) else {
+            date: formatter.string(from: day), tz: tzOffset) else {
             Logger.error("Invalid URL for One Call day_summary API", category: .network)
             return .fetchError
         }
@@ -550,7 +630,7 @@ And add the fetch + response model after `fetchCompletedAirQualityRange` (after 
 - [ ] **Step 4: Run to verify green**
 
 Run: the same command as Step 2.
-Expected: `** TEST SUCCEEDED **` — all 8 `@Test` cases pass.
+Expected: `** TEST SUCCEEDED **` — all 9 `@Test` cases pass.
 
 - [ ] **Step 5: Commit**
 
@@ -689,6 +769,31 @@ Add at the end of `EnvironmentalEmitterTests` (reusing the file's `utc`/`day(_:_
         let observed = try await observedWeatherDays(db, cal)
         #expect(observed == [day(cal, 6, 7), day(cal, 6, 9)])     // beyond-gap value still emits (idempotent)
         #expect(store.date(for: weatherDayKey) == day(cal, 6, 7)) // stopped before the recent gap
+    }
+
+    /// Unset watermark → the weather loop requests EXACTLY the capped window:
+    /// 30 distinct calendar days, yesterday−29 through yesterday, stepped
+    /// correctly across the LA fall-back DST transition (its own loop — the AQI
+    /// cap test cannot protect it).
+    @Test func weatherNilWatermarkRequestsExactlyThirtyDaysAcrossDSTFallBack() async throws {
+        let cal = losAngeles
+        let db = try AppDatabase.inMemory()
+        let stub = StubProvider()
+        let store = MemoryWatermarkStore()
+        stub.weatherDefault = .absent                             // every day resolves; loop must run the full window
+        let now = day(cal, 11, 9).addingTimeInterval(9 * 3600)    // 2025-11-09 09:00 PST; fall-back was 11-02
+        await EnvironmentalEventEmitter.emitIfNeeded(database: db, service: stub,
+                                                     now: { now }, calendar: cal, store: store)
+        #expect(stub.weatherCallCount == 30)
+        let requested = stub.weatherDaysRequested.map { cal.startOfDay(for: $0) }
+        #expect(Set(requested).count == 30)                       // 30 DISTINCT local days (no DST double-step)
+        #expect(requested.first == day(cal, 10, 11))              // yesterday − 29
+        #expect(requested.last == day(cal, 11, 8))                // yesterday
+        var expected = day(cal, 10, 11)
+        for d in requested {                                      // contiguous local-day stepping
+            #expect(d == expected)
+            expected = cal.date(byAdding: .day, value: 1, to: expected)!
+        }
     }
 
     /// The weather throttle is independent: a second foreground within the hour

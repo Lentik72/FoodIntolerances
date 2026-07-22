@@ -36,6 +36,7 @@ A forced sub-problem: once observed weather lands, a completed day holds BOTH a 
   - `.absent` — the provider has no data for that day;
   - `.fetchError` — transport/decode/auth failure for the day (triggers retry, never mistaken for absence).
   Uses `resolvedCoordinate()` (manual override → LocationService), injected transport/clock/calendar like the AQI path. Past days use the CURRENT resolved coordinate — the same accepted limitation as AQI history.
+- **Timezone authority (Leo review, 2026-07-22):** without a `tz` parameter, OpenWeather derives the aggregation timezone from the LOCATION — for a remote manual location that would disagree with the app's stored local day (and shift the afternoon-humidity window). The fetch therefore always supplies `tz` as the app calendar's **date-specific** "±HH:MM" offset (DST changes it across the backfill window), making the injected calendar authoritative for both the request and the stored day. "+" is percent-encoded (`%2B`) so no query parser can read it as a space.
 
 ### B. Backfill (emitter)
 
@@ -51,7 +52,7 @@ A forced sub-problem: once observed weather lands, a completed day holds BOTH a 
 ### D. Display precedence (core, both choke points)
 
 New shared pure helper in `EnvironmentDaySummary.swift` (peer of `retiredSubtypes`): `EnvironmentDaySummaryBuilder.observedPrecedenceFiltered(_ events: [HealthEvent], timeZone: TimeZone) -> [HealthEvent]`:
-- Groups `temperature`/`humidity` env events per local day; when a day+subtype has at least one `.observedCompletedDay` event, all `.forecast` events of that day+subtype are dropped from presentation; among multiple observed, the deterministic winner (Decision 3) is kept.
+- Groups `temperature`/`humidity` env events per local day; when a day+subtype has at least one `.observedCompletedDay` event, all `.forecast` events of that day+subtype are dropped from presentation; among multiple observed, the deterministic winner (Decision 3) is kept. **Only those two drops are licensed** — any OTHER or missing provenance (`.currentSnapshot`, unclassified/nil, future kinds) passes through untouched (Leo review, 2026-07-22).
 - Every other subtype and provenance passes through untouched; resolved independently per day+subtype.
 - Applied in `EnvironmentDaySummaryBuilder.summaries` (its own filter — public direct entry point) AND in `TimelineDayBuilder.days` (feeding sessions/summaries/rowEvents, both modes — no caller can leak a suppressed forecast row, mirroring the retired-subtypes wiring).
 - `EnvironmentSummaryFormatter` needs no change — it renders whatever the (now-precedence-filtered) summary carries.
@@ -73,9 +74,9 @@ Zero changes. On the next recompute after ≥ `EvidenceConfig.minWeatherReadings
 ## 5. Testing
 
 - **Service (app):** day_summary decode → high/low/humidity; missing `humidity.afternoon` → `.value` with nil humidity; malformed payload → `.fetchError`; 401 → `.fetchError` (subscription-not-active degradation); URL builder date formatting.
-- **Emitter (app):** first run backfills capped window; watermark advances only on persisted ingest; recent absent day holds (grace), old absent day advances; throttle prevents rapid refetch; `.fetchError` mid-pass holds the watermark (contiguity).
+- **Emitter (app):** first run backfills capped window — pinned exactly: an unset watermark requests 30 distinct local days, yesterday−29 through yesterday, stepped across a DST fall-back boundary (the weather loop's own test; the AQI cap test cannot protect it); watermark advances only on persisted ingest; recent absent day holds (grace), old absent day advances; throttle prevents rapid refetch; `.fetchError` mid-pass holds the watermark (contiguity).
 - **Factory (core):** default reading stamps temp/humidity `.forecast` (existing behavior pinned); `weatherProvenance: .observedCompletedDay` stamps both; nil observed humidity → no humidity event.
-- **Precedence (core, builder + day-builder):** observed suppresses same-day same-subtype forecast only — mixed availability yields observed temperature + forecast humidity on one day; other days untouched; duplicate observed → deterministic winner; forecast-only day (today) unchanged; raw/search mode follows the same rule; non-weather subtypes and other provenances pass through.
+- **Precedence (core, builder + day-builder):** observed suppresses same-day same-subtype forecast only — mixed availability yields observed temperature + forecast humidity on one day; other days untouched; duplicate observed → deterministic winner, INCLUDING the secondary tie-break (identical `createdAt` → larger `id.uuidString`, pinned with fixed UUIDs in both input orders); a mixed-provenance day (observed + forecast + `.currentSnapshot` + provenance-less) drops ONLY the forecast; forecast-only day (today) unchanged; raw/search mode follows the same rule; non-weather subtypes pass through.
 - **Mining:** existing source tests already cover observed-event consumption — no new mining tests needed; one integration-style check that a precedence-filtered display does not affect what the engine sees (mining reads the store, not the display filter).
 - **Device gate (Leo):** completed days show measured actuals (visibly different from the forecast numbers where they diverge); today still shows forecast; after backfill + recompute, Hot/Cold/Humid/Swing cards re-activate; with the subscription disabled, everything behaves as before.
 
