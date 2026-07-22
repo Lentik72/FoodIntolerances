@@ -1,5 +1,4 @@
 import SwiftUI
-import SwiftData
 import HealthGraphCore
 
 struct EventDetailView: View {
@@ -9,9 +8,9 @@ struct EventDetailView: View {
     @State private var deleteFailed = false
     @State private var editing = false
     @AppStorage("hg.temperatureUnit") private var rawTempUnit = ""
-    @Query private var userProfiles: [UserProfile]
+    @AppStorage("hg.measurementSystem") private var rawUnitSystem = ""
     private var weightUnit: WeightUnit {
-        WeightUnit.resolved(preference: userProfiles.first?.unitPreference)
+        UnitSystem.resolved(from: rawUnitSystem).weightUnit
     }
 
     /// Re-resolves the event by id from the (already `@ObservedObject`) viewModel's

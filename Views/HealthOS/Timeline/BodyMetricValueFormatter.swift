@@ -13,19 +13,6 @@ enum WeightUnit {
         case .pounds: return "lb"
         }
     }
-
-    /// Resolve the display unit from the profile's stored `unitPreference`
-    /// ("imperial" → pounds, "metric" → kilograms). A nil preference (no profile)
-    /// — or any unrecognized value — falls back to the device locale: US → pounds,
-    /// everywhere else → kilograms. Locale is injectable for testability (mirrors
-    /// `TemperatureUnit.localeDefault`).
-    static func resolved(preference: String?, locale: Locale = .current) -> WeightUnit {
-        switch preference {
-        case "imperial": return .pounds
-        case "metric": return .kilograms
-        default: return locale.measurementSystem == .us ? .pounds : .kilograms
-        }
-    }
 }
 
 /// The Timeline value line for a body-weight event, in the user's unit, to one

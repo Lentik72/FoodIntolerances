@@ -1,13 +1,12 @@
 import SwiftUI
-import SwiftData
 import HealthGraphCore
 
 struct TimelineView: View {
     @StateObject private var viewModel = TimelineViewModel(
         store: GRDBEventStore(database: HealthGraphProvider.shared))
-    @Query private var userProfiles: [UserProfile]
+    @AppStorage("hg.measurementSystem") private var rawUnitSystem = ""
     private var weightUnit: WeightUnit {
-        WeightUnit.resolved(preference: userProfiles.first?.unitPreference)
+        UnitSystem.resolved(from: rawUnitSystem).weightUnit
     }
     @State private var searchDebounce: Task<Void, Never>?
     @State private var path = NavigationPath()

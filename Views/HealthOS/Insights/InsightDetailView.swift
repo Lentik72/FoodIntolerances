@@ -188,13 +188,11 @@ struct InsightDetailView: View {
 
 #Preview("Insight Detail — light") {
     NavigationStack { InsightDetailPreviewHost() }
-        .modelContainer(for: UserProfile.self, inMemory: true)
 }
 
 #Preview("Insight Detail — dark") {
     NavigationStack { InsightDetailPreviewHost() }
         .preferredColorScheme(.dark)
-        .modelContainer(for: UserProfile.self, inMemory: true)
 }
 
 /// Seeds a small mined in-memory DB (dairy → bloating, planted pattern over 90

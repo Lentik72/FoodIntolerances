@@ -48,15 +48,4 @@ struct BodyMetricValueFormatterTests {
         #expect(BodyMetricValueFormatter.line(for: oddUnit, unit: .pounds) == nil)
         #expect(BodyMetricValueFormatter.line(for: weight(nil), unit: .kilograms) == nil)   // no value → nil
     }
-    @Test func resolvedFromProfilePreference() {
-        #expect(WeightUnit.resolved(preference: "imperial", locale: Locale(identifier: "de_DE")) == .pounds)   // explicit wins over locale
-        #expect(WeightUnit.resolved(preference: "metric", locale: Locale(identifier: "en_US")) == .kilograms)  // explicit wins over locale
-    }
-    @Test func resolvedFallsBackToLocaleWhenNoOrUnknownPreference() {
-        #expect(WeightUnit.resolved(preference: nil, locale: Locale(identifier: "en_US")) == .pounds)
-        #expect(WeightUnit.resolved(preference: nil, locale: Locale(identifier: "en_GB")) == .kilograms)
-        #expect(WeightUnit.resolved(preference: nil, locale: Locale(identifier: "de_DE")) == .kilograms)
-        #expect(WeightUnit.resolved(preference: "garbage", locale: Locale(identifier: "en_US")) == .pounds)     // unknown → locale
-        #expect(WeightUnit.resolved(preference: "garbage", locale: Locale(identifier: "de_DE")) == .kilograms)  // unknown → locale
-    }
 }
