@@ -28,7 +28,7 @@
 
 **Interfaces:**
 - Consumes: `WeightUnit` (app-side, existing — `{ kilograms, pounds }`).
-- Produces: `UnitSystem` (`.imperial`/`.metric`, `.localeDefault(for:)`, `.resolved(from:locale:)`, `.weightUnit`); `struct UnitReconciliation: Equatable { globalRaw: String; profileUnitPreference: String? }`; `enum UnitPreferenceReconciler { static func reconcile(globalRaw:profilePref:) -> UnitReconciliation }`.
+- Produces: `UnitSystem` (`.imperial`/`.metric`, `.localeDefault(for:)`, `.resolved(from:locale:)`, `.weightUnit`); `struct UnitReconciliation: Equatable { globalRaw: String; profileUnitPreference: String? }`; `enum UnitPreferenceReconciler { static func reconcile(globalRaw:profilePref:locale:) -> UnitReconciliation }`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -64,8 +64,8 @@ struct UnitSystemTests {
     }
 
     // MARK: reconciliation truth table (asserts BOTH returned fields)
-    private func r(_ g: String, _ p: String?) -> UnitReconciliation {
-        UnitPreferenceReconciler.reconcile(globalRaw: g, profilePref: p)
+    private func r(_ g: String, _ p: String?, _ locale: Locale = Locale(identifier: "en_US")) -> UnitReconciliation {
+        UnitPreferenceReconciler.reconcile(globalRaw: g, profilePref: p, locale: locale)
     }
     @Test func validGlobalNoProfile_leftAlone_createsNothing() {          // rule 3
         #expect(r("imperial", nil) == UnitReconciliation(globalRaw: "imperial", profileUnitPreference: nil))
@@ -85,10 +85,15 @@ struct UnitSystemTests {
     @Test func invalidGlobalValidProfile_seedsGlobal() {                 // invalid global treated as unset
         #expect(r("garbage", "imperial") == UnitReconciliation(globalRaw: "imperial", profileUnitPreference: nil))
     }
-    @Test func neitherValid_remainsUnset_neverCopiesUnknown() {
-        #expect(r("", "garbage") == UnitReconciliation(globalRaw: "", profileUnitPreference: nil))      // invalid profile NOT copied
-        #expect(r("garbage", "garbage") == UnitReconciliation(globalRaw: "", profileUnitPreference: nil))
-        #expect(r("", nil) == UnitReconciliation(globalRaw: "", profileUnitPreference: nil))            // no profile, nothing to seed
+    @Test func neitherValidNoProfile_remainsUnset() {
+        #expect(r("", nil) == UnitReconciliation(globalRaw: "", profileUnitPreference: nil))            // no profile → stay unset
+        #expect(r("garbage", nil) == UnitReconciliation(globalRaw: "", profileUnitPreference: nil))     // invalid global, no profile
+    }
+    @Test func neitherValidInvalidProfile_repairsBothToLocale() {
+        // An existing invalid profile must NOT be left holding "garbage": resolve locale, write both.
+        #expect(r("", "garbage", Locale(identifier: "en_US")) == UnitReconciliation(globalRaw: "imperial", profileUnitPreference: "imperial"))
+        #expect(r("garbage", "garbage", Locale(identifier: "de_DE")) == UnitReconciliation(globalRaw: "metric", profileUnitPreference: "metric"))
+        #expect(r("", "garbage", Locale(identifier: "de_DE")) == UnitReconciliation(globalRaw: "metric", profileUnitPreference: "metric"))   // never copies "garbage"
     }
 }
 ```
@@ -149,13 +154,16 @@ struct UnitReconciliation: Equatable {
 }
 
 /// Pure reconciliation of the global setting vs a profile mirror. The global is
-/// authoritative; an unknown/empty value on either side resolves from locale and
-/// is NEVER copied into the other store.
+/// authoritative; an unknown string is NEVER copied across. When neither side is
+/// valid: with no profile the global stays unset (locale resolves at read time);
+/// with an existing (invalid) profile, BOTH are repaired to the locale default so
+/// the mirror is equal AND valid.
 enum UnitPreferenceReconciler {
     /// - Parameter profilePref: nil when NO profile exists; otherwise the profile's
     ///   current `unitPreference` (which may itself be an unrecognized string).
     static func reconcile(globalRaw: String,
-                          profilePref: String?) -> UnitReconciliation {
+                          profilePref: String?,
+                          locale: Locale = .current) -> UnitReconciliation {
         let global = UnitSystem(rawValue: globalRaw)                    // valid global, else nil
         let profile = profilePref.flatMap(UnitSystem.init(rawValue:))   // valid profile, else nil
         switch (global, profile) {
@@ -173,8 +181,14 @@ enum UnitPreferenceReconciler {
             // invalid/empty global + valid profile: seed the global from the profile
             return UnitReconciliation(globalRaw: p.rawValue, profileUnitPreference: nil)         // rule 1
         case (.none, .none):
-            // neither valid: remain unset (locale at read); never copy an unknown value across
-            return UnitReconciliation(globalRaw: "", profileUnitPreference: nil)
+            if profilePref == nil {
+                // neither valid + no profile: stay unset; locale resolves at read time
+                return UnitReconciliation(globalRaw: "", profileUnitPreference: nil)
+            }
+            // neither valid + existing (invalid) profile: resolve locale and write it to BOTH,
+            // so the mirror is equal AND valid (never leaves "garbage" in the profile).
+            let d = UnitSystem.localeDefault(for: locale).rawValue
+            return UnitReconciliation(globalRaw: d, profileUnitPreference: d)
         }
     }
 }
@@ -314,7 +328,7 @@ git commit -m "refactor(app): Timeline weight resolves from the global UnitSyste
 
 **Interfaces:**
 - Consumes: `UnitPreferenceReconciler.reconcile` (Task 1); `UserProfile`; `Logger`.
-- Produces: `@MainActor enum UnitPreferenceBootstrap { static let globalKey; static func reconcileAtLaunch(container:defaults:) }`.
+- Produces: `@MainActor enum UnitPreferenceBootstrap { static let globalKey; static func reconcileAtLaunch(container:defaults:locale:) }`.
 
 - [ ] **Step 1: Write the failing bootstrap integration test**
 
@@ -341,18 +355,32 @@ struct UnitPreferenceBootstrapTests {
     @Test func seedsGlobalFromProfileWhenUnset() throws {
         let c = try inMemoryContainer()
         let p = UserProfile(); p.unitPreference = "metric"; c.mainContext.insert(p)
+        try c.mainContext.save()                                                    // persist BEFORE bootstrap
         let d = freshDefaults()
         UnitPreferenceBootstrap.reconcileAtLaunch(container: c, defaults: d)
         #expect(d.string(forKey: UnitPreferenceBootstrap.globalKey) == "metric")   // seeded
-        #expect(p.unitPreference == "metric")                                      // profile untouched
+        let saved = try c.mainContext.fetch(FetchDescriptor<UserProfile>()).first
+        #expect(saved?.unitPreference == "metric")                                  // profile untouched (refetched)
     }
     @Test func globalWinsAndRepairsProfileOnMismatch() throws {
         let c = try inMemoryContainer()
         let p = UserProfile(); p.unitPreference = "metric"; c.mainContext.insert(p)
+        try c.mainContext.save()
         let d = freshDefaults(); d.set("imperial", forKey: UnitPreferenceBootstrap.globalKey)
         UnitPreferenceBootstrap.reconcileAtLaunch(container: c, defaults: d)
         #expect(d.string(forKey: UnitPreferenceBootstrap.globalKey) == "imperial")  // global unchanged
-        #expect(p.unitPreference == "imperial")                                     // profile repaired
+        let saved = try c.mainContext.fetch(FetchDescriptor<UserProfile>()).first
+        #expect(saved?.unitPreference == "imperial")                                // profile repaired (refetched)
+    }
+    @Test func repairsInvalidProfileAndGlobalToLocale() throws {
+        let c = try inMemoryContainer()
+        let p = UserProfile(); p.unitPreference = "garbage"; c.mainContext.insert(p)
+        try c.mainContext.save()
+        let d = freshDefaults()   // global unset; neither side valid but a profile exists
+        UnitPreferenceBootstrap.reconcileAtLaunch(container: c, defaults: d, locale: Locale(identifier: "en_US"))
+        #expect(d.string(forKey: UnitPreferenceBootstrap.globalKey) == "imperial")  // resolved from locale → global
+        let saved = try c.mainContext.fetch(FetchDescriptor<UserProfile>()).first
+        #expect(saved?.unitPreference == "imperial")                                // repaired to a VALID value, not "garbage"
     }
     @Test func noProfileCreatesNothingAndKeepsGlobal() throws {
         let c = try inMemoryContainer()
@@ -391,12 +419,13 @@ enum UnitPreferenceBootstrap {
     static let globalKey = "hg.measurementSystem"
 
     static func reconcileAtLaunch(container: ModelContainer,
-                                  defaults: UserDefaults = .standard) {
+                                  defaults: UserDefaults = .standard,
+                                  locale: Locale = .current) {
         let current = defaults.string(forKey: globalKey) ?? ""
         do {
             let profiles = try container.mainContext.fetch(FetchDescriptor<UserProfile>())
             let result = UnitPreferenceReconciler.reconcile(
-                globalRaw: current, profilePref: profiles.first?.unitPreference)
+                globalRaw: current, profilePref: profiles.first?.unitPreference, locale: locale)
             if result.globalRaw != current {
                 defaults.set(result.globalRaw, forKey: globalKey)
             }
@@ -458,7 +487,7 @@ xcodebuild test -project "Food Intolerances.xcodeproj" -scheme "Food Intolerance
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -parallel-testing-enabled NO \
   -only-testing:"Food IntolerancesTests/UnitPreferenceBootstrapTests" 2>&1 | tail -20
 ```
-Expected: `** TEST SUCCEEDED **` (3/3).
+Expected: `** TEST SUCCEEDED **` (4/4).
 ```bash
 xcodebuild test -project "Food Intolerances.xcodeproj" -scheme "Food Intolerances" \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -parallel-testing-enabled NO 2>&1 | tail -25
@@ -583,14 +612,23 @@ In `Views/Profile/UserProfileView.swift`, add `@AppStorage("hg.measurementSystem
         }
 ```
 
-- [ ] **Step 3: Legacy save propagates to the global on success (rule 5)**
+- [ ] **Step 3: Normalize on save; propagate to the global on success (rule 5)**
 
-In `saveChanges()`, after a successful `try modelContext.save()`, set the global from the saved preference (only on success):
+In `saveChanges()`, **normalize the preference before writing it to either store** so a corrupted existing profile can never publish an unknown string. Replace the raw assignment `profile.unitPreference = unitPreference` (at `~:354`) with:
+```swift
+        // Normalize before publishing to either store: a valid picker choice wins,
+        // else fall back to the resolved global (which is always valid).
+        let selectedSystem = UnitSystem(rawValue: unitPreference)
+            ?? UnitSystem.resolved(from: rawUnitSystem)
+        let normalizedPreference = selectedSystem.rawValue
+        profile.unitPreference = normalizedPreference
+```
+Then, after a successful `try modelContext.save()`, publish the **normalized** value to the global (only on success — never the unsanitized `@State`):
 ```swift
         do {
             try modelContext.save()
             hasChanges = false
-            rawUnitSystem = unitPreference                 // rule 5: propagate to the global only on a successful save
+            rawUnitSystem = normalizedPreference           // rule 5: publish the NORMALIZED value only on a successful save
             Logger.info("Profile saved successfully", category: .data)
         } catch {
             Logger.error(error, message: "Failed to save profile", category: .data)

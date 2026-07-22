@@ -73,7 +73,7 @@ enum UnitPreferenceReconciler {
 | valid `G` | valid `P ≠ G` | `G` | `G` | 2: global wins, repair |
 | valid `G` | **invalid** | `G` | `G` | valid global + invalid profile → repair |
 | **invalid/empty** | valid `P` | `P` | — | 1: seed from profile |
-| invalid/empty | **invalid** | `""` (unset → locale) | — | neither valid → unset; **never copy unknown into global** |
+| invalid/empty | **invalid** (profile exists) | locale default | locale default | neither valid + profile → repair BOTH to the locale default (never leave "garbage" in the profile; `locale` is used here) |
 | invalid/empty | none | `""` (unset → locale) | — | nothing to seed, create nothing |
 
 "Valid" = `UnitSystem(rawValue:) != nil`. The reconciler never returns a non-`{imperial,metric}` value in `globalRaw` except `""` (unset), and never puts an unknown string in `profileUnitPreference`.
