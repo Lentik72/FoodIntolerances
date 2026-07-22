@@ -24,6 +24,7 @@ struct UserProfileView: View {
     @State private var weightLbs: String = ""
     @State private var weightKg: String = ""
     @State private var unitPreference: String = "imperial"
+    @AppStorage("hg.measurementSystem") private var rawUnitSystem = ""
 
     // UI State
     @State private var showConditionsPicker = false
@@ -297,7 +298,10 @@ struct UserProfileView: View {
     }
 
     private func loadProfile() {
-        guard let profile = profile else { return }
+        guard let profile = profile else {
+            unitPreference = UnitSystem.newProfileUnitPreference(global: rawUnitSystem)
+            return
+        }
 
         if let profileAge = profile.age {
             age = String(profileAge)
@@ -351,7 +355,13 @@ struct UserProfileView: View {
         profile.dietType = dietType.isEmpty ? nil : dietType
         profile.targetSleepHours = targetSleepHours
         profile.memoryLevel = memoryLevel.rawValue
-        profile.unitPreference = unitPreference
+
+        // Normalize before publishing to either store: a valid picker choice wins,
+        // else fall back to the resolved global (which is always valid).
+        let selectedSystem = UnitSystem(rawValue: unitPreference)
+            ?? UnitSystem.resolved(from: rawUnitSystem)
+        let normalizedPreference = selectedSystem.rawValue
+        profile.unitPreference = normalizedPreference
 
         // Save height (convert to cm for internal storage)
         if unitPreference == "imperial" {
@@ -387,6 +397,7 @@ struct UserProfileView: View {
         do {
             try modelContext.save()
             hasChanges = false
+            rawUnitSystem = normalizedPreference           // rule 5: publish the NORMALIZED value only on a successful save
             Logger.info("Profile saved successfully", category: .data)
         } catch {
             Logger.error(error, message: "Failed to save profile", category: .data)

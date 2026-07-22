@@ -6,6 +6,8 @@ struct OnboardingContainerView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
+    @AppStorage("hg.measurementSystem") private var rawUnitSystem = ""
+
     @State private var currentStep: OnboardingStep = .welcome
     @State private var userProfile: UserProfile?
 
@@ -117,6 +119,7 @@ struct OnboardingContainerView: View {
         profile.hasCompletedOnboarding = true
         profile.onboardingCompletedDate = Date()
         profile.onboardingStepsCompleted = 7
+        profile.unitPreference = UnitSystem.newProfileUnitPreference(global: rawUnitSystem)   // rule 4: match the global
 
         modelContext.insert(profile)
 
