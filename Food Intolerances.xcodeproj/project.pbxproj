@@ -215,6 +215,7 @@
 		B3D485702D4BBE8800F7E3BA /* TabEnum.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabEnum.swift; sourceTree = "<group>"; };
 		B3D485722D4C22B100F7E3BA /* TabManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabManager.swift; sourceTree = "<group>"; };
 		B3D487B62D55990E00F7E3BA /* GetMoonPhase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GetMoonPhase.swift; sourceTree = "<group>"; };
+		SECRETSXCCONFIG0000001 /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Secrets.xcconfig; sourceTree = "<group>"; };
 		B3FEA08E2D3494CB000727AD /* SymptomView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SymptomView.swift; sourceTree = "<group>"; };
 		B3FEA0902D3494F8000727AD /* IconButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconButton.swift; sourceTree = "<group>"; };
 		B3FEA0922D349517000727AD /* PrimaryButtonStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrimaryButtonStyle.swift; sourceTree = "<group>"; };
@@ -305,6 +306,7 @@
 		B33426762D13998700BAAE35 = {
 			isa = PBXGroup;
 			children = (
+				SECRETSXCCONFIG0000001 /* Secrets.xcconfig */,
 				B30D8CD52D922B6A00ACE9BC /* NewProtocolSavedView.swift */,
 				B30D8CD72D922B9500ACE9BC /* ProtocolVerificationView.swift */,
 				B30D8CD32D92238A00ACE9BC /* ProtocolPreviewView.swift */,
@@ -696,6 +698,7 @@
 /* Begin XCBuildConfiguration section */
 		B33426A72D13998800BAAE35 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = SECRETSXCCONFIG0000001 /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -737,6 +740,7 @@
 		};
 		B33426A82D13998800BAAE35 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = SECRETSXCCONFIG0000001 /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
