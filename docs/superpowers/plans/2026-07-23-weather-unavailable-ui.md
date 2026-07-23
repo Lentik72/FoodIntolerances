@@ -1423,8 +1423,7 @@ struct PressureTrustTests {
         s.recordGenuinePressure(1013, at: t)
         s.recordGenuinePressure(1006, at: t.addingTimeInterval(600))   // 10 min later, 7 hPa fall
         #expect(s.latestFetchedPressure == 1006)
-        #expect(s.lastTrustedPressure == 1013)
-        #expect(s.suddenPressureChange == true)
+        #expect(s.lastTrustedPressure == 1013)   // previous+current ⇒ 7 hPa; the drop event is verified emitter-side
     }
     @Test func genuineAfterFallbackDoesNotFabricateDrop() {
         let s = EnvironmentalDataService()
@@ -1437,16 +1436,14 @@ struct PressureTrustTests {
         let s = EnvironmentalDataService()
         s.recordGenuinePressure(1013, at: t)
         s.recordGenuinePressure(1006, at: t.addingTimeInterval(7200))  // 2 h later > 1 h window
-        #expect(s.lastTrustedPressure == nil)            // stale prior → not comparable
-        #expect(s.suddenPressureChange == false)
+        #expect(s.lastTrustedPressure == nil)            // stale prior → not comparable → emitter sees no previous
     }
     @Test func thirdConsecutiveGenuineStillExposesAPrevious() {
         let s = EnvironmentalDataService()
         s.recordGenuinePressure(1013, at: t)
         s.recordGenuinePressure(1012, at: t.addingTimeInterval(300))
         s.recordGenuinePressure(1005, at: t.addingTimeInterval(600))   // carry regression guard
-        #expect(s.lastTrustedPressure == 1012)           // NOT equal to latest → drop still possible
-        #expect(s.suddenPressureChange == true)
+        #expect(s.lastTrustedPressure == 1012)           // NOT equal to latest → drop still computable
     }
     @Test func setFallbackRouteDoesNotContaminateCarry() {
         let s = EnvironmentalDataService()
@@ -1466,7 +1463,6 @@ struct PressureTrustTests {
         #expect(s.latestFetchedPressure == nil)          // stale genuine no longer exposed
         s.recordGenuinePressure(1006, at: t.addingTimeInterval(300))  // within window → carry preserved
         #expect(s.lastTrustedPressure == 1013)           // a real drop is still computable
-        #expect(s.suddenPressureChange == true)
     }
     @Test func setFallbackClearsLatestFetchedPressure() {
         let s = EnvironmentalDataService()
@@ -1595,15 +1591,18 @@ In `EnvironmentalDataService.swift`, add stored state near the pressure privates
 Add the two record methods (near `updateAtmosphericPressure`, `:647`):
 
 ```swift
-    /// Record a genuine API pressure reading: shift the carry, expose the prior
-    /// genuine value ONLY if within `pressureReadingInterval`, and set the legacy
-    /// sudden-change flag off that gated comparison. This is the sole writer of
-    /// `latestFetchedPressure`/`lastTrustedPressure`/`mostRecentGenuinePressure`.
+    /// Record a genuine API pressure reading: shift the carry and expose the prior
+    /// genuine value ONLY if within `pressureReadingInterval`. This is the sole
+    /// writer of `latestFetchedPressure`/`lastTrustedPressure`/`mostRecentGenuinePressure`.
+    /// It does NOT touch `suddenPressureChange` — that flag is a legacy-dashboard
+    /// concern owned solely by `updateAtmosphericPressure` (the emitter never reads
+    /// it; the core factory computes the mined drop from the two optionals). Writing
+    /// it here would change the legacy "Sudden Change Triggers" list on the
+    /// refresh→reset→fetch path — a legacy-display change this round forbids.
     func recordGenuinePressure(_ value: Double, at: Date) {
         let prior = mostRecentGenuinePressure
         let comparable = prior.map { at.timeIntervalSince($0.at) <= pressureReadingInterval } ?? false
         lastTrustedPressure = comparable ? prior?.value : nil
-        suddenPressureChange = comparable ? (abs((prior!.value) - value) >= pressureChangeThreshold) : false
         mostRecentGenuinePressure = (value, at)
         latestFetchedPressure = value
     }
@@ -1617,7 +1616,7 @@ In `fetchAtmosphericPressure` (`:279-334`): at the start of the genuine attempt 
 
 Make the fallbacks/reset legacy-display-only AND enforce the "nil on fallback" invariant. Every direct fallback/reset entry point — `useFallbackPressureData()` (`:618-633`), `setFallbackAtmosphericPressure()` (`:686-715`), and `resetPressureState()` (`:218-227`) — must **set `latestFetchedPressure = nil`** so no stale genuine reading is left exposed to the emitter, while **preserving `mostRecentGenuinePressure`** (the carry, so a later genuine reading can still compute a real drop) and **not** calling `recordGenuinePressure`. This matters because `setFallbackAtmosphericPressure` is called directly from `fetchWithReliableTimeout` and `resetPressureState` from `refreshEnvironmentalData` — paths that never went through `clearFetchedPressure()`, so without this they could publish a stale genuine value. Keep every existing legacy assignment (`atmosphericPressure`/`atmosphericPressureCategory`/`currentPressure`/`previousPressure`/`suddenPressureChange`) unchanged. `setFallbackAtmosphericPressure` routing through `updateAtmosphericPressure` is fine as long as `updateAtmosphericPressure` no longer writes the carry (next paragraph).
 
-Refactor `updateAtmosphericPressure` (`:647-684`): it stays the owner of the LEGACY display fields (`pressureReadings`, `currentPressure`, `previousPressure`, `atmosphericPressureCategory`, and the legacy `suddenPressureChange` it computes for the legacy card). It must NOT write `latestFetchedPressure`, `lastTrustedPressure`, or `mostRecentGenuinePressure`. The genuine carry + the emitter-facing `suddenPressureChange` are owned solely by `recordGenuinePressure`. (Net: the legacy card behaves exactly as before; the emitter reads only the carry-gated optionals.)
+Refactor `updateAtmosphericPressure` (`:647-684`): it stays the **sole** owner of the LEGACY display fields (`pressureReadings`, `currentPressure`, `previousPressure`, `atmosphericPressureCategory`, and `suddenPressureChange` — the legacy "Sudden Change Triggers" flag). It must NOT write `latestFetchedPressure`, `lastTrustedPressure`, or `mostRecentGenuinePressure`. Conversely, `recordGenuinePressure` owns only the genuine carry + the two emitter-facing optionals and must NOT write `suddenPressureChange` — the emitter never reads that flag (it reads the optionals directly, and the core factory computes the mined pressure-drop from them), so writing it there would only perturb the legacy dashboard on the refresh→reset→fetch path. (Net: the legacy card behaves exactly as before; the emitter reads only the carry-gated optionals.)
 
 - [ ] **Step 5: Run tests to verify they pass**
 
