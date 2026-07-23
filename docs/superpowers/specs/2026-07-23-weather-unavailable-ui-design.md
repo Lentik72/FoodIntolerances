@@ -49,7 +49,7 @@ The dead-key case dodges this specifically because `weatherURL()` returns `nil` 
 | 12 | Pressure fabrication | **Fix the data path in this round** — a data-integrity prerequisite for an honest unavailable state. Separate `latestFetchedPressure` (emitter input) from `lastTrustedPressure` (delta input); the legacy display keeps its 1013 fallback unchanged. Rejected: dropping the fallback everywhere (changes legacy UI outside this round's remit) and deferring (ships a Timeline that can show fabricated pressure above "Weather unavailable"). |
 | 13 | First-run volume | **Accepted.** A fresh install with location off marks all 30 in-reach days at once. Every one was explicitly inside a blocked backfill pass, the marker is muted, and they self-heal together in one successful pass. |
 | 14 | Cancellation result | **Explicit `.cancelled` case** on both backfill result enums. A cancelled fetch must not return `.fetchError(reason)`, or the emitter would stamp that reason across the whole intended range — a fabricated multi-day outage from a routine refresh-supersede. (Review P0.) |
-| 15 | Location fabrication | **Trusted-coordinate provenance.** `LocationService` fabricates NYC on denied/timeout, so `resolvedCoordinate()` is non-nil and wrong-city weather is ingested and mined; the `locationDenied`/`locationUnavailable` paths never run. Provenance-tag coordinates, reject `.fabricated` for ingestion, keep it for the legacy display. Cached is trusted (stated policy, overridable). (Review P0.) |
+| 15 | Location fabrication | **Trusted-coordinate provenance.** `LocationService` fabricates NYC on denied/timeout, so `resolvedCoordinate()` is non-nil and wrong-city weather is ingested and mined; the `locationDenied`/`locationUnavailable` paths never run. Provenance-tag coordinates, reject `.fabricated` for ingestion, keep it for the legacy display. **Cached is trusted only when authorized AND fresh** (persisted `cachedLocationAt` within the 5-min window) — an unbounded/denied cache would mask a real location outage. Manual always wins. (Review P0 + follow-up P1.) |
 | 16 | Pressure carry is time-aware | **`(value, timestamp)`**, exposed only within `pressureReadingInterval`. A value-only carry fabricates a drop after days offline/backgrounded. All three fallback routes refactored, not just 1013. (Review P1.) |
 | 17 | Healthy ≠ no-live-failure | Summary: any live failure → unavailable; else any nil success → "Not checked yet"; else the **least**-recent success. Retained failures render past-tense "Last issue — resolved" with no action; "Why it stopped" + Open Settings read `liveFailure` only. (Review P1 + notes.) |
 | 18 | `insufficientData` | A 2xx forecast with < 3 usable slots is a real capability failure (today-scoped) and **marks**, rather than recreating a moon-only silent gap. Pressure stays Health-only. |
@@ -147,7 +147,8 @@ Fix — track coordinate provenance and reject the fabricated one for graph purp
 enum LocationProvenance { case device, cached, fabricated }
 ```
 
-- `LocationService` publishes the provenance of `currentLocation`: `.device` when set from a real `didUpdateLocations` fix (`:960`) and on the cached-then-verified path; `.cached` when set from `lastKnownLocation` (`:884`); `.fabricated` at the four NYC sites. The NYC assignments and `currentLocation`'s type are unchanged, so the legacy pressure/weather cards still render.
+- `LocationService` publishes the provenance of `currentLocation`: `.device` when set from a real `didUpdateLocations` fix (`:960`); `.cached` when set from `lastKnownLocation` (`:884`, `:903`); `.fabricated` at the four NYC sites. The NYC assignments and `currentLocation`'s type are unchanged, so the legacy pressure/weather cards still render.
+- The device fix already persists `cachedLatitude`/`cachedLongitude` (`:963–964`) with **no timestamp**. Add a persisted `cachedLocationAt` (an `@AppStorage` epoch) written at the same point, so the cache's age is knowable. Legacy display keeps reading `lastKnownLocation` regardless of age — the timestamp gates ingestion only.
 - `LocationService` also exposes authorization publicly, since its `CLLocationManager` is `private`:
   ```swift
   var authorization: EnvironmentLocationAuthorization   // maps locationManager.authorizationStatus
@@ -155,18 +156,31 @@ enum LocationProvenance { case device, cached, fabricated }
 - `DefaultLocationProvider.coordinate` returns a **trusted** coordinate only:
   ```swift
   var coordinate: CLLocationCoordinate2D? {
-      if let manual = service.manualLocation { return manual }        // user-set: always trusted
-      guard let loc = service.locationManager, loc.provenance != .fabricated else { return nil }
-      return loc.currentLocation
+      if let manual = service.manualLocation { return manual }   // user-set: always trusted
+      guard let loc = service.locationManager else { return nil }
+      switch loc.provenance {
+      case .device:     return loc.currentLocation               // a real live fix
+      case .cached:     return loc.trustedCachedCoordinate       // authorized AND fresh, else nil
+      case .fabricated: return nil                               // never ingest NYC
+      }
   }
   ```
 
-**Cached-coordinate policy (explicit, Leo's call to override):** `.cached` is **trusted**. A cached fix is a real place the user actually was; weather for a recently-visited location is a defensible graceful degradation, and it's the difference between "usually works offline" and "blank whenever GPS is cold." The alternative — reject cached too — is more conservative but blanks weather far more often. If Leo prefers the conservative line, one word changes (`!= .fabricated` → `== .device`) and the cached path also returns nil. Flagged, not silently chosen.
+**Cached-coordinate policy (revised per review — bounded).** Trusting a cached fix unconditionally has two holes: the cache has no timestamp, so "recently visited" isn't guaranteed (it could be months old → wrong city); and trusting it *while authorization is denied* means turning Location off keeps ingesting cached-location weather and **never** produces `locationDenied`, directly contradicting the device gate. So `.cached` is trusted for ingestion only when **both**:
+
+1. `authorization == .authorized`, and
+2. the persisted `cachedLocationAt` is within the existing five-minute freshness window (the `300 s` already used at `:842`/`:942`; the plan lifts it to a named constant).
+
+`LocationService.trustedCachedCoordinate` returns `lastKnownLocation` when both hold, else `nil`. Denied → cached is not trusted → the fetch reports `locationDenied` as the gate expects. Authorized but the cache is stale → `nil` → `locationUnavailable` until a fresh fix lands (then it heals). Manual still always wins; the legacy display still shows cached at any age.
+
+This keeps the cold-launch benefit for the common case (an authorized user whose last fix is minutes old) without letting a stale or denied cache mask a real location outage.
 
 `LocationProviding` (`HTTPTransport.swift:21`) gains the authorization property alongside `coordinate`, keeping one injectable seam so tests can drive both halves of decision 10 **and** the fabricated-coordinate rejection:
 
 ```swift
-enum EnvironmentLocationAuthorization { case denied, restricted, authorized, notDetermined }
+// public: it appears in the requirements of the public LocationProviding protocol,
+// so it must be at least as visible as the protocol itself.
+public enum EnvironmentLocationAuthorization { case denied, restricted, authorized, notDetermined }
 
 public protocol LocationProviding {
     var coordinate: CLLocationCoordinate2D? { get }   // trusted only — nil hides a fabricated fix
@@ -200,7 +214,12 @@ Recorded at the point of failure from the range the caller actually intended, ne
 
 The `observedWeather` intended range is correct even though the pass aborts mid-loop on the first `.fetchError`: an aborted pass ingests **nothing** — it `return`s ahead of `pipeline.ingest` (`EnvironmentalEventEmitter.swift:218`) — so every day in the intended range is genuinely unresolved. Recording only the days reached before the abort would under-report.
 
-**Success is recorded only after the whole pass is durably persisted.** A backfill capability records `recordSuccess` at exactly one point: inside the same `do` block that persists the pass and advances the watermark (`EnvironmentalEventEmitter.swift:228–235`) — after the ingest (skipped when the pass produced no events) and the watermark write both succeed — never per-day inside the loop. A pass that reached this block without a `.fetchError`/`.cancelled` abort *is* a complete pass, even if every day was resolved-`.absent` and nothing was ingested. If ingest throws, the existing `catch` holds the watermark for retry (`:233`) and must **not** record success — the capability stays in whatever state it was. This keeps "last success" honest: it means "a complete pass ran and landed," not "some days were fetched." The today-scoped capabilities record success right after their own single `pipeline.ingest` for today succeeds, by the same principle.
+**Two success contracts, one per layer — because the two layers own different things.** The reviewer caught a contradiction in an earlier draft: today-scoped success cannot be recorded "after `pipeline.ingest`" because the service, which owns those fetches, never sees the emitter's pipeline result (today's pressure + forecast + moon + mercury are ingested together as one combined reading in the emitter at `EnvironmentalEventEmitter.swift:111`, not per-capability in the service). So the two layers define success differently, and that difference is intrinsic, not a wart:
+
+- **Backfill capabilities (`observedWeather`, `observedAirQuality`) — persist-health, emitter-owned.** `recordSuccess` fires at exactly one point: inside the same `do` block that persists the pass and advances the watermark (`EnvironmentalEventEmitter.swift:228–235`) — after the ingest (skipped when the pass produced no events) and the watermark write both succeed — never per-day inside the loop. A pass that reached this block without a `.fetchError`/`.cancelled` abort *is* a complete pass, even if every day was resolved-`.absent` and nothing was ingested. If ingest throws, the existing `catch` holds the watermark for retry (`:233`) and must **not** record success.
+- **Today capabilities (`currentPressure`, `forecastWeather`, `forecastAirQuality`) — fetch-health, service-owned.** `recordSuccess` fires in the service the moment a valid response decodes (right where each fetch publishes its `@Published` values today), independent of whether the emitter's later combined today-ingest succeeds. These three statuses mean "the fetch produced a usable value," which is exactly what the marker and Health surface report — a dead key, no location, offline, an inactive subscription. **Today's *ingestion* failure is deliberately out of this round's scope:** a local SQLite write failing is rare and already self-heals via the emitter's existing `catch` + re-emit on the next foreground (`:112–114`).
+
+One bounded consequence to record so it doesn't read as an oversight: if today's fetch **succeeds** but the combined ingest then **fails**, `forecastWeather` has no `liveFailure` (the fetch cleared it) yet the day has no `temperature` event, so the resolver shows **no marker** and the row is briefly bare until the next foreground re-emits. That is correct for a fetch-health marker — the fetch genuinely succeeded — and the gap is transient by construction. Making the marker also cover ingestion would require the emitter to own all five capabilities and is explicitly deferred.
 
 **Scope carries its timezone.** `EnvironmentFailure.timezoneID` is the identifier of the calendar the scope's day bounds were computed in (`calendar.timeZone.identifier`, already available at every write site). The resolver compares days using that stored timezone, so a live scoped marker stays anchored to the days it was actually about even if the device timezone changes between the failure and the render. Without it, a flight across zones could shift or drop a live marker by a day. Cheap to store, and it removes a latent correctness gap rather than documenting around it.
 
@@ -363,7 +382,7 @@ The fix keeps all three writing the legacy display fields (`atmosphericPressure`
 **Modified**
 - `EnvironmentalDataService.swift` — status writes at all five fetch sites; response status inspection; cancellation filter; `.cancelled` + `.fetchError(reason)` on both backfill results; trusted-coordinate resolution; time-stamped pressure carry + all three fallback routes; injected store.
 - `HTTPTransport.swift` — `LocationProviding.coordinate` (trusted-only) + `authorization`, `EnvironmentLocationAuthorization`.
-- `EnvironmentalDataService.swift` `LocationService` — `LocationProvenance`, published provenance stamped at the four NYC sites / cached / device-fix sites, public `authorization`.
+- `EnvironmentalDataService.swift` `LocationService` — `LocationProvenance`, published provenance stamped at the four NYC / cached / device-fix sites, persisted `cachedLocationAt` written with the cached lat/lon, `trustedCachedCoordinate` (authorized + fresh), public `authorization`.
 - `Models/EnvironmentalEventEmitter.swift` — `EnvironmentalDataProviding` pressure optionals + store seam; `.cancelled`/`.fetchError(reason)` handling; scope recording for both backfills; `recordSuccess` only after full-pass persist; today's reading construction.
 - `FoodIntolerancesApp.swift` — create the one `@MainActor EnvironmentStatusStore`, inject it into `environmentalService` and the `emitIfNeeded` call, and publish it to the Timeline + Health surfaces as an environment object.
 - `LogItemViewModel.swift` — `environmentalService` construction takes the shared store (it owns the `EnvironmentalDataService` instance, `:37`/`:338`).
@@ -386,10 +405,13 @@ The fix keeps all three writing the legacy display fields (`atmosphericPressure`
 - A cancelled refresh emits no pressure event and leaves the carry untouched.
 - The first genuine reading emits pressure but no drop (no prior carry).
 
-**Location trust (P0)**
+**Location trust (P0 + cached bound)**
 - Fabricated (NYC) provenance → `coordinate` reads nil → the fetch records `locationDenied`/`locationUnavailable` (per authorization) and ingests **no** weather — not New York's.
-- `.device` and `.cached` provenance → `coordinate` non-nil → normal fetch.
-- A manual `setLocation` coordinate wins even when `LocationService` provenance is `.fabricated`.
+- `.device` provenance → `coordinate` non-nil → normal fetch.
+- `.cached` + authorized + `cachedLocationAt` within the freshness window → trusted → normal fetch.
+- `.cached` + authorized + **stale** `cachedLocationAt` → nil → `locationUnavailable` (not wrong-city).
+- `.cached` + **denied** (even if fresh) → nil → `locationDenied` (turning Location off stops ingestion; the cache can't mask it).
+- A manual `setLocation` coordinate wins even when `LocationService` provenance is `.fabricated` or the cache is stale/denied.
 - Authorization `.denied` + fabricated coord → `locationDenied`; `.authorized` + fabricated coord → `locationUnavailable` (authorized but no usable fix).
 
 **Resolver**
@@ -411,9 +433,10 @@ The fix keeps all three writing the legacy display fields (`atmosphericPressure`
 - A capability with a cleared `liveFailure` but a retained `lastFailure` → bottom section reads `LAST ISSUE — RESOLVED`, past tense, and shows **no** Open Settings even when the resolved reason was `locationDenied`.
 - A live `locationDenied` → Open Settings present.
 
-**Store**
+**Store + success contracts**
 - `recordSuccess` clears `liveFailure` and retains `lastFailure`.
-- `recordSuccess` is recorded only after a full backfill pass persists — an ingest that throws records no success (state unchanged).
+- Backfill success is recorded only after a full pass persists — an ingest that throws records no success (state unchanged).
+- A today capability records success when its fetch response decodes, **independent** of whether the emitter's later combined today-ingest succeeds (fetch-health contract). A today fetch that succeeds while ingest later fails still clears that capability's `liveFailure`.
 - Cancellation writes nothing and clears nothing (a cancelled fetch between a failure and a read leaves the failure live).
 - Round-trips through `UserDefaults`, including `timezoneID` (a relaunch keeps the marker anchored).
 
