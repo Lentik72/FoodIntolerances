@@ -19,7 +19,8 @@ enum AQIDayValue: Equatable {
 /// (transport error OR a decode error — never conflated with per-day absence),
 /// or a dictionary of local-day → `AQIDayValue`, keyed by `calendar.startOfDay(for:)`.
 enum AQIRangeResult: Equatable {
-    case fetchError
+    case fetchError(EnvironmentFailureReason)
+    case cancelled
     case days([Date: AQIDayValue])
 }
 
@@ -30,7 +31,8 @@ enum AQIRangeResult: Equatable {
 /// humidity and can be missing independently of temperature (nil → the emitter
 /// writes no observed humidity event for that day).
 enum WeatherDayResult: Equatable {
-    case fetchError
+    case fetchError(EnvironmentFailureReason)
+    case cancelled
     case absent
     case value(highC: Double, lowC: Double, humidityPct: Double?)
 }
@@ -262,6 +264,40 @@ class EnvironmentalDataService: ObservableObject {
     /// `LocationProviding` seam (defaults to manualLocation → LocationService).
     private func resolvedCoordinate() -> CLLocationCoordinate2D? {
         locationProvider.coordinate
+    }
+
+    /// Cancellation must never be recorded as a failure or a success.
+    private func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return true }
+        return false
+    }
+
+    /// The reason to record when there is no trusted coordinate.
+    private func locationReason() -> EnvironmentFailureReason {
+        switch locationProvider.authorization {
+        case .denied, .restricted: return .locationDenied
+        default:                   return .locationUnavailable
+        }
+    }
+
+    /// Maps a thrown error into a reason (used in every fetch's `catch`).
+    /// A `URLError` (not cancelled) is a connectivity failure; anything else
+    /// reaching the catch is a decode/unexpected-shape failure.
+    private func classifyThrown(_ error: Error) -> EnvironmentFailureReason {
+        if let urlError = error as? URLError, urlError.code != .cancelled { return .offline }
+        return .badResponse
+    }
+
+    /// A non-2xx HTTP status → a reason, checked BEFORE decode (a 401 body decodes
+    /// to a throw that would otherwise be miscounted as `.badResponse`). nil for
+    /// 2xx or a non-`HTTPURLResponse` stub (no status info → proceed to decode).
+    /// Used by BOTH backfill fetches AND the three today fetches (Task 8).
+    private func httpStatusReason(_ response: URLResponse?) -> EnvironmentFailureReason? {
+        guard let http = response as? HTTPURLResponse else { return nil }
+        if http.statusCode == 401 || http.statusCode == 403 { return .rejected }
+        if !(200...299).contains(http.statusCode) { return .badResponse }
+        return nil
     }
 
     public func requestRefreshWithCooldown() async -> Bool {
@@ -513,7 +549,7 @@ class EnvironmentalDataService: ObservableObject {
     func fetchCompletedAirQualityRange(from startDay: Date, through endDay: Date) async -> AQIRangeResult {
         guard let location = self.resolvedCoordinate() else {
             Logger.warning("No location available for air quality range fetch.", category: .location)
-            return .fetchError
+            return .fetchError(locationReason())
         }
 
         let requestWindow = (
@@ -528,11 +564,12 @@ class EnvironmentalDataService: ObservableObject {
             end: requestWindow.end.timeIntervalSince1970
         ) else {
             Logger.error("Invalid URL for air pollution history API", category: .network)
-            return .fetchError
+            return .fetchError(.notConfigured)
         }
 
         do {
-            let (data, _) = try await transport.data(from: url)
+            let (data, response) = try await transport.data(from: url)
+            if let reason = httpStatusReason(response) { return .fetchError(reason) }   // 401/403 before decode
             let decoded = try JSONDecoder().decode(AirPollutionResponse.self, from: data)
             let slots = decoded.list.map {
                 (dt: $0.dt, pm25: $0.components.pm2_5)
@@ -558,10 +595,12 @@ class EnvironmentalDataService: ObservableObject {
                 guard let nextDay = calendar.date(byAdding: .day, value: 1, to: day) else { break }
                 day = nextDay
             }
+            if Task.isCancelled { return .cancelled }   // cancelled AFTER a clean transport → not a failure
             return .days(byDay)
         } catch {
+            if isCancellation(error) { return .cancelled }
             Logger.error(error, message: "Error fetching air quality history range", category: .network)
-            return .fetchError
+            return .fetchError(classifyThrown(error))
         }
     }
 
@@ -580,7 +619,7 @@ class EnvironmentalDataService: ObservableObject {
     func fetchCompletedWeatherDay(for day: Date) async -> WeatherDayResult {
         guard let location = self.resolvedCoordinate() else {
             Logger.warning("No location available for weather day fetch.", category: .location)
-            return .fetchError
+            return .fetchError(locationReason())
         }
         let formatter = DateFormatter()
         formatter.calendar = calendar
@@ -601,10 +640,11 @@ class EnvironmentalDataService: ObservableObject {
             latitude: location.latitude, longitude: location.longitude,
             date: formatter.string(from: day), tz: tzOffset) else {
             Logger.error("Invalid URL for One Call day_summary API", category: .network)
-            return .fetchError
+            return .fetchError(.notConfigured)
         }
         do {
-            let (data, _) = try await transport.data(from: url)
+            let (data, response) = try await transport.data(from: url)
+            if let reason = httpStatusReason(response) { return .fetchError(reason) }   // 401/403 before decode
             let decoded = try JSONDecoder().decode(DaySummaryResponse.self, from: data)
             guard let high = decoded.temperature?.max, let low = decoded.temperature?.min else {
                 // An auth/error body decodes to an empty shell (no temperature) —
@@ -612,14 +652,16 @@ class EnvironmentalDataService: ObservableObject {
                 // always carries "message"; treat that as fetchError, else absent.
                 if let errorBody = try? JSONDecoder().decode(OneCallErrorBody.self, from: data) {
                     Logger.error("One Call day_summary error body: \(errorBody.message)", category: .network)
-                    return .fetchError
+                    return .fetchError(.rejected)   // not-subscribed / bad key — retryable, never absent
                 }
                 return .absent
             }
+            if Task.isCancelled { return .cancelled }   // cancelled AFTER a clean transport → not a failure
             return .value(highC: high, lowC: low, humidityPct: decoded.humidity?.afternoon)
         } catch {
+            if isCancellation(error) { return .cancelled }
             Logger.error(error, message: "Error fetching weather day summary", category: .network)
-            return .fetchError
+            return .fetchError(classifyThrown(error))
         }
     }
 

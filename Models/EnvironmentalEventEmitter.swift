@@ -86,7 +86,8 @@ enum EnvironmentalEventEmitter {
                              service: EnvironmentalDataProviding,
                              now: @escaping () -> Date = Date.init,
                              calendar: Calendar = defaultCalendar(),
-                             store: WatermarkStore = UserDefaultsWatermarkStore()) async {
+                             store: WatermarkStore = UserDefaultsWatermarkStore(),
+                             statusStore: EnvironmentStatusStore? = nil) async {
         let pipeline = IngestPipeline(database: database)
         let tz = calendar.timeZone.identifier
 
@@ -113,8 +114,8 @@ enum EnvironmentalEventEmitter {
             Logger.info("Environmental today-emit failed; will retry on next foreground", category: .data)
         }
 
-        await backfillObservedAQI(pipeline: pipeline, service: service, now: now, calendar: calendar, store: store, tz: tz)
-        await backfillObservedWeather(pipeline: pipeline, service: service, now: now, calendar: calendar, store: store, tz: tz)
+        await backfillObservedAQI(pipeline: pipeline, service: service, now: now, calendar: calendar, store: store, tz: tz, statusStore: statusStore)
+        await backfillObservedWeather(pipeline: pipeline, service: service, now: now, calendar: calendar, store: store, tz: tz, statusStore: statusStore)
     }
 
     /// BACKFILL — observed AQI for each completed local day, from a contiguous
@@ -122,7 +123,8 @@ enum EnvironmentalEventEmitter {
     @MainActor
     private static func backfillObservedAQI(pipeline: IngestPipeline, service: EnvironmentalDataProviding,
                                             now: () -> Date, calendar: Calendar,
-                                            store: WatermarkStore, tz: String) async {
+                                            store: WatermarkStore, tz: String,
+                                            statusStore: EnvironmentStatusStore?) async {
         let watermark: Date? = store.date(for: lastAQIDayKey)   // nil when unset
         let yesterday = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: now()))!
         let capFloor = calendar.date(byAdding: .day, value: -(maxBackfillDays - 1), to: yesterday)!
@@ -134,8 +136,17 @@ enum EnvironmentalEventEmitter {
         // pressure/forecast cooldown). Own interval, own attempt watermark.
         if let last = store.date(for: lastAQIAttemptKey), now().timeIntervalSince(last) < minAQIRetryInterval { return }
         store.set(now(), for: lastAQIAttemptKey)
-        guard case .days(let byDay) = await service.fetchCompletedAirQualityRange(from: start, through: yesterday)
-        else { return }   // .fetchError → watermark unchanged, retry after the throttle interval
+        let byDay: [Date: AQIDayValue]
+        switch await service.fetchCompletedAirQualityRange(from: start, through: yesterday) {
+        case .cancelled:
+            return                                     // no status, watermark held
+        case .fetchError(let reason):
+            statusStore?.recordFailure(.observedAirQuality, reason: reason,
+                                       scopeStart: start, scopeEnd: yesterday, timezoneID: tz, at: now())
+            return                                     // watermark unchanged, retry after the throttle interval
+        case .days(let d):
+            byDay = d
+        }
 
         // "recent" = the last `gracePartialDays` completed days (provider-lag grace).
         // With gracePartialDays = 2 and yesterday = 2025-06-10: graceCutoff =
@@ -173,6 +184,7 @@ enum EnvironmentalEventEmitter {
                 _ = try await pipeline.ingest(aqiEvents)
             }
             if let nw = newWatermark { store.set(nw, for: lastAQIDayKey) }
+            statusStore?.recordSuccess(.observedAirQuality, at: now())   // full pass persisted
         } catch {
             Logger.info("Environmental AQI backfill ingest failed; watermark held for retry", category: .data)
         }
@@ -187,7 +199,8 @@ enum EnvironmentalEventEmitter {
     @MainActor
     private static func backfillObservedWeather(pipeline: IngestPipeline, service: EnvironmentalDataProviding,
                                                 now: () -> Date, calendar: Calendar,
-                                                store: WatermarkStore, tz: String) async {
+                                                store: WatermarkStore, tz: String,
+                                                statusStore: EnvironmentStatusStore?) async {
         let watermark: Date? = store.date(for: lastWeatherDayKey)
         let yesterday = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: now()))!
         let capFloor = calendar.date(byAdding: .day, value: -(maxBackfillDays - 1), to: yesterday)!
@@ -196,6 +209,7 @@ enum EnvironmentalEventEmitter {
         if let last = store.date(for: lastWeatherAttemptKey), now().timeIntervalSince(last) < minWeatherRetryInterval { return }
         store.set(now(), for: lastWeatherAttemptKey)
 
+        let scopeStart = start, scopeEnd = yesterday    // intended range, captured before the loop
         let graceCutoff = calendar.date(byAdding: .day, value: -gracePartialDays, to: yesterday)!
         var newWatermark: Date? = watermark, contiguous = true
         var weatherEvents: [HealthEvent] = []
@@ -214,7 +228,11 @@ enum EnvironmentalEventEmitter {
         var D = start
         while D <= yesterday {
             switch await service.fetchCompletedWeatherDay(for: D) {
-            case .fetchError:
+            case .cancelled:
+                return   // no status, nothing ingested, watermark held
+            case .fetchError(let reason):
+                statusStore?.recordFailure(.observedWeather, reason: reason,
+                                           scopeStart: scopeStart, scopeEnd: scopeEnd, timezoneID: tz, at: now())
                 return   // abort the WHOLE pass: nothing ingested, watermark held (spec §3B)
             case .value(let high, let low, let humidity):
                 emitObservedWeather(highC: high, lowC: low, humidityPct: humidity, on: D)
@@ -230,6 +248,7 @@ enum EnvironmentalEventEmitter {
                 _ = try await pipeline.ingest(weatherEvents)
             }
             if let nw = newWatermark { store.set(nw, for: lastWeatherDayKey) }
+            statusStore?.recordSuccess(.observedWeather, at: now())   // full pass persisted
         } catch {
             Logger.info("Environmental weather backfill ingest failed; watermark held for retry", category: .data)
         }

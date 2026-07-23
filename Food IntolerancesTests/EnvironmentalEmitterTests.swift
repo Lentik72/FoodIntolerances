@@ -48,7 +48,7 @@ struct EnvironmentalEmitterTests {
         /// Default `.fetchError` keeps every pre-existing AQI/orchestration test
         /// meaningful unchanged: the weather pass aborts, emits nothing.
         var weatherByDay: [Date: WeatherDayResult] = [:]
-        var weatherDefault: WeatherDayResult = .fetchError
+        var weatherDefault: WeatherDayResult = .fetchError(.badResponse)
         private(set) var weatherCallCount = 0
         private(set) var weatherDaysRequested: [Date] = []
 
@@ -106,7 +106,7 @@ struct EnvironmentalEmitterTests {
         let db = try AppDatabase.inMemory()
         let store = MemoryWatermarkStore()
         let provider = StubProvider()
-        provider.rangeResult = .fetchError
+        provider.rangeResult = .fetchError(.badResponse)
 
         var clock = now0
         await EnvironmentalEventEmitter.emitIfNeeded(
@@ -407,6 +407,62 @@ struct EnvironmentalEmitterTests {
                                                      now: { now }, calendar: cal, store: store)
         #expect(try await observedWeatherDays(db, cal).isEmpty)
         #expect(store.date(for: weatherDayKey) == day(cal, 6, 7))   // held
+    }
+
+    /// A per-day fetchError records ONE observedWeather failure scoped to the whole
+    /// intended range (start…yesterday), even though the pass aborts on day 2.
+    @Test func weatherFetchErrorRecordsScopeOverWholeIntendedRange() async throws {
+        let cal = utc
+        let db = try AppDatabase.inMemory()
+        let stub = StubProvider()
+        let store = MemoryWatermarkStore()
+        let status = EnvironmentStatusStore(defaults: UserDefaults(suiteName: "t." + UUID().uuidString)!)
+        let now = day(cal, 6, 10).addingTimeInterval(9 * 3600)   // yesterday = 06-09
+        store.set(day(cal, 6, 6), for: weatherDayKey)            // start = 06-07
+        stub.weatherByDay = [day(cal, 6, 7): .value(highC: 20, lowC: 10, humidityPct: 50)]
+        stub.weatherDefault = .fetchError(.rejected)             // 06-08 fails → abort
+        await EnvironmentalEventEmitter.emitIfNeeded(database: db, service: stub,
+            now: { now }, calendar: cal, store: store, statusStore: status)
+        let f = status.statuses[.observedWeather]?.liveFailure
+        #expect(f?.reason == .rejected)
+        #expect(f?.scopeStart == day(cal, 6, 7))
+        #expect(f?.scopeEnd == day(cal, 6, 9))                   // yesterday, not day-of-abort
+        // The emitter records `calendar.timeZone.identifier`; Foundation normalizes
+        // the `utc` helper's TimeZone(identifier: "UTC") to "GMT" (verified: they
+        // share the +0 zone), so the recorded identifier is "GMT".
+        #expect(f?.timezoneID == "GMT")
+    }
+
+    /// A cancelled weather day records NOTHING: no status, watermark held.
+    @Test func weatherCancelledRecordsNothing() async throws {
+        let cal = utc
+        let db = try AppDatabase.inMemory()
+        let stub = StubProvider()
+        let store = MemoryWatermarkStore()
+        let status = EnvironmentStatusStore(defaults: UserDefaults(suiteName: "t." + UUID().uuidString)!)
+        let now = day(cal, 6, 10).addingTimeInterval(9 * 3600)
+        store.set(day(cal, 6, 7), for: weatherDayKey)
+        stub.weatherDefault = .cancelled
+        await EnvironmentalEventEmitter.emitIfNeeded(database: db, service: stub,
+            now: { now }, calendar: cal, store: store, statusStore: status)
+        #expect(status.statuses[.observedWeather] == nil)        // nothing recorded
+        #expect(store.date(for: weatherDayKey) == day(cal, 6, 7))
+    }
+
+    /// A completed weather pass records observedWeather success.
+    @Test func weatherSuccessfulPassRecordsSuccess() async throws {
+        let cal = utc
+        let db = try AppDatabase.inMemory()
+        let stub = StubProvider()
+        let store = MemoryWatermarkStore()
+        let status = EnvironmentStatusStore(defaults: UserDefaults(suiteName: "t." + UUID().uuidString)!)
+        let now = day(cal, 6, 10).addingTimeInterval(9 * 3600)
+        store.set(day(cal, 6, 8), for: weatherDayKey)            // start = 06-09 = yesterday
+        stub.weatherByDay = [day(cal, 6, 9): .value(highC: 22, lowC: 11, humidityPct: 55)]
+        await EnvironmentalEventEmitter.emitIfNeeded(database: db, service: stub,
+            now: { now }, calendar: cal, store: store, statusStore: status)
+        #expect(status.statuses[.observedWeather]?.lastSuccess != nil)
+        #expect(status.statuses[.observedWeather]?.liveFailure == nil)
     }
 
     /// Recent absent day (grace) holds the contiguous watermark; old absent advances it.

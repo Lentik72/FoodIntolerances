@@ -10,11 +10,10 @@ struct WeatherHistoryTests {
     private struct StubTransport: HTTPTransport {
         let payload: Data
         let makeError: Bool
+        let statusCode: Int?                    // nil → plain URLResponse (no HTTP status)
         let requestedURLs: URLBox
-        init(payload: Data, makeError: Bool = false, requestedURLs: URLBox = URLBox()) {
-            self.payload = payload
-            self.makeError = makeError
-            self.requestedURLs = requestedURLs
+        init(payload: Data, makeError: Bool = false, statusCode: Int? = nil, requestedURLs: URLBox = URLBox()) {
+            self.payload = payload; self.makeError = makeError; self.statusCode = statusCode; self.requestedURLs = requestedURLs
         }
         final class URLBox: @unchecked Sendable {
             private let lock = NSLock()
@@ -23,10 +22,10 @@ struct WeatherHistoryTests {
         }
         func data(from url: URL) async throws -> (Data, URLResponse) {
             requestedURLs.append(url)
-            struct StubError: Error {}
-            if makeError { throw StubError() }
-            let response = URLResponse(url: url, mimeType: "application/json",
-                                        expectedContentLength: payload.count, textEncodingName: "utf-8")
+            if makeError { throw URLError(.timedOut) }
+            let response: URLResponse = statusCode.map {
+                HTTPURLResponse(url: url, statusCode: $0, httpVersion: nil, headerFields: nil)!
+            } ?? URLResponse(url: url, mimeType: "application/json", expectedContentLength: payload.count, textEncodingName: "utf-8")
             return (payload, response)
         }
     }
@@ -85,18 +84,18 @@ struct WeatherHistoryTests {
     }
     @Test func transportErrorIsFetchError() async {
         let result = await makeService(payload: Data(), makeError: true).fetchCompletedWeatherDay(for: day)
-        #expect(result == .fetchError)
+        #expect(result == .fetchError(.offline))
     }
     @Test func malformedPayloadIsFetchError() async {
         let result = await makeService(payload: Data("not json".utf8)).fetchCompletedWeatherDay(for: day)
-        #expect(result == .fetchError)
+        #expect(result == .fetchError(.badResponse))
     }
     /// A One Call 401 (subscription not active) returns a JSON error body — not a
     /// throw. It must decode-fail into .fetchError, never be mistaken for absence.
     @Test func authErrorBodyIsFetchError() async {
         let json = #"{"cod":401,"message":"Please note that using One Call 3.0 requires a separate subscription"}"#
         let result = await makeService(payload: Data(json.utf8)).fetchCompletedWeatherDay(for: day)
-        #expect(result == .fetchError)
+        #expect(result == .fetchError(.rejected))
     }
     /// The tz offset is DATE-specific from the injected calendar and anchored at
     /// local NOON: plain PST/PDT days get their standard offsets, and on the DST
@@ -129,6 +128,34 @@ struct WeatherHistoryTests {
             transport: StubTransport(payload: Data(), makeError: false),
             calendar: utcCalendar, location: StubLocation(coordinate: nil))
         let result = await service.fetchCompletedWeatherDay(for: day)
-        #expect(result == .fetchError)
+        #expect(result == .fetchError(.locationUnavailable))
+    }
+
+    @Test func httpRejectionStatusIsRejectedBeforeDecode() async {
+        // 401 with a body that would otherwise decode to .absent — status wins.
+        ensureTestAPIKeyConfigured()
+        let svc = EnvironmentalDataService(
+            transport: StubTransport(payload: Data(#"{"humidity":{"afternoon":64.0}}"#.utf8), statusCode: 401),
+            calendar: utcCalendar,
+            location: StubLocation(coordinate: CLLocationCoordinate2D(latitude: 40, longitude: -74)))
+        #expect(await svc.fetchCompletedWeatherDay(for: day) == .fetchError(.rejected))
+    }
+    @Test func postTransportCancellationReturnsCancelled() async {
+        // A transport that cancels its OWN calling task, then returns a clean 200 — no
+        // throw, so only the post-transport `Task.isCancelled` guard can catch it (Fix 4).
+        struct SelfCancellingTransport: HTTPTransport {
+            let payload: Data
+            func data(from url: URL) async throws -> (Data, URLResponse) {
+                withUnsafeCurrentTask { $0?.cancel() }
+                return (payload, HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            }
+        }
+        ensureTestAPIKeyConfigured()
+        let json = #"{"temperature":{"min":12.3,"max":24.6},"humidity":{"afternoon":64.0}}"#
+        let svc = EnvironmentalDataService(
+            transport: SelfCancellingTransport(payload: Data(json.utf8)),
+            calendar: utcCalendar,
+            location: StubLocation(coordinate: CLLocationCoordinate2D(latitude: 40, longitude: -74)))
+        #expect(await svc.fetchCompletedWeatherDay(for: day) == .cancelled)   // clean transport+decode, bailed at the guard
     }
 }
