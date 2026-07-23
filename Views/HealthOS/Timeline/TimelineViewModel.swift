@@ -40,6 +40,7 @@ final class TimelineViewModel: ObservableObject {
     private let store: any EventStore
     private let timeZone: TimeZone
     private let pageSize: Int
+    private let searchLimit: Int
     private var browseEvents: [HealthEvent] = []
     private var cursor: TimelineCursor?
     private var undoTimer: Task<Void, Never>?
@@ -54,10 +55,11 @@ final class TimelineViewModel: ObservableObject {
     /// slice) discards its results instead of corrupting the current one.
     private var loadGeneration = 0
 
-    init(store: any EventStore, timeZone: TimeZone = .current, pageSize: Int = 200) {
+    init(store: any EventStore, timeZone: TimeZone = .current, pageSize: Int = 200, searchLimit: Int = 400) {
         self.store = store
         self.timeZone = timeZone
         self.pageSize = pageSize
+        self.searchLimit = searchLimit
     }
 
     private var categoryFilter: Set<EventCategory>? {
@@ -182,6 +184,29 @@ final class TimelineViewModel: ObservableObject {
 
     // MARK: private
 
+    /// Observed-wins precedence needs COMPLETE same-day sibling context, but page
+    /// and search slices can cut between a forecast weather event and its observed
+    /// sibling (their timestamps differ within the day). Union the slice with ALL
+    /// stored weather events across the slice's weather-day span so the core
+    /// filter always sees both siblings. A store failure degrades to the
+    /// unhydrated slice (display falls back to slice-relative behavior).
+    private func hydratingWeatherSiblings(_ events: [HealthEvent]) async -> [HealthEvent] {
+        let weatherSubtypes = EnvironmentDaySummaryBuilder.observedPrecedenceSubtypes
+        let weatherStamps = events.compactMap { e -> Date? in
+            guard e.category == .environment, weatherSubtypes.contains(e.subtype ?? "") else { return nil }
+            return e.timestamp
+        }
+        guard let minTS = weatherStamps.min(), let maxTS = weatherStamps.max() else { return events }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let from = calendar.startOfDay(for: minTS)
+        let through = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: maxTS)) ?? maxTS
+        guard let siblings = try? await store.environmentEvents(subtypes: weatherSubtypes, from: from, through: through)
+        else { return events }
+        let known = Set(events.map(\.id))
+        return events + siblings.filter { !known.contains($0.id) }
+    }
+
     private func reloadFromScratch() async {
         loadGeneration &+= 1
         cursor = nil
@@ -206,7 +231,9 @@ final class TimelineViewModel: ObservableObject {
             }
             hasMore = page.count == pageSize
             browseEvents.append(contentsOf: page)
-            days = TimelineDayBuilder.days(from: browseEvents, timeZone: timeZone)
+            let hydrated = await hydratingWeatherSiblings(browseEvents)
+            guard gen == loadGeneration else { return }   // hydration awaited — re-check staleness
+            days = TimelineDayBuilder.days(from: hydrated, timeZone: timeZone)
         } catch {
             guard gen == loadGeneration else { return }
             hasMore = false
@@ -221,12 +248,14 @@ final class TimelineViewModel: ObservableObject {
         isLoading = true
         defer { isLoading = false }
         do {
-            var results = try await store.searchEvents(matching: searchText, limit: 400)
+            var results = try await store.searchEvents(matching: searchText, limit: searchLimit)
             guard gen == loadGeneration else { return }
             isSearchActive = true
             if let categoryFilter { results = results.filter { categoryFilter.contains($0.category) } }
             if let sourceFilter { results = results.filter { sourceFilter.contains($0.source) } }
-            days = TimelineDayBuilder.days(from: results, timeZone: timeZone, sessionizeSleep: false, groupEnvironment: false)
+            let hydrated = await hydratingWeatherSiblings(results)
+            guard gen == loadGeneration else { return }
+            days = TimelineDayBuilder.days(from: hydrated, timeZone: timeZone, sessionizeSleep: false, groupEnvironment: false)
         } catch {
             guard gen == loadGeneration else { return }
             isSearchActive = true

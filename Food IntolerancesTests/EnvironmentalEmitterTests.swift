@@ -453,9 +453,9 @@ struct EnvironmentalEmitterTests {
         }
     }
 
-    /// The weather throttle is independent: a second foreground within the hour
-    /// makes no weather calls; after the hour it retries.
-    @Test func weatherRetryThrottleIsIndependentOfAQI() async throws {
+    /// Weather self-throttling: a second foreground within the hour makes no
+    /// weather calls; after the hour it retries.
+    @Test func weatherRetryThrottleBlocksSecondFetchWithinIntervalThenAllowsAfter() async throws {
         let cal = utc
         let db = try AppDatabase.inMemory()
         let stub = StubProvider()
@@ -473,5 +473,34 @@ struct EnvironmentalEmitterTests {
         await EnvironmentalEventEmitter.emitIfNeeded(database: db, service: stub,
                                                      now: { now }, calendar: cal, store: store)
         #expect(stub.weatherCallCount > firstCalls)
+    }
+
+    /// Throttle INDEPENDENCE: a recent AQI attempt watermark must not block the
+    /// weather pass, and vice versa — each backfill has its own attempt key.
+    @Test func eachBackfillRunsWhenOnlyTheOtherIsThrottled() async throws {
+        let cal = utc
+        let now = day(cal, 6, 10).addingTimeInterval(9 * 3600)
+        // AQI throttled → weather still fetches.
+        do {
+            let db = try AppDatabase.inMemory()
+            let stub = StubProvider()
+            let store = MemoryWatermarkStore()
+            store.set(now.addingTimeInterval(-60), for: EnvironmentalEventEmitter.lastAQIAttemptKey)
+            await EnvironmentalEventEmitter.emitIfNeeded(database: db, service: stub,
+                                                         now: { now }, calendar: cal, store: store)
+            #expect(stub.rangeCallCount == 0)       // AQI pass throttled
+            #expect(stub.weatherCallCount >= 1)     // weather pass unaffected
+        }
+        // Weather throttled → AQI still fetches.
+        do {
+            let db = try AppDatabase.inMemory()
+            let stub = StubProvider()
+            let store = MemoryWatermarkStore()
+            store.set(now.addingTimeInterval(-60), for: EnvironmentalEventEmitter.lastWeatherAttemptKey)
+            await EnvironmentalEventEmitter.emitIfNeeded(database: db, service: stub,
+                                                         now: { now }, calendar: cal, store: store)
+            #expect(stub.rangeCallCount == 1)       // AQI pass unaffected
+            #expect(stub.weatherCallCount == 0)     // weather pass throttled
+        }
     }
 }

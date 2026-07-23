@@ -245,6 +245,45 @@ struct TimelineViewModelTests {
         #expect(vm.days.flatMap(\.events).allSatisfy { $0.category != .sleep })
     }
 
+    private func weatherEvent(_ provenance: TemporalProvenance, hour: Int, day base: Date) -> HealthEvent {
+        HealthEvent(timestamp: base.addingTimeInterval(Double(hour) * 3600), timezoneID: "UTC",
+                    category: .environment, subtype: "temperature", value: 20, source: .weatherAPI,
+                    metadata: try! JSONEncoder().encode(["provenance": provenance.rawValue]), createdAt: base)
+    }
+
+    /// A pageSize-1 browse slice contains ONLY the (later-stamped) forecast event;
+    /// hydration must pull the observed sibling from the store so precedence
+    /// suppresses the forecast — the boundary day shows actuals, not the forecast.
+    @Test func tinyPageSplitOfWeatherSiblingsStillShowsObserved() async throws {
+        let (_, store) = try makeStore()
+        let base = Date(timeIntervalSince1970: 1_750_032_000)   // 00:00 UTC of some day
+        let forecast = weatherEvent(.forecast, hour: 18, day: base)          // 18:00 — newest
+        let observed = weatherEvent(.observedCompletedDay, hour: 12, day: base)   // noon
+        try await store.save([forecast, observed])
+        let vm = TimelineViewModel(store: store, timeZone: TimeZone(identifier: "UTC")!, pageSize: 1)
+        await vm.loadInitial()
+        let envEvents = vm.days.flatMap(\.items).compactMap { item -> [HealthEvent]? in
+            if case .environmentSummary(let s) = item { return s.events } else { return nil }
+        }.flatMap { $0 }
+        let temps = envEvents.filter { $0.subtype == "temperature" }
+        #expect(temps.map(\.id) == [observed.id])   // observed displayed; split forecast suppressed
+    }
+
+    /// A searchLimit-1 result slice contains ONLY the forecast event; hydration
+    /// completes the pair so raw search shows the observed value, not the forecast.
+    @Test func searchLimitSplitOfWeatherSiblingsStillShowsObserved() async throws {
+        let (_, store) = try makeStore()
+        let base = Date(timeIntervalSince1970: 1_750_032_000)
+        let forecast = weatherEvent(.forecast, hour: 18, day: base)
+        let observed = weatherEvent(.observedCompletedDay, hour: 12, day: base)
+        try await store.save([forecast, observed])
+        let vm = TimelineViewModel(store: store, timeZone: TimeZone(identifier: "UTC")!, pageSize: 50, searchLimit: 1)
+        vm.searchText = "temperature"
+        await vm.searchTextChanged()
+        let temps = vm.days.flatMap(\.events).filter { $0.subtype == "temperature" }
+        #expect(temps.map(\.id) == [observed.id])
+    }
+
     @Test func deletingEventOnSessionDayKeepsTheSession() async throws {
         let (_, store) = try makeStore()
         let wake = Date(timeIntervalSince1970: 1_750_000_000)

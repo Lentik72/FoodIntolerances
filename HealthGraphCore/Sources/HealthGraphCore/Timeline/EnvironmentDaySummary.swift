@@ -32,7 +32,7 @@ public enum EnvironmentDaySummaryBuilder {
 
     /// Weather subtypes where an observed completed-day reading supersedes the
     /// morning forecast IN DISPLAY for the same local day ("observed wins").
-    static let observedPrecedenceSubtypes: Set<String> = ["temperature", "humidity"]
+    public static let observedPrecedenceSubtypes: Set<String> = ["temperature", "humidity"]
 
     /// Presentation-only precedence: per local day + subtype, when at least one
     /// `.observedCompletedDay` event exists, that day+subtype's `.forecast` events

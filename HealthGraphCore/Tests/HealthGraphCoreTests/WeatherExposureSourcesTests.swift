@@ -129,4 +129,33 @@ struct WeatherExposureSourcesTests {
         #expect(run("forecast").isEmpty)                                                   // forecast never mined
         #expect(run(nil).isEmpty)                                                          // fail-closed: no flag → not mined
     }
+
+    /// Integration: a FACTORY-produced 20-day observed series (exactly
+    /// minWeatherReadings) is mined by both weather sources, and the display
+    /// filters are presentation-only — they neither mutate the input series nor
+    /// change what the sources subsequently see.
+    @Test func factoryProducedObservedSeriesIsMinedAndDisplayFilterIsPresentationOnly() {
+        var events: [HealthEvent] = []
+        for d in 0..<20 {
+            let noon = Date(timeIntervalSince1970: Double(d) * 86_400 + 43_200)
+            events.append(contentsOf: EnvironmentalEventFactory.events(for: EnvironmentalReading(
+                date: noon, pressureHPa: nil, previousPressureHPa: nil, moonPhaseName: nil,
+                isMercuryRetrograde: false, timezoneID: "UTC",
+                temperatureHighC: 10 + Double(d), temperatureLowC: Double(d), humidityPct: 40 + Double(d),
+                weatherProvenance: .observedCompletedDay)))
+        }
+        let config = EvidenceConfig()
+        let tempBefore = TemperatureExposureSource(config: config).occurrences(from: events)
+        let humBefore = HumidityExposureSource(config: config).occurrences(from: events)
+        #expect(!tempBefore.isEmpty)   // rising 20-day spread → hot/cold occurrences exist
+        #expect(!humBefore.isEmpty)
+        // Run both display filters over the same array; the input must be untouched
+        // and the sources must see exactly what they saw before.
+        let idsBefore = events.map(\.id)
+        _ = EnvironmentDaySummaryBuilder.observedPrecedenceFiltered(events, timeZone: TimeZone(identifier: "UTC")!)
+        _ = EnvironmentDaySummaryBuilder.summaries(from: events, timeZone: TimeZone(identifier: "UTC")!)
+        #expect(events.map(\.id) == idsBefore)
+        #expect(TemperatureExposureSource(config: config).occurrences(from: events).count == tempBefore.count)
+        #expect(HumidityExposureSource(config: config).occurrences(from: events).count == humBefore.count)
+    }
 }

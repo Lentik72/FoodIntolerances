@@ -31,6 +31,11 @@ public protocol EventStore {
     /// FTS-backed prefix search over subtype + category. Sanitizes input;
     /// empty/symbol-only queries return []. Newest first, soft-deleted excluded.
     func searchEvents(matching query: String, limit: Int) async throws -> [HealthEvent]
+    /// All non-deleted `.environment` events of the given subtypes with
+    /// `timestamp` in the half-open `[from, through)` window — the
+    /// precedence-sibling hydration read. Newest first (parity with the other
+    /// reads; order is irrelevant to the pure builders).
+    func environmentEvents(subtypes: Set<String>, from: Date, through: Date) async throws -> [HealthEvent]
 }
 
 public struct GRDBEventStore: EventStore {
@@ -155,6 +160,18 @@ public struct GRDBEventStore: EventStore {
         try await dbWriter.write { db in
             try db.execute(sql: "UPDATE health_events SET deletedAt = NULL WHERE id = ?",
                            arguments: [id.databaseValue])
+        }
+    }
+
+    public func environmentEvents(subtypes: Set<String>, from: Date, through: Date) async throws -> [HealthEvent] {
+        try await dbWriter.read { [notDeleted] db in
+            try HealthEvent
+                .filter(notDeleted)
+                .filter(Column("category") == EventCategory.environment.rawValue)
+                .filter(subtypes.contains(Column("subtype")))
+                .filter(Column("timestamp") >= from && Column("timestamp") < through)
+                .order(Column("timestamp").desc, Column("id").desc)
+                .fetchAll(db)
         }
     }
 
