@@ -481,10 +481,12 @@ struct EnvironmentGapResolverTests {
         #expect(g == nil)
     }
     @Test func containmentUsesFailureTimezoneNotDeviceCalendar() {
-        // Scope day recorded in LA. Summary dayStart is the SAME calendar instant.
+        // Resolver's calendar (UTC) DIVERGES from the failure's own timezone (LA) so this
+        // pins that liveScopeContains uses failure.timezoneID: LA-midnight of 6/10 is 07:00Z,
+        // which is OUTSIDE a UTC-day [6/10] scope but INSIDE the LA-day scope. Correct code
+        // → .weather; a version that reused the resolver's UTC calendar → nil.
         var la = Calendar(identifier: .gregorian); la.timeZone = TimeZone(identifier: "America/Los_Angeles")!
-        let laDay = la.date(from: DateComponents(year: 2025, month: 6, day: 10))!
-        let laNext = la.date(from: DateComponents(year: 2025, month: 6, day: 11))!   // completed-day context
+        let laDay = la.date(from: DateComponents(year: 2025, month: 6, day: 10))!   // 2025-06-10T07:00Z
         let noon = la.date(bySettingHour: 12, minute: 0, second: 0, of: laDay)!
         let s = EnvironmentDaySummary(dayStart: laDay, timestamp: noon,
             events: [HealthEvent(timestamp: noon, category: .environment, subtype: "moonPhase",
@@ -493,7 +495,8 @@ struct EnvironmentGapResolverTests {
                                    timezoneID: "America/Los_Angeles")
         let status: [EnvironmentCapability: EnvironmentCapabilityStatus] =
             [.observedWeather: EnvironmentCapabilityStatus(lastSuccess: nil, liveFailure: f, lastFailure: f)]
-        #expect(EnvironmentGapResolver.gap(for: s, status: status, now: laNext, calendar: la) == .weather)
+        let nowUTC = utc.date(from: DateComponents(year: 2025, month: 6, day: 11))!   // 6/10 is a completed day in UTC
+        #expect(EnvironmentGapResolver.gap(for: s, status: status, now: nowUTC, calendar: utc) == .weather)
     }
 }
 ```
