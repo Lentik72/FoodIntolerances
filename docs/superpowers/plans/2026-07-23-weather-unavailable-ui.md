@@ -77,8 +77,17 @@ struct LocationTrustTests {
             authorization: authorization, now: now, freshness: freshness)
     }
 
-    @Test func deviceProvenanceIsAlwaysTrusted() {
+    @Test func deviceProvenanceTrustedWhenAuthorized() {
         #expect(trusted(provenance: .device, cachedAt: nil, authorization: .authorized)?.latitude == device.latitude)
+    }
+    @Test func deviceRejectedWhenDenied() {
+        // Between authorization flipping to denied and the async fallback re-stamping
+        // provenance to .fabricated/.cached, a stale .device coordinate must NOT be
+        // trusted — otherwise `locationDenied` stays masked.
+        #expect(trusted(provenance: .device, cachedAt: nil, authorization: .denied) == nil)
+    }
+    @Test func deviceRejectedWhenRestricted() {
+        #expect(trusted(provenance: .device, cachedAt: nil, authorization: .restricted) == nil)
     }
     @Test func fabricatedIsNeverTrusted() {
         #expect(trusted(provenance: .fabricated, cachedAt: now, authorization: .authorized) == nil)
@@ -182,7 +191,10 @@ enum LocationTrust {
         now: Date,
         freshness: TimeInterval
     ) -> CLLocationCoordinate2D? {
-        if let manual { return manual }
+        if let manual { return manual }                        // user-set: always trusted
+        // Denied/restricted must never be masked by a still-.device provenance that
+        // the async fallback hasn't overwritten yet. Reject every non-manual fix.
+        if authorization == .denied || authorization == .restricted { return nil }
         switch provenance {
         case .device:
             return deviceCoordinate
@@ -364,9 +376,9 @@ git commit -m "feat(env-status): UserDefaults-backed EnvironmentStatusStore"
 
 **Interfaces:**
 - Consumes: Task 1 types; `EnvironmentDaySummary`, `HealthEvent` (core).
-- Produces: `enum EnvironmentGap { case weather, airQuality; var label: String }`; `EnvironmentGapResolver.gap(for:status:) -> EnvironmentGap?`.
+- Produces: `enum EnvironmentGap { case weather, airQuality; var label: String }`; `EnvironmentGapResolver.gap(for:status:now:calendar:) -> EnvironmentGap?`.
 
-**Note on signature:** the spec's `now:calendar:` parameters are omitted — scope-with-timezone fully encodes both reach and "today" (§3E: the resolver's own calendar/now would be "used only where no scope is involved," and there is no such place). Containment builds its calendar from `failure.timezoneID`.
+**Note on `now`/`calendar`:** these are required — the today-vs-completed-day rule split can only be applied by comparing the summary's day to "now". `forecastWeather` (a forward, today-only signal) is consulted **only for today's row**; `observedWeather`/`observedAirQuality` (completed-day signals) are consulted **only for completed days**. Without `now`, a `forecastWeather` failure scoped July 23 would keep marking the July 23 row after midnight on July 24 (its scope still contains July 23), even though a completed day must consult only `observedWeather`. Scope *containment* still uses each failure's own `timezoneID`; `now`/`calendar` are used only to classify the summary day as today vs earlier.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -401,53 +413,78 @@ struct EnvironmentGapResolverTests {
         for (cap, f) in pairs { out[cap] = EnvironmentCapabilityStatus(lastSuccess: nil, liveFailure: f, lastFailure: f) }
         return out
     }
+    /// Resolve with an explicit "now" so today-vs-completed-day routing is deterministic.
+    private func resolve(_ s: EnvironmentDaySummary,
+                         _ st: [EnvironmentCapability: EnvironmentCapabilityStatus],
+                         on today: Date) -> EnvironmentGap? {
+        EnvironmentGapResolver.gap(for: s, status: st, now: today, calendar: utc)
+    }
 
-    @Test func insideScopeMissingReadingMarksWeather() {
-        let d = day(6, 10)
-        let g = EnvironmentGapResolver.gap(for: summary(d, subtypes: ["moonPhase"]),
-                                           status: status([(.observedWeather, failure(day(6, 1), day(6, 10)))]))
+    @Test func completedDayInsideObservedScopeMarksWeather() {
+        let g = resolve(summary(day(6, 10), subtypes: ["moonPhase"]),
+                        status([(.observedWeather, failure(day(6, 1), day(6, 10)))]), on: day(6, 11))
         #expect(g == .weather)
     }
     @Test func insideScopeButReadingPresentIsNil() {
-        let d = day(6, 10)
-        let g = EnvironmentGapResolver.gap(for: summary(d, subtypes: ["temperature", "moonPhase"]),
-                                           status: status([(.observedWeather, failure(day(6, 1), day(6, 10)))]))
+        let g = resolve(summary(day(6, 10), subtypes: ["temperature", "moonPhase"]),
+                        status([(.observedWeather, failure(day(6, 1), day(6, 10)))]), on: day(6, 11))
         #expect(g == nil)
     }
     @Test func outsideEveryScopeIsNil() {   // the 200-day-old moon-only row
-        let g = EnvironmentGapResolver.gap(for: summary(day(1, 1), subtypes: ["moonPhase"]),
-                                           status: status([(.observedWeather, failure(day(6, 1), day(6, 10)))]))
+        let g = resolve(summary(day(1, 1), subtypes: ["moonPhase"]),
+                        status([(.observedWeather, failure(day(6, 1), day(6, 10)))]), on: day(6, 11))
         #expect(g == nil)
     }
     @Test func missingBothMarksWeatherOnly() {
-        let d = day(6, 10)
-        let g = EnvironmentGapResolver.gap(for: summary(d, subtypes: ["moonPhase"]),
-                                           status: status([(.observedWeather, failure(day(6, 1), day(6, 10))),
-                                                           (.observedAirQuality, failure(day(6, 1), day(6, 10)))]))
+        let g = resolve(summary(day(6, 10), subtypes: ["moonPhase"]),
+                        status([(.observedWeather, failure(day(6, 1), day(6, 10))),
+                                (.observedAirQuality, failure(day(6, 1), day(6, 10)))]), on: day(6, 11))
         #expect(g == .weather)
     }
     @Test func missingOnlyAQIMarksAirQuality() {
-        let d = day(6, 10)
-        let g = EnvironmentGapResolver.gap(for: summary(d, subtypes: ["temperature"]),
-                                           status: status([(.observedAirQuality, failure(day(6, 1), day(6, 10)))]))
+        let g = resolve(summary(day(6, 10), subtypes: ["temperature"]),
+                        status([(.observedAirQuality, failure(day(6, 1), day(6, 10)))]), on: day(6, 11))
         #expect(g == .airQuality)
     }
     @Test func insufficientDataTodayMarksWeather() {
         let d = day(6, 10)
-        let g = EnvironmentGapResolver.gap(for: summary(d, subtypes: ["moonPhase"]),
-                                           status: status([(.forecastWeather, failure(d, d, reason: .insufficientData))]))
+        let g = resolve(summary(d, subtypes: ["moonPhase"]),
+                        status([(.forecastWeather, failure(d, d, reason: .insufficientData))]), on: d)
         #expect(g == .weather)
+    }
+    @Test func forecastFailureDoesNotMarkCompletedDayAfterRollover() {
+        // A forecastWeather failure scoped July 23 must NOT mark the July 23 row on
+        // July 24 — a completed day consults only observedWeather (which here has no failure).
+        let jul23 = day(7, 23)
+        let g = resolve(summary(jul23, subtypes: ["moonPhase"]),
+                        status([(.forecastWeather, failure(jul23, jul23))]), on: day(7, 24))
+        #expect(g == nil)
+    }
+    @Test func staleForecastFailureDoesNotMarkTodayRow() {
+        // On July 24, a forecastWeather liveFailure still scoped July 23 (no July-24
+        // attempt yet) must NOT mark today's July 24 row.
+        let g = resolve(summary(day(7, 24), subtypes: ["moonPhase"]),
+                        status([(.forecastWeather, failure(day(7, 23), day(7, 23)))]), on: day(7, 24))
+        #expect(g == nil)
     }
     @Test func pressureOnlyFailureNeverMarks() {
         let d = day(6, 10)
-        let g = EnvironmentGapResolver.gap(for: summary(d, subtypes: ["moonPhase"]),
-                                           status: status([(.currentPressure, failure(d, d))]))
+        let g = resolve(summary(d, subtypes: ["moonPhase"]),
+                        status([(.currentPressure, failure(d, d))]), on: d)
+        #expect(g == nil)
+    }
+    @Test func todayNeverMarksAirQuality() {
+        // Completed-day AQI doesn't exist for today by design.
+        let d = day(6, 10)
+        let g = resolve(summary(d, subtypes: ["moonPhase"]),
+                        status([(.observedAirQuality, failure(d, d))]), on: d)
         #expect(g == nil)
     }
     @Test func containmentUsesFailureTimezoneNotDeviceCalendar() {
         // Scope day recorded in LA. Summary dayStart is the SAME calendar instant.
         var la = Calendar(identifier: .gregorian); la.timeZone = TimeZone(identifier: "America/Los_Angeles")!
         let laDay = la.date(from: DateComponents(year: 2025, month: 6, day: 10))!
+        let laNext = la.date(from: DateComponents(year: 2025, month: 6, day: 11))!   // completed-day context
         let noon = la.date(bySettingHour: 12, minute: 0, second: 0, of: laDay)!
         let s = EnvironmentDaySummary(dayStart: laDay, timestamp: noon,
             events: [HealthEvent(timestamp: noon, category: .environment, subtype: "moonPhase",
@@ -456,7 +493,7 @@ struct EnvironmentGapResolverTests {
                                    timezoneID: "America/Los_Angeles")
         let status: [EnvironmentCapability: EnvironmentCapabilityStatus] =
             [.observedWeather: EnvironmentCapabilityStatus(lastSuccess: nil, liveFailure: f, lastFailure: f)]
-        #expect(EnvironmentGapResolver.gap(for: s, status: status) == .weather)
+        #expect(EnvironmentGapResolver.gap(for: s, status: status, now: laNext, calendar: la) == .weather)
     }
 }
 ```
@@ -488,21 +525,25 @@ enum EnvironmentGap {
 }
 
 /// Pure: does this day lack a reading that a *live* failure says was attempted?
+/// Today consults the forward forecast; completed days consult observed history.
 /// Scope containment uses each failure's own timezone, so a marker stays anchored
 /// to the days it was about even if the device timezone later changes.
 enum EnvironmentGapResolver {
     static func gap(for summary: EnvironmentDaySummary,
-                    status: [EnvironmentCapability: EnvironmentCapabilityStatus]) -> EnvironmentGap? {
+                    status: [EnvironmentCapability: EnvironmentCapabilityStatus],
+                    now: Date, calendar: Calendar) -> EnvironmentGap? {
+        let isToday = calendar.startOfDay(for: summary.dayStart) == calendar.startOfDay(for: now)
         let hasTemperature = summary.events.contains { $0.subtype == "temperature" }
         let hasAirQuality  = summary.events.contains { $0.subtype == "airQuality" }
 
-        // Rule 1 (today) + Rule 2 (completed days): weather leads.
+        // Weather leads. Today → forecastWeather; a completed day → observedWeather.
         if !hasTemperature {
-            if liveScopeContains(summary.dayStart, status[.forecastWeather]?.liveFailure) { return .weather }
-            if liveScopeContains(summary.dayStart, status[.observedWeather]?.liveFailure) { return .weather }
+            let capability: EnvironmentCapability = isToday ? .forecastWeather : .observedWeather
+            if liveScopeContains(summary.dayStart, status[capability]?.liveFailure) { return .weather }
         }
-        // Rule 3: air quality, only when weather didn't already fire.
-        if !hasAirQuality,
+        // Air quality: completed days only (today has no observed AQI by design), and
+        // only when weather didn't already fire.
+        if !hasAirQuality, !isToday,
            liveScopeContains(summary.dayStart, status[.observedAirQuality]?.liveFailure) {
             return .airQuality
         }
@@ -524,7 +565,7 @@ enum EnvironmentGapResolver {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -only-testing:"Food IntolerancesTests/EnvironmentGapResolverTests" -parallel-testing-enabled NO`
-Expected: PASS (8 tests).
+Expected: PASS (11 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -963,7 +1004,7 @@ git commit -m "feat(env-status): trusted-coordinate seam + LocationService prove
 ### Task 6: Backfill result enums + reason classification + cancellation + emitter status
 
 **Files:**
-- Modify: `EnvironmentalDataService.swift` — `AQIRangeResult` (`:21-24`), `WeatherDayResult` (`:32-36`); `fetchCompletedAirQualityRange` (`:497-550`); `fetchCompletedWeatherDay` (`:564-608`); add a `locationReason()` helper + `isCancellation(_:)` helper.
+- Modify: `EnvironmentalDataService.swift` — `AQIRangeResult` (`:21-24`), `WeatherDayResult` (`:32-36`); `fetchCompletedAirQualityRange` (`:497-550`); `fetchCompletedWeatherDay` (`:564-608`) — both gain response-status inspection + a post-transport `Task.isCancelled` guard; add `locationReason()`, `isCancellation(_:)`, `classifyThrown(_:)`, `httpStatusReason(_:)` helpers.
 - Modify: `Models/EnvironmentalEventEmitter.swift` — `emitIfNeeded` gains `statusStore`; `backfillObservedAQI`/`backfillObservedWeather` handle `.cancelled`/`.fetchError(reason)`, record scope failure, record success after persist.
 - Modify: `Food IntolerancesTests/EnvironmentalEmitterTests.swift` — stub `weatherDefault`/`rangeResult` new shapes; add scope + cancellation tests.
 - Modify: `Food IntolerancesTests/WeatherHistoryTests.swift`, `AirQualityHistoryTests.swift` — `.fetchError` → `.fetchError(reason)` assertions.
@@ -1050,11 +1091,63 @@ In `WeatherHistoryTests.swift`, change the four `.fetchError` expectations:
 - `authErrorBodyIsFetchError`: `#expect(result == .fetchError(.rejected))`.
 - `noLocationIsFetchError`: `#expect(result == .fetchError(.locationUnavailable))` (nil coordinate, default `.authorized`).
 
+Then, so the backfill's HTTP-status pre-check and post-transport cancellation are covered, give `StubTransport` an optional status code and add two tests. Change its stored props + `data(from:)` to:
+```swift
+        let payload: Data
+        let makeError: Bool
+        let statusCode: Int?                    // nil → plain URLResponse (no HTTP status)
+        let requestedURLs: URLBox
+        init(payload: Data, makeError: Bool = false, statusCode: Int? = nil, requestedURLs: URLBox = URLBox()) {
+            self.payload = payload; self.makeError = makeError; self.statusCode = statusCode; self.requestedURLs = requestedURLs
+        }
+        // …unchanged URLBox…
+        func data(from url: URL) async throws -> (Data, URLResponse) {
+            requestedURLs.append(url)
+            if makeError { throw URLError(.timedOut) }
+            let response: URLResponse = statusCode.map {
+                HTTPURLResponse(url: url, statusCode: $0, httpVersion: nil, headerFields: nil)!
+            } ?? URLResponse(url: url, mimeType: "application/json", expectedContentLength: payload.count, textEncodingName: "utf-8")
+            return (payload, response)
+        }
+```
+Add:
+```swift
+    @Test func httpRejectionStatusIsRejectedBeforeDecode() async {
+        // 401 with a body that would otherwise decode to .absent — status wins.
+        ensureTestAPIKeyConfigured()
+        let svc = EnvironmentalDataService(
+            transport: StubTransport(payload: Data(#"{"humidity":{"afternoon":64.0}}"#.utf8), statusCode: 401),
+            calendar: utcCalendar,
+            location: StubLocation(coordinate: CLLocationCoordinate2D(latitude: 40, longitude: -74)))
+        #expect(await svc.fetchCompletedWeatherDay(for: day) == .fetchError(.rejected))
+    }
+    @Test func postTransportCancellationReturnsCancelled() async {
+        // A transport that cancels its OWN calling task, then returns a clean 200 — no
+        // throw, so only the post-transport `Task.isCancelled` guard can catch it (Fix 4).
+        struct SelfCancellingTransport: HTTPTransport {
+            let payload: Data
+            func data(from url: URL) async throws -> (Data, URLResponse) {
+                withUnsafeCurrentTask { $0?.cancel() }
+                return (payload, HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            }
+        }
+        ensureTestAPIKeyConfigured()
+        let json = #"{"temperature":{"min":12.3,"max":24.6},"humidity":{"afternoon":64.0}}"#
+        let svc = EnvironmentalDataService(
+            transport: SelfCancellingTransport(payload: Data(json.utf8)),
+            calendar: utcCalendar,
+            location: StubLocation(coordinate: CLLocationCoordinate2D(latitude: 40, longitude: -74)))
+        #expect(await svc.fetchCompletedWeatherDay(for: day) == .cancelled)   // clean transport+decode, bailed at the guard
+    }
+```
+
 In `AirQualityHistoryTests.swift`:
-- In `CountingStubTransport.data(from:)` replace the thrown `StubError` with `throw URLError(.timedOut)`.
+- In `CountingStubTransport.data(from:)` replace the thrown `StubError` with `throw URLError(.timedOut)`, and add an optional `statusCode: Int?` (same pattern as above) so it can return an `HTTPURLResponse`.
 - `fetchCompletedAirQualityRangeTransportFailureReturnsFetchError`: `#expect(result == .fetchError(.offline))`.
 - `fetchCompletedAirQualityRangeMalformedJSONReturnsFetchError`: `#expect(result == .fetchError(.badResponse))`.
 - `fetchCompletedAirQualityRangeWithNoLocationReturnsFetchErrorWithoutTouchingTransport`: `#expect(result == .fetchError(.locationUnavailable))`.
+- Add `httpRejectionStatusIsRejected`: a `CountingStubTransport(payload: Data("{}".utf8), statusCode: 403)` → `#expect(result == .fetchError(.rejected))` (the AQI-history endpoint's status is now honored, not decode-lost).
+- Add `postTransportCancellationReturnsCancelled`: reuse the same `SelfCancellingTransport` pattern (a transport that `withUnsafeCurrentTask { $0?.cancel() }` then returns a clean 200 range payload) and call `fetchCompletedAirQualityRange(from:through:)` directly → `#expect(result == .cancelled)`. (Do NOT wrap the service in a `Task` — capturing the non-`Sendable` service trips strict concurrency; the self-cancelling transport avoids that.)
 
 - [ ] **Step 3: Run tests to verify they fail**
 
@@ -1105,11 +1198,20 @@ Add two private helpers to `EnvironmentalDataService` (near `resolvedCoordinate(
         if let urlError = error as? URLError, urlError.code != .cancelled { return .offline }
         return .badResponse
     }
+
+    /// A non-2xx HTTP status → a reason, checked BEFORE decode (a 401 body decodes
+    /// to a throw that would otherwise be miscounted as `.badResponse`). nil for
+    /// 2xx or a non-`HTTPURLResponse` stub (no status info → proceed to decode).
+    /// Used by BOTH backfill fetches AND the three today fetches (Task 8).
+    private func httpStatusReason(_ response: URLResponse?) -> EnvironmentFailureReason? {
+        guard let http = response as? HTTPURLResponse else { return nil }
+        if http.statusCode == 401 || http.statusCode == 403 { return .rejected }
+        if !(200...299).contains(http.statusCode) { return .badResponse }
+        return nil
+    }
 ```
 
-(An HTTP-status pre-check, `httpStatusReason`, is added to the three today fetches in Task 8 — it must run *before* decode, since a 401 body decodes to a throw that would otherwise mask the status. The backfill fetches don't need it: a One Call 401 already carries a `message` error body that `fetchCompletedWeatherDay` maps to `.rejected` directly.)
-
-Rewrite `fetchCompletedAirQualityRange` (`:497-550`) guards + catch:
+Rewrite `fetchCompletedAirQualityRange` (`:497-550`) guards + status pre-check + cancellation race + catch:
 
 ```swift
     func fetchCompletedAirQualityRange(from startDay: Date, through endDay: Date) async -> AQIRangeResult {
@@ -1123,8 +1225,10 @@ Rewrite `fetchCompletedAirQualityRange` (`:497-550`) guards + catch:
             return .fetchError(.notConfigured)
         }
         do {
-            let (data, _) = try await transport.data(from: url)
+            let (data, response) = try await transport.data(from: url)
+            if let reason = httpStatusReason(response) { return .fetchError(reason) }   // 401/403 before decode
             // …unchanged decode + byDay building…
+            if Task.isCancelled { return .cancelled }   // cancelled AFTER a clean transport → not a failure
             return .days(byDay)
         } catch {
             if isCancellation(error) { return .cancelled }
@@ -1134,9 +1238,9 @@ Rewrite `fetchCompletedAirQualityRange` (`:497-550`) guards + catch:
     }
 ```
 
-(Keep the existing body between the guards verbatim; only the three `return` sites and the `catch` change.)
+(Keep the existing body between the guards verbatim; only the transport line, the pre-check, the `Task.isCancelled` guard, the `return` sites and the `catch` change.)
 
-Rewrite `fetchCompletedWeatherDay` (`:564-608`) guards + error-body + catch:
+Rewrite `fetchCompletedWeatherDay` (`:564-608`) guards + status pre-check + error-body + cancellation race + catch:
 
 ```swift
     func fetchCompletedWeatherDay(for day: Date) async -> WeatherDayResult {
@@ -1150,15 +1254,19 @@ Rewrite `fetchCompletedWeatherDay` (`:564-608`) guards + error-body + catch:
             return .fetchError(.notConfigured)
         }
         do {
-            let (data, _) = try await transport.data(from: url)
+            let (data, response) = try await transport.data(from: url)
+            if let reason = httpStatusReason(response) { return .fetchError(reason) }   // 401/403 before decode
             let decoded = try JSONDecoder().decode(DaySummaryResponse.self, from: data)
             guard let high = decoded.temperature?.max, let low = decoded.temperature?.min else {
+                // Second guard: a non-HTTP stub, or a 200 carrying a One Call error
+                // envelope, still surfaces as .rejected via the message body.
                 if let errorBody = try? JSONDecoder().decode(OneCallErrorBody.self, from: data) {
                     Logger.error("One Call day_summary error body: \(errorBody.message)", category: .network)
-                    return .fetchError(.rejected)   // 401 not-subscribed / bad key — retryable, never absent
+                    return .fetchError(.rejected)   // not-subscribed / bad key — retryable, never absent
                 }
                 return .absent
             }
+            if Task.isCancelled { return .cancelled }   // cancelled AFTER a clean transport → not a failure
             return .value(highC: high, lowC: low, humidityPct: decoded.humidity?.afternoon)
         } catch {
             if isCancellation(error) { return .cancelled }
@@ -1259,7 +1367,7 @@ In `backfillObservedWeather` (`:187-236`), capture the intended range, handle th
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -only-testing:"Food IntolerancesTests/EnvironmentalEmitterTests" -only-testing:"Food IntolerancesTests/WeatherHistoryTests" -only-testing:"Food IntolerancesTests/AirQualityHistoryTests" -parallel-testing-enabled NO`
-Expected: PASS — new scope/cancellation/success tests green; the reshaped `.fetchError(reason)` assertions green; every pre-existing emitter test still green.
+Expected: PASS — new scope/cancellation/success tests green; the reshaped `.fetchError(reason)` assertions green; the new HTTP-rejection (`httpRejectionStatus…`) and post-transport-cancellation (`postTransportCancellationReturnsCancelled`) tests green; every pre-existing emitter test still green.
 
 - [ ] **Step 6: Commit**
 
@@ -1276,7 +1384,7 @@ git commit -m "feat(env-status): backfill failure reasons, .cancelled, scoped st
 ### Task 7: Pressure trust separation
 
 **Files:**
-- Modify: `EnvironmentalDataService.swift` — new pressure state + `recordGenuinePressure`/`clearFetchedPressure`; `fetchAtmosphericPressure` success/fallback; `useFallbackPressureData` (`:618`), `setFallbackAtmosphericPressure` (`:686`), `updateAtmosphericPressure` (`:647`).
+- Modify: `EnvironmentalDataService.swift` — new pressure state + `recordGenuinePressure`/`clearFetchedPressure`; `fetchAtmosphericPressure` success/fallback; `useFallbackPressureData` (`:618`), `setFallbackAtmosphericPressure` (`:686`), `resetPressureState` (`:218`), `updateAtmosphericPressure` (`:647`) (each fallback/reset clears `latestFetchedPressure`, preserves the carry).
 - Modify: `Models/EnvironmentalEventEmitter.swift` — `EnvironmentalDataProviding` pressure props → optionals (`:8-17`); today reading construction (`:99-109`).
 - Modify: `Food IntolerancesTests/EnvironmentalEmitterTests.swift` — `StubProvider` pressure props → optionals.
 - Test: `Food IntolerancesTests/PressureTrustTests.swift`
@@ -1343,6 +1451,31 @@ struct PressureTrustTests {
         s.setFallbackAtmosphericPressure()               // cached/fabricated route
         s.recordGenuinePressure(1006, at: t.addingTimeInterval(7200))  // > window → no drop off the stale genuine
         #expect(s.lastTrustedPressure == nil)
+    }
+
+    // Fix 5: every fallback/reset entry point clears latestFetchedPressure (spec's
+    // "nil on failure or fallback") while preserving the genuine carry.
+    @Test func useFallbackClearsLatestButPreservesCarryForNextGenuine() {
+        let s = EnvironmentalDataService()
+        s.recordGenuinePressure(1013, at: t)
+        #expect(s.latestFetchedPressure == 1013)
+        s.useFallbackPressureData()
+        #expect(s.latestFetchedPressure == nil)          // stale genuine no longer exposed
+        s.recordGenuinePressure(1006, at: t.addingTimeInterval(300))  // within window → carry preserved
+        #expect(s.lastTrustedPressure == 1013)           // a real drop is still computable
+        #expect(s.suddenPressureChange == true)
+    }
+    @Test func setFallbackClearsLatestFetchedPressure() {
+        let s = EnvironmentalDataService()
+        s.recordGenuinePressure(1013, at: t)
+        s.setFallbackAtmosphericPressure()
+        #expect(s.latestFetchedPressure == nil)
+    }
+    @Test func resetPressureStateClearsLatestFetchedPressure() {
+        let s = EnvironmentalDataService()
+        s.recordGenuinePressure(1013, at: t)
+        s.resetPressureState()
+        #expect(s.latestFetchedPressure == nil)
     }
 
     // MARK: Emitter-side (protocol optionals → factory)
@@ -1479,7 +1612,7 @@ Add the two record methods (near `updateAtmosphericPressure`, `:647`):
 
 In `fetchAtmosphericPressure` (`:279-334`): at the start of the genuine attempt (right after the "Loading…" set, before the network call) call `await MainActor.run { self.clearFetchedPressure() }`. In the success `MainActor.run` block (`:322-329`) — after the existing legacy display assignments — add `self.recordGenuinePressure(pressureValue, at: self.now())`. In the `catch` fallback (`:332`) leave `useFallbackPressureData()` only (it must NOT record genuine).
 
-Make the fallbacks legacy-display-only. In `useFallbackPressureData()` (`:618-633`) and `setFallbackAtmosphericPressure()` (`:686-715`): keep every existing assignment to `atmosphericPressure`/`atmosphericPressureCategory`/`currentPressure`/`previousPressure`/`suddenPressureChange`, but do NOT call `recordGenuinePressure` and do NOT touch `latestFetchedPressure`/`mostRecentGenuinePressure`. `setFallbackAtmosphericPressure` currently routes through `updateAtmosphericPressure` — that's fine as long as `updateAtmosphericPressure` no longer writes the carry (next paragraph).
+Make the fallbacks/reset legacy-display-only AND enforce the "nil on fallback" invariant. Every direct fallback/reset entry point — `useFallbackPressureData()` (`:618-633`), `setFallbackAtmosphericPressure()` (`:686-715`), and `resetPressureState()` (`:218-227`) — must **set `latestFetchedPressure = nil`** so no stale genuine reading is left exposed to the emitter, while **preserving `mostRecentGenuinePressure`** (the carry, so a later genuine reading can still compute a real drop) and **not** calling `recordGenuinePressure`. This matters because `setFallbackAtmosphericPressure` is called directly from `fetchWithReliableTimeout` and `resetPressureState` from `refreshEnvironmentalData` — paths that never went through `clearFetchedPressure()`, so without this they could publish a stale genuine value. Keep every existing legacy assignment (`atmosphericPressure`/`atmosphericPressureCategory`/`currentPressure`/`previousPressure`/`suddenPressureChange`) unchanged. `setFallbackAtmosphericPressure` routing through `updateAtmosphericPressure` is fine as long as `updateAtmosphericPressure` no longer writes the carry (next paragraph).
 
 Refactor `updateAtmosphericPressure` (`:647-684`): it stays the owner of the LEGACY display fields (`pressureReadings`, `currentPressure`, `previousPressure`, `atmosphericPressureCategory`, and the legacy `suddenPressureChange` it computes for the legacy card). It must NOT write `latestFetchedPressure`, `lastTrustedPressure`, or `mostRecentGenuinePressure`. The genuine carry + the emitter-facing `suddenPressureChange` are owned solely by `recordGenuinePressure`. (Net: the legacy card behaves exactly as before; the emitter reads only the carry-gated optionals.)
 
@@ -1501,7 +1634,7 @@ git commit -m "feat(env-status): time-stamped genuine-pressure carry; fallbacks 
 ### Task 8: Today-capability classification + status writes
 
 **Files:**
-- Modify: `EnvironmentalDataService.swift` — `init` gains `statusStore`; `fetchAtmosphericPressure`, `fetchDailyForecast`, `fetchAirQuality` record success/failure with today scope; response status inspection.
+- Modify: `EnvironmentalDataService.swift` — `init` gains `statusStore`; `fetchAtmosphericPressure`, `fetchDailyForecast`, `fetchAirQuality` record success/failure with today scope, run `httpStatusReason` pre-check (reusing the Task 6 helper), and add a post-transport `Task.isCancelled` guard before publishing/recording.
 - Test: `Food IntolerancesTests/EnvironmentFailureClassificationTests.swift`
 
 **Interfaces:**
@@ -1606,13 +1739,32 @@ struct EnvironmentFailureClassificationTests {
     // Secrets.xcconfig is present — so `setenv("…","")` can't reliably force nil. The
     // `.notConfigured` code path (URL guard → recordTodayFailure) is trivial and is
     // confirmed by the device pass (a keyless build shows the marker + Health reason).
-    @Test func forecastCancellationRecordsNothing() async {
+    @Test func forecastThrownCancellationRecordsNothing() async {
         key()
         let s = store()
         let svc = EnvironmentalDataService(transport: StatusTransport(payload: Data(), status: nil, error: URLError(.cancelled)),
             now: { self.at }, calendar: utc, location: StubLocation(coordinate: .init(latitude: 40, longitude: -74)), statusStore: s)
         await svc.fetchDailyForecast()
         #expect(s.statuses[.forecastWeather] == nil)   // no write at all
+    }
+    @Test func forecastPostTransportCancellationRecordsNothing() async {
+        // Transport returns a CLEAN 3-slot 200 (no throw) but cancels its own calling
+        // task → the post-transport Task.isCancelled guard must bail before publishing
+        // or recording success (Fix 4). A pre-set failure must survive (not be cleared).
+        struct SelfCancellingTransport: HTTPTransport {
+            let payload: Data
+            func data(from url: URL) async throws -> (Data, URLResponse) {
+                withUnsafeCurrentTask { $0?.cancel() }
+                return (payload, HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            }
+        }
+        key()
+        let s = store()
+        s.recordFailure(.forecastWeather, reason: .offline, scopeStart: at, scopeEnd: at, timezoneID: "UTC", at: at)
+        let svc = EnvironmentalDataService(transport: SelfCancellingTransport(payload: forecastJSON(self.at.timeIntervalSince1970)),
+            now: { self.at }, calendar: utc, location: StubLocation(coordinate: .init(latitude: 40, longitude: -74)), statusStore: s)
+        await svc.fetchDailyForecast()
+        #expect(s.statuses[.forecastWeather]?.liveFailure?.reason == .offline)   // pre-set failure NOT cleared
     }
 }
 ```
@@ -1648,21 +1800,12 @@ Add the parameter to `init` (`:100-104`) — **optional, `nil` default** (`Envir
     }
 ```
 
-Add a today-scope helper, the HTTP-status pre-check, and record helpers (near `locationReason()`). The record helpers `guard let` the optional store, so a nil store is a no-op:
+Add a today-scope helper + the two record helpers (near `locationReason()`). `httpStatusReason`, `classifyThrown`, and `isCancellation` already exist from Task 6. The record helpers `guard let` the optional store, so a nil store is a no-op:
 
 ```swift
     private func todayScope() -> (start: Date, end: Date, tz: String) {
         let d = calendar.startOfDay(for: now())
         return (d, d, calendar.timeZone.identifier)
-    }
-    /// A non-2xx HTTP status → a reason, checked BEFORE decode (a 401 body
-    /// decodes to a throw that would otherwise be miscounted as `.badResponse`).
-    /// nil for 2xx or a non-`HTTPURLResponse` stub (no status info → proceed).
-    private func httpStatusReason(_ response: URLResponse?) -> EnvironmentFailureReason? {
-        guard let http = response as? HTTPURLResponse else { return nil }
-        if http.statusCode == 401 || http.statusCode == 403 { return .rejected }
-        if !(200...299).contains(http.statusCode) { return .badResponse }
-        return nil
     }
     @MainActor private func recordTodaySuccess(_ capability: EnvironmentCapability) {
         guard let statusStore else { return }
@@ -1675,21 +1818,22 @@ Add a today-scope helper, the HTTP-status pre-check, and record helpers (near `l
     }
 ```
 
-Wire the three fetches (each already hops to `MainActor.run` for its publishes; record inside those hops):
+Wire the three fetches (each already hops to `MainActor.run` for its publishes; record inside those hops). **Post-transport cancellation guard (Fix 4):** a task can be cancelled *after* `transport.data` returns cleanly — no error is thrown, so the `catch` cancellation check never runs. Each fetch must therefore check `Task.isCancelled` after transport and bail before publishing or recording success, so a superseded refresh never clears a live failure or restamps a genuine value.
 
 **`fetchAtmosphericPressure` (`:279-334`)** — `.currentPressure`:
 - No trusted coordinate guard (`:303-307`): before returning, `await MainActor.run { self.recordTodayFailure(.currentPressure, self.locationReason()) }`.
 - URL-nil guard (`:309-312`): `await MainActor.run { self.recordTodayFailure(.currentPressure, .notConfigured) }` before `return`.
-- Change `let (data, _) = try await self.transport.data(from: url)` → `let (data, response) = …`, then immediately: `if let reason = httpStatusReason(response) { await MainActor.run { self.recordTodayFailure(.currentPressure, reason); self.useFallbackPressureData() }; return }` (before decode).
-- Success block (`:322-329`): after the existing assignments + `recordGenuinePressure`, add `self.recordTodaySuccess(.currentPressure)`.
-- `catch` (`:330-333`): `if !self.isCancellation(error) { await MainActor.run { self.recordTodayFailure(.currentPressure, self.classifyThrown(error)) } }` — then the existing `useFallbackPressureData()`.
+- Change `let (data, _) = try await self.transport.data(from: url)` → `let (data, response) = …`, then immediately: `if Task.isCancelled { return }` (no record, no fallback — a superseding refresh is coming), then `if let reason = httpStatusReason(response) { await MainActor.run { self.recordTodayFailure(.currentPressure, reason); self.useFallbackPressureData() }; return }` (before decode).
+- Success block (`:322-329`): before the existing assignments, `if Task.isCancelled { return }`; then after the assignments + `recordGenuinePressure`, add `self.recordTodaySuccess(.currentPressure)`.
+- `catch` (`:330-333`): **return on cancellation instead of falling back** — `if self.isCancellation(error) { return }`, then `await MainActor.run { self.recordTodayFailure(.currentPressure, self.classifyThrown(error)); self.useFallbackPressureData() }`. (A cancelled fetch must not apply the legacy fallback; `clearFetchedPressure()` already nil'd `latestFetchedPressure` at the start.)
 
 **`fetchDailyForecast` (`:356-398`)** — `.forecastWeather`:
 - No-location branch (`:358-366`): before the `MainActor.run`, `await MainActor.run { self.recordTodayFailure(.forecastWeather, self.locationReason()) }` (keep the existing nil-forecast reset).
 - URL-nil (`:368-371`): `await MainActor.run { self.recordTodayFailure(.forecastWeather, .notConfigured) }` before `return`.
-- Change `let (data, _) = try await transport.data(from: url)` → `let (data, response) = …`, then before decode: `if let reason = httpStatusReason(response) { await MainActor.run { self.forecastHighC = nil; self.forecastLowC = nil; self.forecastHumidity = nil; self.recordTodayFailure(.forecastWeather, reason) }; return }`.
-- After computing `aggregate` (`:381`): if `aggregate == nil`, record `insufficientData`; else record success. In the success `MainActor.run` (`:385-389`):
+- Change `let (data, _) = try await transport.data(from: url)` → `let (data, response) = …`, then `if Task.isCancelled { return }`, then before decode: `if let reason = httpStatusReason(response) { await MainActor.run { self.forecastHighC = nil; self.forecastLowC = nil; self.forecastHumidity = nil; self.recordTodayFailure(.forecastWeather, reason) }; return }`.
+- After computing `aggregate` (`:381`): `if Task.isCancelled { return }` (before publishing), then if `aggregate == nil`, record `insufficientData`; else record success. In the success `MainActor.run` (`:385-389`):
 ```swift
+            if Task.isCancelled { return }
             await MainActor.run {
                 self.forecastHighC = high
                 self.forecastLowC = low
@@ -1698,9 +1842,9 @@ Wire the three fetches (each already hops to `MainActor.run` for its publishes; 
                 else { self.recordTodaySuccess(.forecastWeather) }
             }
 ```
-- `catch` (`:390-397`): `if !self.isCancellation(error) { await MainActor.run { self.recordTodayFailure(.forecastWeather, self.classifyThrown(error)) } }`. Keep the existing nil-forecast reset.
+- `catch` (`:390-397`): `if self.isCancellation(error) { return }`, then `await MainActor.run { self.recordTodayFailure(.forecastWeather, self.classifyThrown(error)) }` + keep the existing nil-forecast reset.
 
-**`fetchAirQuality` (`:415-449`)** — `.forecastAirQuality`, same structure (no-location → `locationReason`; URL-nil → `notConfigured`; `let (data, response)` + `httpStatusReason` pre-check with `forecastAQI = nil` on failure; `mean == nil` → `insufficientData` else success; `catch` non-cancellation → `classifyThrown(error)`).
+**`fetchAirQuality` (`:415-449`)** — `.forecastAirQuality`, same structure (no-location → `locationReason`; URL-nil → `notConfigured`; `let (data, response)` + `if Task.isCancelled { return }` + `httpStatusReason` pre-check with `forecastAQI = nil` on failure; `if Task.isCancelled { return }` before publishing; `mean == nil` → `insufficientData` else success; `catch` → return on cancellation, else `classifyThrown(error)`).
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1846,7 +1990,8 @@ At the `.environmentSummary` case (`:162-169`), compute the gap and pass it:
                         case .environmentSummary(let summary):
                             EnvironmentSummaryRow(
                                 summary: summary,
-                                gap: EnvironmentGapResolver.gap(for: summary, status: statusStore.statuses),
+                                gap: EnvironmentGapResolver.gap(for: summary, status: statusStore.statuses,
+                                                                now: Date(), calendar: Calendar.current),
                                 isExpanded: expandedEnvironment.contains(summary.id)) {
                                 withAnimation(.easeOut(duration: 0.2)) {
                                     if expandedEnvironment.contains(summary.id) { expandedEnvironment.remove(summary.id) }
@@ -2053,7 +2198,10 @@ Run the app on a device/simulator and confirm (spec §5 Device pass):
 ## Self-Review Notes (author)
 
 - **Spec coverage:** §3A store → T1/T2/T9; §3B classification + §3B.1 trusted coords + §3B.2 insufficientData → T5/T6/T8; §3C cancellation → T6/T8; §3D scope + success contracts + timezone → T6/T8; §3E resolver → T3/T10; §3F Timeline row → T10; §3G Health → T4/T11; §3H pressure → T7. All spec §5 tests mapped to a task's tests or the device pass.
-- **`now:calendar:` dropped from the resolver** is a deliberate, documented simplification (Task 3 note) — flag for reviewer.
-- **HTTP status is checked before decode** (`httpStatusReason`, Task 8): a 401 body decodes to a throw, so a post-decode `catch` would misclassify it as `.badResponse` instead of `.rejected`. The pre-check fixes that; `.insufficientData` is raised only on the 2xx-but-thin path (aggregate nil), never in the `catch`, which handles only thrown errors via `classifyThrown` (`URLError` → `.offline`, else `.badResponse`).
-- **`emitIfNeeded`'s defaulted `statusStore`** lets the ~15 pre-existing emitter tests keep compiling unchanged; they use a throwaway store on `.standard` and never assert on it. Only the new scope/cancellation/success tests pass an explicit ephemeral-suite store.
+- **Resolver keeps `now:calendar:`** and routes today→`forecastWeather`, completed days→`observedWeather`/`observedAirQuality`. This is load-bearing: without the today/completed-day split, a `forecastWeather` failure scoped to a day would keep marking that row after midnight (its scope still contains the day), and a completed day is supposed to consult only observed history. Scope *containment* still uses each failure's `timezoneID`; `now`/`calendar` only classify today vs earlier.
+- **HTTP status is checked before decode** (`httpStatusReason`, defined in Task 6, reused in Task 8) on ALL five endpoints — both backfills and the three today fetches. A 401 body decodes to a throw, so a post-decode `catch` would misclassify it as `.badResponse` instead of `.rejected`; the pre-check fixes that. The One Call `message`-envelope check remains as a second guard for non-HTTP stubs / 200-with-error-body. `.insufficientData` is raised only on the 2xx-but-thin path (aggregate nil), never in the `catch`, which handles only thrown errors via `classifyThrown` (`URLError` → `.offline`, else `.badResponse`).
+- **Post-transport cancellation** (Fix 4): a task cancelled *after* a clean `transport.data` return throws nothing, so the `catch` cancellation check can't fire. Every fetch adds a `Task.isCancelled` guard after transport (and before publishing / recording success): backfills return `.cancelled`, today fetches return early, and the pressure `catch` returns instead of applying its legacy fallback. This upholds the cancellation contract (no failure cleared, no genuine value restamped) against the race, not just against thrown cancellation.
+- **Denial can't be masked by a stale `.device` coordinate** (Fix 1): `LocationTrust` rejects every non-manual coordinate under `.denied`/`.restricted` *before* evaluating provenance, closing the window between authorization flipping and the async fallback re-stamping provenance.
+- **Fallbacks clear `latestFetchedPressure`** (Fix 5): `useFallbackPressureData`/`setFallbackAtmosphericPressure`/`resetPressureState` each nil it (spec's "nil on failure or fallback") while preserving `mostRecentGenuinePressure`, so direct fallback/reset paths (`fetchWithReliableTimeout`, `refreshEnvironmentalData`) that bypass `clearFetchedPressure()` can't expose a stale genuine reading.
+- **`emitIfNeeded`'s optional `statusStore` (nil default)** lets the pre-existing emitter tests and the non-`@MainActor` service-construction tests compile — a defaulted `@MainActor` `EnvironmentStatusStore()` would not (see the audit-fix note). They record nothing; only the new scope/cancellation/success tests pass an explicit ephemeral-suite store.
 - **Two success contracts** (spec §3D): backfills record success after a full persisted pass (emitter, Task 6); today capabilities record success on a valid decoded response (service, Task 8). Today's *ingestion* failure is out of scope — the transient bare-row consequence is documented in the spec, not a task.
