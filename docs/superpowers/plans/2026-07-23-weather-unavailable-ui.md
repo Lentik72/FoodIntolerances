@@ -12,7 +12,7 @@
 
 - **No `HealthGraphCore` changes.** Every file touched is in the app target (`Food Intolerances`) or its test target (`Food IntolerancesTests`).
 - **App test command** (single suite shown; swap the `-only-testing` suite per step):
-  `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -only-testing:"Food IntolerancesTests/<Suite>" -parallel-testing-enabled NO`
+  `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/<Suite>" -parallel-testing-enabled NO`
 - **`-parallel-testing-enabled NO` is mandatory** for the app test target. A lone `** TEST FAILED **` originating only from `SwiftDataMigratorTests` teardown is a known pre-existing crash — ignore it; treat a run as green when your suite's `#expect`s pass.
 - **Capability order (fixed everywhere):** `currentPressure` → `forecastWeather` → `observedWeather` → `forecastAirQuality` → `observedAirQuality`. Used for the Health summary "earliest failing" pick.
 - **Marker tone:** muted caption, `HealthTheme.inkMuted`, no color, no SF Symbol, no alarming words. Copy exactly: `Weather unavailable` / `Air quality unavailable`.
@@ -123,7 +123,7 @@ struct LocationTrustTests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -only-testing:"Food IntolerancesTests/LocationTrustTests" -parallel-testing-enabled NO`
+Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/LocationTrustTests" -parallel-testing-enabled NO`
 Expected: FAIL — `LocationTrust`, `LocationProvenance`, `EnvironmentLocationAuthorization`, `EnvironmentFailure` undefined.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -212,7 +212,7 @@ enum LocationTrust {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -only-testing:"Food IntolerancesTests/LocationTrustTests" -parallel-testing-enabled NO`
+Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/LocationTrustTests" -parallel-testing-enabled NO`
 Expected: PASS (8 tests).
 
 - [ ] **Step 5: Commit**
@@ -291,7 +291,7 @@ struct EnvironmentStatusStoreTests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -only-testing:"Food IntolerancesTests/EnvironmentStatusStoreTests" -parallel-testing-enabled NO`
+Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/EnvironmentStatusStoreTests" -parallel-testing-enabled NO`
 Expected: FAIL — `EnvironmentStatusStore` undefined.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -356,7 +356,7 @@ final class EnvironmentStatusStore: ObservableObject {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -only-testing:"Food IntolerancesTests/EnvironmentStatusStoreTests" -parallel-testing-enabled NO`
+Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/EnvironmentStatusStoreTests" -parallel-testing-enabled NO`
 Expected: PASS (3 tests).
 
 - [ ] **Step 5: Commit**
@@ -500,7 +500,7 @@ struct EnvironmentGapResolverTests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -only-testing:"Food IntolerancesTests/EnvironmentGapResolverTests" -parallel-testing-enabled NO`
+Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/EnvironmentGapResolverTests" -parallel-testing-enabled NO`
 Expected: FAIL — `EnvironmentGap`, `EnvironmentGapResolver` undefined.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -564,7 +564,7 @@ enum EnvironmentGapResolver {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -only-testing:"Food IntolerancesTests/EnvironmentGapResolverTests" -parallel-testing-enabled NO`
+Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/EnvironmentGapResolverTests" -parallel-testing-enabled NO`
 Expected: PASS (11 tests).
 
 - [ ] **Step 5: Commit**
@@ -673,7 +673,7 @@ struct EnvironmentStatusPresentationTests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -only-testing:"Food IntolerancesTests/EnvironmentStatusPresentationTests" -parallel-testing-enabled NO`
+Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/EnvironmentStatusPresentationTests" -parallel-testing-enabled NO`
 Expected: FAIL — `EnvironmentStatusPresentation` undefined.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -819,7 +819,7 @@ enum EnvironmentStatusPresentation {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -only-testing:"Food IntolerancesTests/EnvironmentStatusPresentationTests" -parallel-testing-enabled NO`
+Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/EnvironmentStatusPresentationTests" -parallel-testing-enabled NO`
 Expected: PASS (8 tests).
 
 - [ ] **Step 5: Commit**
@@ -986,7 +986,7 @@ Replace `DefaultLocationProvider` (`:92-98`):
 
 - [ ] **Step 5: Build + run existing location/DI suites to prove the refactor is behavior-neutral**
 
-Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -only-testing:"Food IntolerancesTests/EnvironmentalDataServiceDITests" -only-testing:"Food IntolerancesTests/LocationTrustTests" -parallel-testing-enabled NO`
+Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/EnvironmentalDataServiceDITests" -only-testing:"Food IntolerancesTests/LocationTrustTests" -parallel-testing-enabled NO`
 Expected: PASS. (`fetchDailyForecastWithNoLocationLeavesForecastNil` still holds: a `nil`-coordinate stub is trusted-nil.)
 
 - [ ] **Step 6: Commit**
@@ -1151,7 +1151,7 @@ In `AirQualityHistoryTests.swift`:
 
 - [ ] **Step 3: Run tests to verify they fail**
 
-Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -only-testing:"Food IntolerancesTests/EnvironmentalEmitterTests" -only-testing:"Food IntolerancesTests/WeatherHistoryTests" -only-testing:"Food IntolerancesTests/AirQualityHistoryTests" -parallel-testing-enabled NO`
+Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/EnvironmentalEmitterTests" -only-testing:"Food IntolerancesTests/WeatherHistoryTests" -only-testing:"Food IntolerancesTests/AirQualityHistoryTests" -parallel-testing-enabled NO`
 Expected: FAIL — `.fetchError(_:)`, `.cancelled`, and the `statusStore:` parameter don't exist yet.
 
 - [ ] **Step 4: Reshape the enums + classification + emitter**
@@ -1366,7 +1366,7 @@ In `backfillObservedWeather` (`:187-236`), capture the intended range, handle th
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -only-testing:"Food IntolerancesTests/EnvironmentalEmitterTests" -only-testing:"Food IntolerancesTests/WeatherHistoryTests" -only-testing:"Food IntolerancesTests/AirQualityHistoryTests" -parallel-testing-enabled NO`
+Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/EnvironmentalEmitterTests" -only-testing:"Food IntolerancesTests/WeatherHistoryTests" -only-testing:"Food IntolerancesTests/AirQualityHistoryTests" -parallel-testing-enabled NO`
 Expected: PASS — new scope/cancellation/success tests green; the reshaped `.fetchError(reason)` assertions green; the new HTTP-rejection (`httpRejectionStatus…`) and post-transport-cancellation (`postTransportCancellationReturnsCancelled`) tests green; every pre-existing emitter test still green.
 
 - [ ] **Step 6: Commit**
@@ -1530,7 +1530,7 @@ struct PressureTrustTests {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -only-testing:"Food IntolerancesTests/PressureTrustTests" -parallel-testing-enabled NO`
+Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/PressureTrustTests" -parallel-testing-enabled NO`
 Expected: FAIL — `recordGenuinePressure`, `latestFetchedPressure`, `lastTrustedPressure` undefined; the `PressureStub` doesn't satisfy the (still old) protocol.
 
 - [ ] **Step 3: Change the protocol + emitter reading construction**
@@ -1618,7 +1618,7 @@ Refactor `updateAtmosphericPressure` (`:647-684`): it stays the owner of the LEG
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -only-testing:"Food IntolerancesTests/PressureTrustTests" -only-testing:"Food IntolerancesTests/EnvironmentalEmitterTests" -parallel-testing-enabled NO`
+Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/PressureTrustTests" -only-testing:"Food IntolerancesTests/EnvironmentalEmitterTests" -parallel-testing-enabled NO`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -1771,7 +1771,7 @@ struct EnvironmentFailureClassificationTests {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -only-testing:"Food IntolerancesTests/EnvironmentFailureClassificationTests" -parallel-testing-enabled NO`
+Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/EnvironmentFailureClassificationTests" -parallel-testing-enabled NO`
 Expected: FAIL — the `statusStore:` init parameter doesn't exist; no status is recorded by `fetchDailyForecast`.
 
 - [ ] **Step 3: Inject the store + record today status in the three fetches**
@@ -1848,7 +1848,7 @@ Wire the three fetches (each already hops to `MainActor.run` for its publishes; 
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -only-testing:"Food IntolerancesTests/EnvironmentFailureClassificationTests" -only-testing:"Food IntolerancesTests/EnvironmentalDataServiceDITests" -parallel-testing-enabled NO`
+Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/EnvironmentFailureClassificationTests" -only-testing:"Food IntolerancesTests/EnvironmentalDataServiceDITests" -parallel-testing-enabled NO`
 Expected: PASS. (The DI tests' forecast-success paths now also record success — still green because they only assert on `forecastHighC/Low/Humidity`.)
 
 - [ ] **Step 5: Commit**
@@ -1910,7 +1910,7 @@ Update both `emitIfNeeded` calls (`:122`, `:125`) to pass the store:
 
 - [ ] **Step 3: Build to verify it compiles**
 
-Run: `xcodebuild build -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 16 Pro'`
+Run: `xcodebuild build -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`
 Expected: BUILD SUCCEEDED.
 
 - [ ] **Step 4: Commit**
@@ -2006,7 +2006,7 @@ At the `.environmentSummary` case (`:162-169`), compute the gap and pass it:
 
 - [ ] **Step 4: Build + run the resolver suite (unchanged) to confirm no regression**
 
-Run: `xcodebuild build -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 16 Pro'`
+Run: `xcodebuild build -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`
 Expected: BUILD SUCCEEDED.
 
 - [ ] **Step 5: Commit**
@@ -2167,12 +2167,12 @@ The `HealthOSRootView` previews already received the store in Task 10 Step 3, an
 
 - [ ] **Step 4: Build to verify it compiles**
 
-Run: `xcodebuild build -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 16 Pro'`
+Run: `xcodebuild build -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`
 Expected: BUILD SUCCEEDED.
 
 - [ ] **Step 5: Full app test suite**
 
-Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -parallel-testing-enabled NO`
+Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -parallel-testing-enabled NO`
 Expected: all new + existing suites green (the lone `SwiftDataMigratorTests` teardown crash aside).
 
 - [ ] **Step 6: Commit**
