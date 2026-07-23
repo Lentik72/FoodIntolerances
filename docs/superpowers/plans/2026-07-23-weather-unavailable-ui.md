@@ -865,16 +865,9 @@ In `LocationService` (starts `:766`), add published/stored members after `@Publi
         self.currentLocation = coordinate
         self.provenance = provenance
     }
-
-    /// The cached coordinate the graph may ingest, gated by authorization + freshness.
-    var trustedCachedCoordinate: CLLocationCoordinate2D? {
-        LocationTrust.trustedCoordinate(
-            manual: nil, provenance: .cached,
-            deviceCoordinate: nil, cachedCoordinate: lastKnownLocation, cachedAt: cachedLocationAt,
-            authorization: authorization, now: Date(),
-            freshness: EnvironmentalDataService.locationFreshnessInterval)
-    }
 ```
+
+(The cached-freshness gate lives entirely inside `LocationTrust.trustedCoordinate`, which `DefaultLocationProvider.coordinate` calls directly in Step 4 — `LocationService` needs no separate `trustedCachedCoordinate` member.)
 
 - [ ] **Step 3: Stamp provenance at the nine assignment sites**
 
@@ -1047,7 +1040,7 @@ Then add tests (place after `weatherFetchErrorAbortsPassWithoutIngestOrAdvance`)
     }
 ```
 
-Note: the pre-existing emitter tests call `emitIfNeeded(...)` without `statusStore`; they keep compiling via the default parameter (Step 4). Only update `weatherDefault`'s declared default to `.fetchError(.badResponse)` as shown so those tests' abort behavior is unchanged.
+Note: the pre-existing emitter tests call `emitIfNeeded(...)` without `statusStore`; they keep compiling via the `nil` default and record nothing. Only update `weatherDefault`'s declared default to `.fetchError(.badResponse)` as shown so those tests' abort behavior is unchanged.
 
 - [ ] **Step 2: Update the History/AQI fetch assertions to the new shape**
 
@@ -1186,12 +1179,14 @@ Change `emitIfNeeded` signature + the two backfill calls (`:84-118`):
                              now: @escaping () -> Date = Date.init,
                              calendar: Calendar = defaultCalendar(),
                              store: WatermarkStore = UserDefaultsWatermarkStore(),
-                             statusStore: EnvironmentStatusStore = EnvironmentStatusStore()) async {
+                             statusStore: EnvironmentStatusStore? = nil) async {
         // …unchanged today-emit block…
         await backfillObservedAQI(pipeline: pipeline, service: service, now: now, calendar: calendar, store: store, tz: tz, statusStore: statusStore)
         await backfillObservedWeather(pipeline: pipeline, service: service, now: now, calendar: calendar, store: store, tz: tz, statusStore: statusStore)
     }
 ```
+
+**Why `statusStore` is `EnvironmentStatusStore?` (nil default), not a defaulted instance:** `EnvironmentStatusStore` is `@MainActor`, so a `= EnvironmentStatusStore()` default argument would be *constructed at each call site in that caller's isolation*. The pre-existing emitter tests (and the non-`@MainActor` `WeatherHistoryTests`/`AirQualityHistoryTests`/`EnvironmentalDataServiceDITests` that construct the service, Task 8) are nonisolated — evaluating a `@MainActor` initializer there does not compile. A `nil` default constructs nothing; recording is done through optional chaining, and the App passes the one real store (Task 9). This also means the pre-existing tests record nothing (no `.standard` pollution) instead of writing to a throwaway store.
 
 In `backfillObservedAQI` (`:122-179`), give it the `statusStore` param and replace the range switch:
 
@@ -1199,15 +1194,15 @@ In `backfillObservedAQI` (`:122-179`), give it the `statusStore` param and repla
     private static func backfillObservedAQI(pipeline: IngestPipeline, service: EnvironmentalDataProviding,
                                             now: () -> Date, calendar: Calendar,
                                             store: WatermarkStore, tz: String,
-                                            statusStore: EnvironmentStatusStore) async {
+                                            statusStore: EnvironmentStatusStore?) async {
         // …unchanged watermark/start/throttle up to the fetch…
         let byDay: [Date: AQIDayValue]
         switch await service.fetchCompletedAirQualityRange(from: start, through: yesterday) {
         case .cancelled:
             return                                     // no status, watermark held
         case .fetchError(let reason):
-            statusStore.recordFailure(.observedAirQuality, reason: reason,
-                                      scopeStart: start, scopeEnd: yesterday, timezoneID: tz, at: now())
+            statusStore?.recordFailure(.observedAirQuality, reason: reason,
+                                       scopeStart: start, scopeEnd: yesterday, timezoneID: tz, at: now())
             return
         case .days(let d):
             byDay = d
@@ -1216,7 +1211,7 @@ In `backfillObservedAQI` (`:122-179`), give it the `statusStore` param and repla
         do {
             if !aqiEvents.isEmpty { _ = try await pipeline.ingest(aqiEvents) }
             if let nw = newWatermark { store.set(nw, for: lastAQIDayKey) }
-            statusStore.recordSuccess(.observedAirQuality, at: now())   // full pass persisted
+            statusStore?.recordSuccess(.observedAirQuality, at: now())   // full pass persisted
         } catch {
             Logger.info("Environmental AQI backfill ingest failed; watermark held for retry", category: .data)
         }
@@ -1229,7 +1224,7 @@ In `backfillObservedWeather` (`:187-236`), capture the intended range, handle th
     private static func backfillObservedWeather(pipeline: IngestPipeline, service: EnvironmentalDataProviding,
                                                 now: () -> Date, calendar: Calendar,
                                                 store: WatermarkStore, tz: String,
-                                                statusStore: EnvironmentStatusStore) async {
+                                                statusStore: EnvironmentStatusStore?) async {
         // …unchanged watermark/start/throttle…
         let scopeStart = start, scopeEnd = yesterday    // intended range, captured before the loop
         // …unchanged newWatermark/contiguous/weatherEvents setup + emitObservedWeather closure…
@@ -1239,8 +1234,8 @@ In `backfillObservedWeather` (`:187-236`), capture the intended range, handle th
             case .cancelled:
                 return                                   // no status, nothing ingested, watermark held
             case .fetchError(let reason):
-                statusStore.recordFailure(.observedWeather, reason: reason,
-                                          scopeStart: scopeStart, scopeEnd: scopeEnd, timezoneID: tz, at: now())
+                statusStore?.recordFailure(.observedWeather, reason: reason,
+                                           scopeStart: scopeStart, scopeEnd: scopeEnd, timezoneID: tz, at: now())
                 return                                   // abort whole pass
             case .value(let high, let low, let humidity):
                 emitObservedWeather(highC: high, lowC: low, humidityPct: humidity, on: D)
@@ -1254,7 +1249,7 @@ In `backfillObservedWeather` (`:187-236`), capture the intended range, handle th
         do {
             if !weatherEvents.isEmpty { _ = try await pipeline.ingest(weatherEvents) }
             if let nw = newWatermark { store.set(nw, for: lastWeatherDayKey) }
-            statusStore.recordSuccess(.observedWeather, at: now())   // full pass persisted
+            statusStore?.recordSuccess(.observedWeather, at: now())   // full pass persisted
         } catch {
             Logger.info("Environmental weather backfill ingest failed; watermark held for retry", category: .data)
         }
@@ -1511,7 +1506,7 @@ git commit -m "feat(env-status): time-stamped genuine-pressure carry; fallbacks 
 
 **Interfaces:**
 - Consumes: Task 2 store, Task 5 authorization, Task 6 `failureReason`/`locationReason`/`isCancellation`.
-- Produces: `EnvironmentalDataService(…, statusStore: EnvironmentStatusStore = …)`; today-scoped `recordSuccess`/`recordFailure` on the three fetches.
+- Produces: `EnvironmentalDataService(…, statusStore: EnvironmentStatusStore? = nil)`; today-scoped `recordSuccess`/`recordFailure` on the three fetches.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1605,15 +1600,12 @@ struct EnvironmentFailureClassificationTests {
         await svc.fetchDailyForecast()
         #expect(s.statuses[.forecastWeather]?.liveFailure?.reason == .locationUnavailable)
     }
-    @Test func forecastNoAPIKeyRecordsNotConfigured() async {
-        setenv("OPENWEATHER_API_KEY", "", 1)   // force APIConfig.forecastURL → nil
-        let s = store()
-        let svc = EnvironmentalDataService(transport: StatusTransport(payload: Data(), status: nil, error: nil),
-            now: { self.at }, calendar: utc, location: StubLocation(coordinate: .init(latitude: 40, longitude: -74)), statusStore: s)
-        await svc.fetchDailyForecast()
-        #expect(s.statuses[.forecastWeather]?.liveFailure?.reason == .notConfigured)
-        setenv("OPENWEATHER_API_KEY", "cls-test-key", 1)   // restore for other suites
-    }
+    // NOTE: `.notConfigured` (URL-nil) is intentionally NOT unit-tested. Forcing the
+    // URL to nil requires the API key to be absent, but `APIConfig.openWeatherAPIKey`
+    // reads the built bundle's Info.plist FIRST — which carries a real key whenever
+    // Secrets.xcconfig is present — so `setenv("…","")` can't reliably force nil. The
+    // `.notConfigured` code path (URL guard → recordTodayFailure) is trivial and is
+    // confirmed by the device pass (a keyless build shows the marker + Health reason).
     @Test func forecastCancellationRecordsNothing() async {
         key()
         let s = store()
@@ -1635,10 +1627,10 @@ Expected: FAIL — the `statusStore:` init parameter doesn't exist; no status is
 In `EnvironmentalDataService.swift`, add a stored `statusStore` and an init parameter. Add near the DI seams (`:81-84`):
 
 ```swift
-    private let statusStore: EnvironmentStatusStore
+    private let statusStore: EnvironmentStatusStore?
 ```
 
-Add the parameter to `init` (`:100-104`) — default `EnvironmentStatusStore()` so existing call sites compile:
+Add the parameter to `init` (`:100-104`) — **optional, `nil` default** (`EnvironmentStatusStore` is `@MainActor`; a constructed default argument would not compile at the non-`@MainActor` call sites in `WeatherHistoryTests`/`AirQualityHistoryTests`/`EnvironmentalDataServiceDITests`). The App passes the one real store (Task 9); tests that assert on status pass their own; everything else records nothing:
 
 ```swift
     init(locationManager: LocationService? = nil,
@@ -1646,7 +1638,7 @@ Add the parameter to `init` (`:100-104`) — default `EnvironmentStatusStore()` 
          now: @escaping () -> Date = Date.init,
          calendar: Calendar = { var c = Calendar(identifier: .gregorian); c.timeZone = .current; return c }(),
          location: LocationProviding? = nil,
-         statusStore: EnvironmentStatusStore = EnvironmentStatusStore()) {
+         statusStore: EnvironmentStatusStore? = nil) {
         self.transport = transport
         self.now = now
         self.calendar = calendar
@@ -1656,7 +1648,7 @@ Add the parameter to `init` (`:100-104`) — default `EnvironmentStatusStore()` 
     }
 ```
 
-Add a today-scope helper, the HTTP-status pre-check, and record helpers (near `locationReason()`):
+Add a today-scope helper, the HTTP-status pre-check, and record helpers (near `locationReason()`). The record helpers `guard let` the optional store, so a nil store is a no-op:
 
 ```swift
     private func todayScope() -> (start: Date, end: Date, tz: String) {
@@ -1673,9 +1665,11 @@ Add a today-scope helper, the HTTP-status pre-check, and record helpers (near `l
         return nil
     }
     @MainActor private func recordTodaySuccess(_ capability: EnvironmentCapability) {
+        guard let statusStore else { return }
         statusStore.recordSuccess(capability, at: now())
     }
     @MainActor private func recordTodayFailure(_ capability: EnvironmentCapability, _ reason: EnvironmentFailureReason) {
+        guard let statusStore else { return }
         let s = todayScope()
         statusStore.recordFailure(capability, reason: reason, scopeStart: s.start, scopeEnd: s.end, timezoneID: s.tz, at: now())
     }
@@ -1789,6 +1783,7 @@ git commit -m "feat(env-status): create one EnvironmentStatusStore and thread it
 **Files:**
 - Modify: `Views/HealthOS/Timeline/EnvironmentSummaryRow.swift` (`:8-92`)
 - Modify: `Views/HealthOS/Timeline/TimelineView.swift` (`:16-17` add store; `:162-169` resolve + pass gap)
+- Modify: `Views/HealthOS/Shell/HealthOSRootView.swift` (`:55-70` inject the store into both previews, since they mount `TimelineView`)
 
 **Interfaces:**
 - Consumes: Task 3 (`EnvironmentGap`, `EnvironmentGapResolver`), Task 2 store from the environment.
@@ -1860,9 +1855,9 @@ At the `.environmentSummary` case (`:162-169`), compute the gap and pass it:
                             }
 ```
 
-- [ ] **Step 3: Fix previews so they compile without the app-level injection**
+- [ ] **Step 3: Inject the store into the previews that now mount `TimelineView`**
 
-If any `#Preview` in these files (or in a file that constructs `TimelineView`) now fails to compile for lack of the environment object, add `.environmentObject(EnvironmentStatusStore(defaults: UserDefaults(suiteName: "preview")!))`. Any `EnvironmentSummaryRow(...)` preview needs no change (the `gap` default is `nil`).
+`TimelineView` now reads `@EnvironmentObject var statusStore` — a missing environment object compiles but **crashes at render**, so every preview that mounts `TimelineView` needs the store. Add `.environmentObject(EnvironmentStatusStore(defaults: UserDefaults(suiteName: "preview")!))` to **both `HealthOSRootView` previews** (`Views/HealthOS/Shell/HealthOSRootView.swift:55-70`, which mount `TimelineView` via the tab shell). Any `EnvironmentSummaryRow(...)` preview needs no change (its `gap` default is `nil` and it takes no environment object).
 
 - [ ] **Step 4: Build + run the resolver suite (unchanged) to confirm no regression**
 
@@ -1872,7 +1867,8 @@ Expected: BUILD SUCCEEDED.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add "Views/HealthOS/Timeline/EnvironmentSummaryRow.swift" "Views/HealthOS/Timeline/TimelineView.swift"
+git add "Views/HealthOS/Timeline/EnvironmentSummaryRow.swift" "Views/HealthOS/Timeline/TimelineView.swift" \
+        "Views/HealthOS/Shell/HealthOSRootView.swift"
 git commit -m "feat(env-status): muted Weather/Air quality unavailable Timeline sub-line"
 ```
 
@@ -2020,9 +2016,9 @@ Insert a "Data sources" card immediately before the Safety/Temperature/Units car
                 .hgCard()
 ```
 
-- [ ] **Step 3: Fix previews needing the store**
+- [ ] **Step 3: Preview for the new detail screen**
 
-The `HealthOSRootView` previews (`HealthOSRootView.swift:55-70`) mount `HealthTabView`; add `.environmentObject(EnvironmentStatusStore(defaults: UserDefaults(suiteName: "preview")!))` to both so they compile. Add a standalone preview to `EnvironmentStatusView.swift` if desired, injecting the same preview store.
+The `HealthOSRootView` previews already received the store in Task 10 Step 3, and that one environment object reaches `HealthTabView` too — no change needed there. Optionally add a standalone `#Preview` to `EnvironmentStatusView.swift`, injecting `.environmentObject(EnvironmentStatusStore(defaults: UserDefaults(suiteName: "preview")!))`.
 
 - [ ] **Step 4: Build to verify it compiles**
 
@@ -2037,8 +2033,7 @@ Expected: all new + existing suites green (the lone `SwiftDataMigratorTests` tea
 - [ ] **Step 6: Commit**
 
 ```bash
-git add "Views/HealthOS/Health/EnvironmentStatusView.swift" "Views/HealthOS/Health/HealthTabView.swift" \
-        "Views/HealthOS/Shell/HealthOSRootView.swift"
+git add "Views/HealthOS/Health/EnvironmentStatusView.swift" "Views/HealthOS/Health/HealthTabView.swift"
 git commit -m "feat(env-status): Health 'Environment' status row + detail screen"
 ```
 
