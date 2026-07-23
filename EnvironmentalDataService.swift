@@ -72,6 +72,10 @@ class EnvironmentalDataService: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var lastRefreshRequest = Date.distantPast
     private let minimumRefreshInterval: TimeInterval = 300  // 5 minutes
+    /// Trusted-cache window: a cached fix older than this is not ingested (it is
+    /// still shown by the legacy display). Matches the existing 300 s location
+    /// cadence used elsewhere in `LocationService`.
+    static let locationFreshnessInterval: TimeInterval = 300
 
     // Dependency-injection seams. Default to real production behavior
     // (URLSession, wall-clock `Date`, the current calendar/timezone, and the
@@ -93,7 +97,19 @@ class EnvironmentalDataService: ObservableObject {
         private unowned let service: EnvironmentalDataService
         init(service: EnvironmentalDataService) { self.service = service }
         var coordinate: CLLocationCoordinate2D? {
-            service.manualLocation ?? service.locationManager?.currentLocation
+            guard let loc = service.locationManager else { return service.manualLocation }
+            return LocationTrust.trustedCoordinate(
+                manual: service.manualLocation,
+                provenance: loc.provenance,
+                deviceCoordinate: loc.currentLocation,
+                cachedCoordinate: loc.lastKnownLocation,
+                cachedAt: loc.cachedLocationAt,
+                authorization: loc.authorization,
+                now: service.now(),
+                freshness: EnvironmentalDataService.locationFreshnessInterval)
+        }
+        var authorization: EnvironmentLocationAuthorization {
+            service.locationManager?.authorization ?? .notDetermined
         }
     }
 
@@ -766,11 +782,37 @@ class EnvironmentalDataService: ObservableObject {
 class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
     private let locationManager = CLLocationManager()
     @Published var currentLocation: CLLocationCoordinate2D?
+    /// Where `currentLocation` came from. Default `.fabricated` so an un-set state
+    /// is untrusted (safe default); every real assignment stamps it via `apply(_:provenance:)`.
+    @Published private(set) var provenance: LocationProvenance = .fabricated
     private var timeoutTask: Task<Void, Never>?
-    
+
     // Add location caching
     @AppStorage("lastKnownLatitude") private var cachedLatitude: Double?
     @AppStorage("lastKnownLongitude") private var cachedLongitude: Double?
+    /// Epoch of the last DEVICE fix, persisted alongside the cached lat/lon so the
+    /// cache's age is knowable. Nil until a device fix has ever landed.
+    @AppStorage("lastKnownLocationAt") private var cachedLocationAtEpoch: Double = 0
+
+    var cachedLocationAt: Date? { cachedLocationAtEpoch == 0 ? nil : Date(timeIntervalSince1970: cachedLocationAtEpoch) }
+
+    /// App-level authorization, mapped from the private `CLLocationManager`.
+    var authorization: EnvironmentLocationAuthorization {
+        switch locationManager.authorizationStatus {
+        case .authorizedWhenInUse, .authorizedAlways: return .authorized
+        case .denied:      return .denied
+        case .restricted:  return .restricted
+        case .notDetermined: return .notDetermined
+        @unknown default:  return .notDetermined
+        }
+    }
+
+    /// Single choke point for setting `currentLocation` with its provenance, so no
+    /// call site can set the coordinate without also declaring where it came from.
+    private func apply(_ coordinate: CLLocationCoordinate2D?, provenance: LocationProvenance) {
+        self.currentLocation = coordinate
+        self.provenance = provenance
+    }
     
     // Add these tracking variables to reduce logging
     private var hasLoggedPermissionRequest = false
@@ -882,12 +924,12 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
                 await MainActor.run {
                     // Use cached location if available
                     if let cached = lastKnownLocation {
-                        self.currentLocation = cached
+                        self.apply(cached, provenance: .cached)
                     } else {
                         // Fallback to a default location if we've never had one
                         if !silent {
                         }
-                        self.currentLocation = CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060) // NYC as fallback
+                        self.apply(CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060), provenance: .fabricated) // NYC as fallback
                     }
                 }
             }
@@ -901,10 +943,10 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
             await MainActor.run {
                 // Try to use cached location first
                 if let cached = lastKnownLocation {
-                    self.currentLocation = cached
+                    self.apply(cached, provenance: .cached)
                 } else {
                     // Use fallback location
-                    self.currentLocation = CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060) // NYC as fallback
+                    self.apply(CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060), provenance: .fabricated) // NYC as fallback
                 }
             }
         }
@@ -957,12 +999,13 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
         }
         
         DispatchQueue.main.async {
-            self.currentLocation = newLocation.coordinate
-            
+            self.apply(newLocation.coordinate, provenance: .device)
+
             // Cache the location
             self.cachedLatitude = newLocation.coordinate.latitude
             self.cachedLongitude = newLocation.coordinate.longitude
-            
+            self.cachedLocationAtEpoch = Date().timeIntervalSince1970
+
             // Only log if it's a significant change
             if shouldLog {
                 self.lastLoggedLocation = newLocation.coordinate
@@ -995,10 +1038,10 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
         await MainActor.run {
             // Use a cached location if available
             if let cachedLat = cachedLatitude, let cachedLon = cachedLongitude {
-                self.currentLocation = CLLocationCoordinate2D(latitude: cachedLat, longitude: cachedLon)
+                self.apply(CLLocationCoordinate2D(latitude: cachedLat, longitude: cachedLon), provenance: .cached)
             } else {
                 // Use a default fallback location (NYC)
-                self.currentLocation = CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060)
+                self.apply(CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060), provenance: .fabricated)
             }
             
             // Persist that we've handled location denial
@@ -1024,10 +1067,10 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
             Task { @MainActor in
                 // Use cached location if available or a reasonable default
                 if let cachedLat = cachedLatitude, let cachedLon = cachedLongitude {
-                    currentLocation = CLLocationCoordinate2D(latitude: cachedLat, longitude: cachedLon)
+                    apply(CLLocationCoordinate2D(latitude: cachedLat, longitude: cachedLon), provenance: .cached)
                 } else {
                     // Use a default location (NYC) as absolute fallback
-                    currentLocation = CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060)
+                    apply(CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060), provenance: .fabricated)
                 }
                 
                 // Rather than show an intrusive alert, use a non-blocking notification

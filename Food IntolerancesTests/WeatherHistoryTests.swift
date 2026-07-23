@@ -31,7 +31,8 @@ struct WeatherHistoryTests {
         }
     }
     private struct StubLocation: LocationProviding {
-        let coordinate: CLLocationCoordinate2D?
+        var coordinate: CLLocationCoordinate2D?
+        var authorization: EnvironmentLocationAuthorization = .authorized
     }
     private func ensureTestAPIKeyConfigured() { setenv("OPENWEATHER_API_KEY", "test-key", 1) }
     private var utcCalendar: Calendar {

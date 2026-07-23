@@ -128,7 +128,8 @@ struct AirQualityHistoryTests {
     }
 
     private struct StubLocation: LocationProviding {
-        let coordinate: CLLocationCoordinate2D?
+        var coordinate: CLLocationCoordinate2D?
+        var authorization: EnvironmentLocationAuthorization = .authorized
     }
 
     private func ensureTestAPIKeyConfigured() {

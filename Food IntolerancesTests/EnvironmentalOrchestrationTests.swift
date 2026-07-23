@@ -52,7 +52,8 @@ struct EnvironmentalOrchestrationTests {
     }
 
     private struct StubLocation: LocationProviding {
-        let coordinate: CLLocationCoordinate2D?
+        var coordinate: CLLocationCoordinate2D?
+        var authorization: EnvironmentLocationAuthorization = .authorized
     }
 
     /// `APIConfig.*URL()` returns nil — and the transport is never reached —

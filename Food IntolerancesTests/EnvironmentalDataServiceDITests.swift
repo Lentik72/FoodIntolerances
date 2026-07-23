@@ -21,7 +21,8 @@ struct EnvironmentalDataServiceDITests {
     }
 
     private struct StubLocation: LocationProviding {
-        let coordinate: CLLocationCoordinate2D?
+        var coordinate: CLLocationCoordinate2D?
+        var authorization: EnvironmentLocationAuthorization = .authorized
     }
 
     /// `APIConfig.forecastURL` (like `weatherURL`/`airPollutionURL`) returns nil
