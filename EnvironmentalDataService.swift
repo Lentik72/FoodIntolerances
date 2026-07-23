@@ -734,7 +734,6 @@ class EnvironmentalDataService: ObservableObject {
         let prior = mostRecentGenuinePressure
         let comparable = prior.map { at.timeIntervalSince($0.at) <= pressureReadingInterval } ?? false
         lastTrustedPressure = comparable ? prior?.value : nil
-        suddenPressureChange = comparable ? (abs((prior!.value) - value) >= pressureChangeThreshold) : false
         mostRecentGenuinePressure = (value, at)
         latestFetchedPressure = value
     }

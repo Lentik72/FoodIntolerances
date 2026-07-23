@@ -21,7 +21,6 @@ struct PressureTrustTests {
         s.recordGenuinePressure(1006, at: t.addingTimeInterval(600))   // 10 min later, 7 hPa fall
         #expect(s.latestFetchedPressure == 1006)
         #expect(s.lastTrustedPressure == 1013)
-        #expect(s.suddenPressureChange == true)
     }
     @Test func genuineAfterFallbackDoesNotFabricateDrop() {
         let s = EnvironmentalDataService()
@@ -35,7 +34,6 @@ struct PressureTrustTests {
         s.recordGenuinePressure(1013, at: t)
         s.recordGenuinePressure(1006, at: t.addingTimeInterval(7200))  // 2 h later > 1 h window
         #expect(s.lastTrustedPressure == nil)            // stale prior → not comparable
-        #expect(s.suddenPressureChange == false)
     }
     @Test func thirdConsecutiveGenuineStillExposesAPrevious() {
         let s = EnvironmentalDataService()
@@ -43,7 +41,6 @@ struct PressureTrustTests {
         s.recordGenuinePressure(1012, at: t.addingTimeInterval(300))
         s.recordGenuinePressure(1005, at: t.addingTimeInterval(600))   // carry regression guard
         #expect(s.lastTrustedPressure == 1012)           // NOT equal to latest → drop still possible
-        #expect(s.suddenPressureChange == true)
     }
     @Test func setFallbackRouteDoesNotContaminateCarry() {
         let s = EnvironmentalDataService()
@@ -63,7 +60,6 @@ struct PressureTrustTests {
         #expect(s.latestFetchedPressure == nil)          // stale genuine no longer exposed
         s.recordGenuinePressure(1006, at: t.addingTimeInterval(300))  // within window → carry preserved
         #expect(s.lastTrustedPressure == 1013)           // a real drop is still computable
-        #expect(s.suddenPressureChange == true)
     }
     @Test func setFallbackClearsLatestFetchedPressure() {
         let s = EnvironmentalDataService()
