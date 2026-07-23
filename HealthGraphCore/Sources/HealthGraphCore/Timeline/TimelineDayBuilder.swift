@@ -75,12 +75,16 @@ public enum TimelineDayBuilder {
         calendar.timeZone = timeZone
 
         // Stored rows of retired env subtypes (season) must never display, in ANY
-        // mode — raw/search rows included. Filtered here so no caller can leak
-        // them; the summary builder re-filters for its own public callers.
-        let visibleEvents = events.filter {
-            !($0.category == .environment &&
-              EnvironmentDaySummaryBuilder.retiredSubtypes.contains($0.subtype ?? ""))
-        }
+        // mode — raw/search rows included — and a completed day's forecast weather
+        // is superseded by its observed sibling ("observed wins", presentation
+        // only). Filtered here so no caller can leak them; the summary builder
+        // re-filters for its own public callers.
+        let visibleEvents = EnvironmentDaySummaryBuilder.observedPrecedenceFiltered(
+            events.filter {
+                !($0.category == .environment &&
+                  EnvironmentDaySummaryBuilder.retiredSubtypes.contains($0.subtype ?? ""))
+            },
+            timeZone: timeZone)
 
         // Sleep duration events feed the session builder INCLUDING sub-minute
         // fragments — totals must be exact even though such rows never render.

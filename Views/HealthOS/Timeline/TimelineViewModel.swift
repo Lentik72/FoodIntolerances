@@ -40,6 +40,7 @@ final class TimelineViewModel: ObservableObject {
     private let store: any EventStore
     private let timeZone: TimeZone
     private let pageSize: Int
+    private let searchLimit: Int
     private var browseEvents: [HealthEvent] = []
     private var cursor: TimelineCursor?
     private var undoTimer: Task<Void, Never>?
@@ -54,10 +55,11 @@ final class TimelineViewModel: ObservableObject {
     /// slice) discards its results instead of corrupting the current one.
     private var loadGeneration = 0
 
-    init(store: any EventStore, timeZone: TimeZone = .current, pageSize: Int = 200) {
+    init(store: any EventStore, timeZone: TimeZone = .current, pageSize: Int = 200, searchLimit: Int = 400) {
         self.store = store
         self.timeZone = timeZone
         self.pageSize = pageSize
+        self.searchLimit = searchLimit
     }
 
     private var categoryFilter: Set<EventCategory>? {
@@ -103,7 +105,7 @@ final class TimelineViewModel: ObservableObject {
             // repaint stale search results over the just-restored browse slice.
             loadGeneration &+= 1
             isSearchActive = false
-            days = TimelineDayBuilder.days(from: browseEvents, timeZone: timeZone)
+            await rebuildBrowseDays()
         } else {
             await runSearch()
         }
@@ -118,26 +120,19 @@ final class TimelineViewModel: ObservableObject {
         }
         let wasInBrowseSlice = browseEvents.contains { $0.id == event.id }
         browseEvents.removeAll { $0.id == event.id }
-        if isSearchActive {
-            // Search days hold raw rows only (sessionizeSleep: false), so a
-            // surgical per-day rebuild is still valid here.
-            days = days.compactMap { day in
-                guard day.events.contains(where: { $0.id == event.id }) else { return day }
-                let remaining = day.events.filter { $0.id != event.id }
-                guard !remaining.isEmpty else { return nil }
-                return TimelineDayBuilder.days(from: remaining, timeZone: timeZone,
-                                               sessionizeSleep: false, groupEnvironment: false).first
-            }
-        } else {
-            // Browse days contain sleep sessions whose segments can span day
-            // buckets — rebuild from the full remaining slice instead.
-            days = TimelineDayBuilder.days(from: browseEvents, timeZone: timeZone)
-        }
         pendingUndoWasInBrowse = wasInBrowseSlice
         armUndo(event)
         // Discard any in-flight loadPage() that snapshotted the DB before this
         // softDelete committed — otherwise it could re-append the deleted row.
         loadGeneration &+= 1
+        if isSearchActive {
+            // Re-query rather than surgically removing the row: deleting an observed
+            // precedence winner must re-reveal its forecast fallback, which only a
+            // fresh (hydrated) search can know about.
+            await runSearch()
+        } else {
+            await rebuildBrowseDays()
+        }
         return true
     }
 
@@ -161,7 +156,7 @@ final class TimelineViewModel: ObservableObject {
         if isSearchActive {
             await runSearch()
         } else {
-            days = TimelineDayBuilder.days(from: browseEvents, timeZone: timeZone)
+            await rebuildBrowseDays()
         }
     }
 
@@ -181,6 +176,52 @@ final class TimelineViewModel: ObservableObject {
     }
 
     // MARK: private
+
+    /// Observed-wins precedence needs COMPLETE same-day sibling context, but page
+    /// and search slices can cut between a forecast weather event and its observed
+    /// sibling (their timestamps differ within the day). Hydrate ONLY the exact
+    /// (local day, subtype) pairs the slice already represents — never other
+    /// subtypes or intermediate days, which would leak rows a search never matched.
+    /// A store failure degrades to the unhydrated slice.
+    private func hydratingWeatherSiblings(_ events: [HealthEvent]) async -> [HealthEvent] {
+        let weatherSubtypes = EnvironmentDaySummaryBuilder.observedPrecedenceSubtypes
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        struct Key: Hashable { let day: Date; let subtype: String }
+        var neededKeys: Set<Key> = []
+        var neededSubtypes: Set<String> = []
+        var minTS: Date?
+        var maxTS: Date?
+        for e in events where e.category == .environment && weatherSubtypes.contains(e.subtype ?? "") {
+            let subtype = e.subtype ?? ""
+            neededKeys.insert(Key(day: calendar.startOfDay(for: e.timestamp), subtype: subtype))
+            neededSubtypes.insert(subtype)
+            minTS = minTS.map { Swift.min($0, e.timestamp) } ?? e.timestamp
+            maxTS = maxTS.map { Swift.max($0, e.timestamp) } ?? e.timestamp
+        }
+        guard let minTS, let maxTS else { return events }
+        let from = calendar.startOfDay(for: minTS)
+        let through = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: maxTS)) ?? maxTS
+        guard let fetched = try? await store.environmentEvents(subtypes: neededSubtypes, from: from, through: through)
+        else { return events }
+        let known = Set(events.map(\.id))
+        let siblings = fetched.filter { e in
+            guard !known.contains(e.id) else { return false }
+            return neededKeys.contains(Key(day: calendar.startOfDay(for: e.timestamp), subtype: e.subtype ?? ""))
+        }
+        return events + siblings
+    }
+
+    /// Rebuild the browse `days` from the current `browseEvents` WITH weather-sibling
+    /// hydration. EVERY browse repaint (page load, search clear, delete, undo) must
+    /// go through here — a direct `TimelineDayBuilder.days(from: browseEvents…)`
+    /// re-introduces the slice-cut forecast leak this exists to prevent.
+    private func rebuildBrowseDays() async {
+        let gen = loadGeneration
+        let hydrated = await hydratingWeatherSiblings(browseEvents)
+        guard gen == loadGeneration else { return }
+        days = TimelineDayBuilder.days(from: hydrated, timeZone: timeZone)
+    }
 
     private func reloadFromScratch() async {
         loadGeneration &+= 1
@@ -206,7 +247,7 @@ final class TimelineViewModel: ObservableObject {
             }
             hasMore = page.count == pageSize
             browseEvents.append(contentsOf: page)
-            days = TimelineDayBuilder.days(from: browseEvents, timeZone: timeZone)
+            await rebuildBrowseDays()
         } catch {
             guard gen == loadGeneration else { return }
             hasMore = false
@@ -221,12 +262,18 @@ final class TimelineViewModel: ObservableObject {
         isLoading = true
         defer { isLoading = false }
         do {
-            var results = try await store.searchEvents(matching: searchText, limit: 400)
+            var results = try await store.searchEvents(matching: searchText, limit: searchLimit)
             guard gen == loadGeneration else { return }
             isSearchActive = true
             if let categoryFilter { results = results.filter { categoryFilter.contains($0.category) } }
             if let sourceFilter { results = results.filter { sourceFilter.contains($0.source) } }
-            days = TimelineDayBuilder.days(from: results, timeZone: timeZone, sessionizeSleep: false, groupEnvironment: false)
+            // Hydrate AFTER the filters: a sibling shares subtype/category/source with
+            // the matched event, so any filter that passed the match passes the sibling —
+            // the search limit is the only thing that can exclude one. Reordering
+            // hydration before the filters would break that invariant.
+            let hydrated = await hydratingWeatherSiblings(results)
+            guard gen == loadGeneration else { return }
+            days = TimelineDayBuilder.days(from: hydrated, timeZone: timeZone, sessionizeSleep: false, groupEnvironment: false)
         } catch {
             guard gen == loadGeneration else { return }
             isSearchActive = true

@@ -12,12 +12,18 @@ public struct EnvironmentalReading: Sendable {
     public let temperatureLowC: Double?
     public let humidityPct: Double?
     public let airQualityAQI: Int?
+    /// Provenance stamped on the temperature/humidity events. `.forecast` (the
+    /// default) is today's forward-looking reading — display only, never mined.
+    /// The observed backfill passes `.observedCompletedDay` for completed days'
+    /// measured values — mineable by the fail-closed weather sources.
+    public let weatherProvenance: TemporalProvenance
 
     public init(date: Date, pressureHPa: Double?, previousPressureHPa: Double?,
                 moonPhaseName: String?,
                 isMercuryRetrograde: Bool, timezoneID: String,
                 temperatureHighC: Double? = nil, temperatureLowC: Double? = nil, humidityPct: Double? = nil,
-                airQualityAQI: Int? = nil) {
+                airQualityAQI: Int? = nil,
+                weatherProvenance: TemporalProvenance = .forecast) {
         self.date = date
         self.pressureHPa = pressureHPa
         self.previousPressureHPa = previousPressureHPa
@@ -28,6 +34,7 @@ public struct EnvironmentalReading: Sendable {
         self.temperatureLowC = temperatureLowC
         self.humidityPct = humidityPct
         self.airQualityAQI = airQualityAQI
+        self.weatherProvenance = weatherProvenance
     }
 }
 
@@ -79,12 +86,13 @@ public enum EnvironmentalEventFactory {
             events.append(event("mercuryRetrograde", provenance: .observedCompletedDay))
         }
         if let high = r.temperatureHighC, let low = r.temperatureLowC {
-            // Weather is forecast-derived → display/warnings only, never mined.
+            // Forecast weather is display/warnings only; the observed backfill
+            // passes .observedCompletedDay → mineable (fail-closed sources).
             events.append(event("temperature", value: high, unit: "°C", metadata: ["low": String(low)],
-                                provenance: .forecast))
+                                provenance: r.weatherProvenance))
         }
         if let humidity = r.humidityPct {
-            events.append(event("humidity", value: humidity, unit: "%", provenance: .forecast))
+            events.append(event("humidity", value: humidity, unit: "%", provenance: r.weatherProvenance))
         }
         if let aqi = r.airQualityAQI {
             // The AQI emitter reads a completed-day observed index → mineable.

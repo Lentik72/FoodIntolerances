@@ -245,6 +245,99 @@ struct TimelineViewModelTests {
         #expect(vm.days.flatMap(\.events).allSatisfy { $0.category != .sleep })
     }
 
+    private func weatherEvent(_ provenance: TemporalProvenance, hour: Int, day base: Date) -> HealthEvent {
+        HealthEvent(timestamp: base.addingTimeInterval(Double(hour) * 3600), timezoneID: "UTC",
+                    category: .environment, subtype: "temperature", value: 20, source: .weatherAPI,
+                    metadata: try! JSONEncoder().encode(["provenance": provenance.rawValue]), createdAt: base)
+    }
+
+    private func humidityEvent(_ provenance: TemporalProvenance, hour: Int, day base: Date) -> HealthEvent {
+        HealthEvent(timestamp: base.addingTimeInterval(Double(hour) * 3600), timezoneID: "UTC",
+                    category: .environment, subtype: "humidity", value: 50, source: .weatherAPI,
+                    metadata: try! JSONEncoder().encode(["provenance": provenance.rawValue]), createdAt: base)
+    }
+
+    /// A pageSize-1 browse slice contains ONLY the (later-stamped) forecast event;
+    /// hydration must pull the observed sibling from the store so precedence
+    /// suppresses the forecast — the boundary day shows actuals, not the forecast.
+    @Test func tinyPageSplitOfWeatherSiblingsStillShowsObserved() async throws {
+        let (_, store) = try makeStore()
+        let base = Date(timeIntervalSince1970: 1_750_032_000)   // 00:00 UTC of some day
+        let forecast = weatherEvent(.forecast, hour: 18, day: base)          // 18:00 — newest
+        let observed = weatherEvent(.observedCompletedDay, hour: 12, day: base)   // noon
+        try await store.save([forecast, observed])
+        let vm = TimelineViewModel(store: store, timeZone: TimeZone(identifier: "UTC")!, pageSize: 1)
+        await vm.loadInitial()
+        let envEvents = vm.days.flatMap(\.items).compactMap { item -> [HealthEvent]? in
+            if case .environmentSummary(let s) = item { return s.events } else { return nil }
+        }.flatMap { $0 }
+        let temps = envEvents.filter { $0.subtype == "temperature" }
+        #expect(temps.map(\.id) == [observed.id])   // observed displayed; split forecast suppressed
+    }
+
+    /// A searchLimit-3 result slice cuts day0's observed row off the matched set;
+    /// hydration must complete both matched days' pairs using ONLY the exact
+    /// (localDay, subtype) keys the search actually matched — never other
+    /// subtypes (humidity) or intermediate days that never matched "temperature".
+    @Test func searchHydrationCompletesPairsWithoutLeakingUnmatchedRows() async throws {
+        let (_, store) = try makeStore()
+        let day0 = Date(timeIntervalSince1970: 1_750_032_000)
+        let day1 = day0.addingTimeInterval(86_400)
+        let day2 = day0.addingTimeInterval(172_800)
+        let d2Forecast = weatherEvent(.forecast, hour: 18, day: day2)
+        let d2Observed = weatherEvent(.observedCompletedDay, hour: 12, day: day2)
+        let d1Humidity = humidityEvent(.observedCompletedDay, hour: 12, day: day1)
+        let d0Forecast = weatherEvent(.forecast, hour: 18, day: day0)
+        let d0Observed = weatherEvent(.observedCompletedDay, hour: 12, day: day0)
+        let d0Humidity = humidityEvent(.observedCompletedDay, hour: 12, day: day0)
+        try await store.save([d2Forecast, d2Observed, d1Humidity, d0Forecast, d0Observed, d0Humidity])
+        let vm = TimelineViewModel(store: store, timeZone: TimeZone(identifier: "UTC")!, pageSize: 50, searchLimit: 3)
+        vm.searchText = "temperature"
+        await vm.searchTextChanged()
+        let shown = vm.days.flatMap(\.events)
+        let temps = shown.filter { $0.subtype == "temperature" }
+        #expect(Set(temps.map(\.id)) == Set([d2Observed.id, d0Observed.id]))   // pairs completed; forecasts suppressed
+        #expect(!shown.contains { $0.subtype == "humidity" })                  // unmatched subtype never leaks
+        #expect(!shown.contains { $0.id == d1Humidity.id })                    // intermediate day never leaks
+    }
+
+    /// Entering and clearing search must not discard hydration: the pageSize-1
+    /// boundary day showed observed before search — it must still show observed after.
+    @Test func clearingSearchKeepsHydratedBrowsePrecedence() async throws {
+        let (_, store) = try makeStore()
+        let base = Date(timeIntervalSince1970: 1_750_032_000)
+        let forecast = weatherEvent(.forecast, hour: 18, day: base)
+        let observed = weatherEvent(.observedCompletedDay, hour: 12, day: base)
+        try await store.save([forecast, observed])
+        let vm = TimelineViewModel(store: store, timeZone: TimeZone(identifier: "UTC")!, pageSize: 1)
+        await vm.loadInitial()
+        vm.searchText = "headache"          // no matches — just flips into search mode
+        await vm.searchTextChanged()
+        vm.searchText = ""
+        await vm.searchTextChanged()        // back to browse — must rebuild WITH hydration
+        let envEvents = vm.days.flatMap(\.items).compactMap { item -> [HealthEvent]? in
+            if case .environmentSummary(let s) = item { return s.events } else { return nil }
+        }.flatMap { $0 }
+        #expect(envEvents.filter { $0.subtype == "temperature" }.map(\.id) == [observed.id])
+    }
+
+    /// Deleting an observed precedence winner during search must re-run the query so
+    /// the forecast fallback becomes visible (a surgical row removal cannot know it).
+    @Test func deletingObservedWinnerInSearchRevealsForecastFallback() async throws {
+        let (_, store) = try makeStore()
+        let base = Date(timeIntervalSince1970: 1_750_032_000)
+        let forecast = weatherEvent(.forecast, hour: 18, day: base)
+        let observed = weatherEvent(.observedCompletedDay, hour: 12, day: base)
+        try await store.save([forecast, observed])
+        let vm = TimelineViewModel(store: store, timeZone: TimeZone(identifier: "UTC")!, pageSize: 50)
+        vm.searchText = "temperature"
+        await vm.searchTextChanged()
+        #expect(vm.days.flatMap(\.events).map(\.id) == [observed.id])   // observed wins pre-delete
+        _ = await vm.delete(observed)
+        let shown = vm.days.flatMap(\.events)
+        #expect(shown.map(\.id) == [forecast.id])   // fallback revealed by the re-query
+    }
+
     @Test func deletingEventOnSessionDayKeepsTheSession() async throws {
         let (_, store) = try makeStore()
         let wake = Date(timeIntervalSince1970: 1_750_000_000)
