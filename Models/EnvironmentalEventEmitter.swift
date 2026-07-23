@@ -6,8 +6,8 @@ import HealthGraphCore
 /// per-day observed-weather fetch. Lets tests substitute a deterministic stub
 /// for `EnvironmentalDataService`.
 protocol EnvironmentalDataProviding {
-    var currentPressure: Double { get }
-    var previousPressure: Double { get }
+    var latestFetchedPressure: Double? { get }   // this refresh's genuine reading; nil on failure/fallback
+    var lastTrustedPressure: Double? { get }      // prior genuine reading, only if recent enough to compare
     var forecastHighC: Double? { get }
     var forecastLowC: Double? { get }
     var forecastHumidity: Double? { get }
@@ -99,8 +99,8 @@ enum EnvironmentalEventEmitter {
         let today = now()
         let todayReading = EnvironmentalReading(
             date: today,
-            pressureHPa: service.currentPressure > 0 ? service.currentPressure : nil,
-            previousPressureHPa: service.previousPressure > 0 ? service.previousPressure : nil,
+            pressureHPa: service.latestFetchedPressure,
+            previousPressureHPa: service.lastTrustedPressure,
             moonPhaseName: getMoonPhase(for: today),
             isMercuryRetrograde: MercuryRetrograde.isRetrograde(on: today),
             timezoneID: tz,

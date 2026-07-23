@@ -20,8 +20,8 @@ struct EnvironmentalEmitterTests {
     /// A canned `EnvironmentalDataProviding`: fixed forecast/pressure values and a
     /// scripted `AQIRangeResult`, counting range calls and recording the last span.
     private final class StubProvider: EnvironmentalDataProviding, @unchecked Sendable {
-        var currentPressure: Double = 1015
-        var previousPressure: Double = 1015
+        var latestFetchedPressure: Double? = 1015
+        var lastTrustedPressure: Double? = nil
         var forecastHighC: Double? = 24
         var forecastLowC: Double? = 6
         var forecastHumidity: Double? = 55

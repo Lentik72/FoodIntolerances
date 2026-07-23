@@ -64,6 +64,16 @@ class EnvironmentalDataService: ObservableObject {
     @Published var showZipCodePrompt: Bool = false
     @Published private(set) var currentAtmosphericTask: Task<Void, Never>? = nil
     
+    /// The emitter's inputs. `latestFetchedPressure` is this refresh's genuine
+    /// reading (nil on failure/fallback). `lastTrustedPressure` is the prior
+    /// genuine reading, exposed only when recent enough to compare.
+    @Published private(set) var latestFetchedPressure: Double? = nil
+    @Published private(set) var lastTrustedPressure: Double? = nil
+    /// The last genuine API reading + when it landed. Never cleared at refresh
+    /// start, never written by a fallback/cancellation — the carry that makes the
+    /// previous/current shift correct across refreshes.
+    private var mostRecentGenuinePressure: (value: Double, at: Date)? = nil
+
     // Private properties
     private var pressureReadings: [(pressure: Double, timestamp: Date)] = []
     private let pressureChangeThreshold: Double = 6.0  // hPa threshold for sudden change
@@ -238,7 +248,11 @@ class EnvironmentalDataService: ObservableObject {
         pressureReadings.removeAll()
         currentPressure = 0.0
         previousPressure = 0.0
-        
+
+        // Not a genuine reading: clear what the emitter would see, but preserve
+        // the genuine carry so a later real reading can still compute a real drop.
+        latestFetchedPressure = nil
+
         // Cancel any existing fetch tasks
         currentAtmosphericTask?.cancel()
         currentAtmosphericTask = nil
@@ -336,6 +350,11 @@ class EnvironmentalDataService: ObservableObject {
             self.atmosphericPressureCategory = "Loading..."
         }
 
+        // Start of a genuine attempt: clear any previously-fetched value so a
+        // cancelled/failing refresh leaves nothing stale for the emitter to
+        // restamp. The carry (`mostRecentGenuinePressure`) is untouched.
+        await MainActor.run { self.clearFetchedPressure() }
+
         // Local timeout: if location never resolves / the fetch stalls, publish
         // fallback pressure after 5s so the UI doesn't sit on "Loading..." forever.
         // Scoped entirely to this call — it never references `currentAtmosphericTask`.
@@ -378,6 +397,7 @@ class EnvironmentalDataService: ObservableObject {
                 self.currentTemperatureC = temp
                 self.currentHumidityPct = humidity
                 self.lastUpdated = Date()
+                self.recordGenuinePressure(pressureValue, at: self.now())
             }
         } catch {
             Logger.error(error, message: "Error fetching atmospheric pressure", category: .network)
@@ -685,9 +705,13 @@ class EnvironmentalDataService: ObservableObject {
         self.currentPressure = fallbackPressure
         self.previousPressure = fallbackPressure
         self.suddenPressureChange = false
-        
+
         // Important: update lastUpdated to trigger UI refresh
         self.lastUpdated = Date()
+
+        // Not a genuine reading: clear what the emitter would see, but preserve
+        // the genuine carry so a later real reading can still compute a real drop.
+        self.latestFetchedPressure = nil
     }
     
     private func fetchMoonPhase(for date: Date) async {
@@ -702,6 +726,23 @@ class EnvironmentalDataService: ObservableObject {
         MercuryRetrograde.isRetrograde(on: date)
     }
     
+    /// Record a genuine API pressure reading: shift the carry, expose the prior
+    /// genuine value ONLY if within `pressureReadingInterval`, and set the legacy
+    /// sudden-change flag off that gated comparison. This is the sole writer of
+    /// `latestFetchedPressure`/`lastTrustedPressure`/`mostRecentGenuinePressure`.
+    func recordGenuinePressure(_ value: Double, at: Date) {
+        let prior = mostRecentGenuinePressure
+        let comparable = prior.map { at.timeIntervalSince($0.at) <= pressureReadingInterval } ?? false
+        lastTrustedPressure = comparable ? prior?.value : nil
+        suddenPressureChange = comparable ? (abs((prior!.value) - value) >= pressureChangeThreshold) : false
+        mostRecentGenuinePressure = (value, at)
+        latestFetchedPressure = value
+    }
+
+    /// Clear the fetched reading at the start of a genuine refresh, so a cancelled
+    /// refresh leaves nothing for the emitter to restamp. Carry untouched.
+    func clearFetchedPressure() { latestFetchedPressure = nil }
+
     private func updateAtmosphericPressure(_ pressure: Double) {
         let currentTime = now()
 
@@ -749,6 +790,9 @@ class EnvironmentalDataService: ObservableObject {
             updateAtmosphericPressure(cachedPressure)
             self.atmosphericPressure = "\(Int(cachedPressure)) hPa"
             self.atmosphericPressureCategory = self.categorizePressure(cachedPressure)
+            // Not a genuine reading: clear what the emitter would see, but
+            // preserve the genuine carry.
+            self.latestFetchedPressure = nil
             return
         }
         
@@ -767,7 +811,10 @@ class EnvironmentalDataService: ObservableObject {
         updateAtmosphericPressure(fallbackPressure)
         self.atmosphericPressure = "\(Int(fallbackPressure)) hPa"
         self.atmosphericPressureCategory = self.categorizePressure(fallbackPressure)
-        
+        // Not a genuine reading: clear what the emitter would see, but preserve
+        // the genuine carry.
+        self.latestFetchedPressure = nil
+
         // Cache this value for future fallbacks
         UserDefaults.standard.set(fallbackPressure, forKey: "lastKnownPressure")
     }
