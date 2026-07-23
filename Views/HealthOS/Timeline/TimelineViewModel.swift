@@ -253,6 +253,10 @@ final class TimelineViewModel: ObservableObject {
             isSearchActive = true
             if let categoryFilter { results = results.filter { categoryFilter.contains($0.category) } }
             if let sourceFilter { results = results.filter { sourceFilter.contains($0.source) } }
+            // Hydrate AFTER the filters: a sibling shares subtype/category/source with
+            // the matched event, so any filter that passed the match passes the sibling —
+            // the search limit is the only thing that can exclude one. Reordering
+            // hydration before the filters would break that invariant.
             let hydrated = await hydratingWeatherSiblings(results)
             guard gen == loadGeneration else { return }
             days = TimelineDayBuilder.days(from: hydrated, timeZone: timeZone, sessionizeSleep: false, groupEnvironment: false)
