@@ -98,6 +98,11 @@ class EnvironmentalDataService: ObservableObject {
     private let now: () -> Date
     private let calendar: Calendar
     private let injectedLocation: LocationProviding?
+    /// The single source of truth for env-fetch health (Task 2). Optional with a
+    /// `nil` default: `EnvironmentStatusStore` is `@MainActor`, so a constructed
+    /// default argument would not compile at the non-`@MainActor` test call sites;
+    /// a nil store makes every `recordToday*` a no-op. The App passes the real one.
+    private let statusStore: EnvironmentStatusStore?
     /// Lazy because the default provider needs `self` — evaluated on first use,
     /// well after `init` has finished setting every other stored property.
     private lazy var locationProvider: LocationProviding = injectedLocation ?? DefaultLocationProvider(service: self)
@@ -129,11 +134,13 @@ class EnvironmentalDataService: ObservableObject {
          transport: HTTPTransport = URLSession.shared,
          now: @escaping () -> Date = Date.init,
          calendar: Calendar = { var c = Calendar(identifier: .gregorian); c.timeZone = .current; return c }(),
-         location: LocationProviding? = nil) {
+         location: LocationProviding? = nil,
+         statusStore: EnvironmentStatusStore? = nil) {
         self.transport = transport
         self.now = now
         self.calendar = calendar
         self.injectedLocation = location
+        self.statusStore = statusStore
         if let locationManager = locationManager {
             self.locationManager = locationManager
         } else {
@@ -314,6 +321,26 @@ class EnvironmentalDataService: ObservableObject {
         return nil
     }
 
+    /// The scope a "today" fetch blocks when it fails: this local day only
+    /// (start == end == today's local midnight), in the calendar's timezone.
+    private func todayScope() -> (start: Date, end: Date, tz: String) {
+        let d = calendar.startOfDay(for: now())
+        return (d, d, calendar.timeZone.identifier)
+    }
+
+    /// Record a today-fetch success (a nil store is a no-op).
+    @MainActor private func recordTodaySuccess(_ capability: EnvironmentCapability) {
+        guard let statusStore else { return }
+        statusStore.recordSuccess(capability, at: now())
+    }
+
+    /// Record a today-fetch failure scoped to this local day (a nil store is a no-op).
+    @MainActor private func recordTodayFailure(_ capability: EnvironmentCapability, _ reason: EnvironmentFailureReason) {
+        guard let statusStore else { return }
+        let s = todayScope()
+        statusStore.recordFailure(capability, reason: reason, scopeStart: s.start, scopeEnd: s.end, timezoneID: s.tz, at: now())
+    }
+
     public func requestRefreshWithCooldown() async -> Bool {
         // Check if it's too soon for another refresh
         let currentTime = now()
@@ -373,23 +400,38 @@ class EnvironmentalDataService: ObservableObject {
         // Check if location is available
         guard let location = self.resolvedCoordinate() else {
             Logger.warning("No location available, using fallback pressure data.", category: .location)
-            await MainActor.run { self.useFallbackPressureData() }
+            await MainActor.run {
+                self.recordTodayFailure(.currentPressure, self.locationReason())
+                self.useFallbackPressureData()
+            }
             return
         }
 
         guard let url = APIConfig.weatherURL(latitude: location.latitude, longitude: location.longitude) else {
             Logger.error("Invalid URL for weather API", category: .network)
+            await MainActor.run { self.recordTodayFailure(.currentPressure, .notConfigured) }
             return
         }
 
         do {
-            let (data, _) = try await self.transport.data(from: url)
+            let (data, response) = try await self.transport.data(from: url)
+            // Cancelled AFTER a clean transport throws nothing → the catch can't see
+            // it. Bail before recording/publishing so a superseding refresh wins.
+            if Task.isCancelled { return }
+            if let reason = httpStatusReason(response) {   // 401/403/non-2xx before decode
+                await MainActor.run {
+                    self.recordTodayFailure(.currentPressure, reason)
+                    self.useFallbackPressureData()
+                }
+                return
+            }
             let decodedResponse = try JSONDecoder().decode(WeatherResponse.self, from: data)
 
             let pressureValue = Double(decodedResponse.main.pressure)
             let temp = decodedResponse.main.temp
             let humidity = decodedResponse.main.humidity.map(Double.init)
 
+            if Task.isCancelled { return }
             await MainActor.run {
                 self.updateAtmosphericPressure(pressureValue)
                 self.atmosphericPressure = "\(Int(pressureValue)) hPa"
@@ -398,10 +440,18 @@ class EnvironmentalDataService: ObservableObject {
                 self.currentHumidityPct = humidity
                 self.lastUpdated = Date()
                 self.recordGenuinePressure(pressureValue, at: self.now())
+                self.recordTodaySuccess(.currentPressure)
             }
         } catch {
+            // A cancelled fetch must not apply the legacy fallback and must record
+            // nothing — a superseding refresh is coming. `clearFetchedPressure()`
+            // already nil'd `latestFetchedPressure` at the start of this attempt.
+            if self.isCancellation(error) { return }
             Logger.error(error, message: "Error fetching atmospheric pressure", category: .network)
-            await MainActor.run { self.useFallbackPressureData() }
+            await MainActor.run {
+                self.recordTodayFailure(.currentPressure, self.classifyThrown(error))
+                self.useFallbackPressureData()
+            }
         }
     }
 
@@ -433,17 +483,31 @@ class EnvironmentalDataService: ObservableObject {
                 self.forecastHighC = nil
                 self.forecastLowC = nil
                 self.forecastHumidity = nil
+                self.recordTodayFailure(.forecastWeather, self.locationReason())
             }
             return
         }
 
         guard let url = APIConfig.forecastURL(latitude: location.latitude, longitude: location.longitude) else {
             Logger.error("Invalid URL for forecast API", category: .network)
+            await MainActor.run { self.recordTodayFailure(.forecastWeather, .notConfigured) }
             return
         }
 
         do {
-            let (data, _) = try await transport.data(from: url)
+            let (data, response) = try await transport.data(from: url)
+            // Cancelled AFTER a clean transport throws nothing → bail before it can
+            // clear a live failure or restamp a value (a superseding refresh wins).
+            if Task.isCancelled { return }
+            if let reason = httpStatusReason(response) {   // 401/403/non-2xx before decode
+                await MainActor.run {
+                    self.forecastHighC = nil
+                    self.forecastLowC = nil
+                    self.forecastHumidity = nil
+                    self.recordTodayFailure(.forecastWeather, reason)
+                }
+                return
+            }
             let decoded = try JSONDecoder().decode(ForecastResponse.self, from: data)
             let slots = decoded.list.map {
                 (dt: $0.dt, temp: $0.main.temp, humidity: Double($0.main.humidity))
@@ -454,17 +518,22 @@ class EnvironmentalDataService: ObservableObject {
             let high = aggregate?.high
             let low = aggregate?.low
             let humidity = aggregate?.humidity
+            if Task.isCancelled { return }
             await MainActor.run {
                 self.forecastHighC = high
                 self.forecastLowC = low
                 self.forecastHumidity = humidity
+                if aggregate == nil { self.recordTodayFailure(.forecastWeather, .insufficientData) }
+                else { self.recordTodaySuccess(.forecastWeather) }
             }
         } catch {
+            if self.isCancellation(error) { return }
             Logger.error(error, message: "Error fetching daily forecast", category: .network)
             await MainActor.run {
                 self.forecastHighC = nil
                 self.forecastLowC = nil
                 self.forecastHumidity = nil
+                self.recordTodayFailure(.forecastWeather, self.classifyThrown(error))
             }
         }
     }
@@ -490,17 +559,29 @@ class EnvironmentalDataService: ObservableObject {
             Logger.warning("No location available for air quality fetch.", category: .location)
             await MainActor.run {
                 self.forecastAQI = nil
+                self.recordTodayFailure(.forecastAirQuality, self.locationReason())
             }
             return
         }
 
         guard let url = APIConfig.airPollutionURL(latitude: location.latitude, longitude: location.longitude) else {
             Logger.error("Invalid URL for air pollution API", category: .network)
+            await MainActor.run { self.recordTodayFailure(.forecastAirQuality, .notConfigured) }
             return
         }
 
         do {
-            let (data, _) = try await transport.data(from: url)
+            let (data, response) = try await transport.data(from: url)
+            // Cancelled AFTER a clean transport throws nothing → bail before it can
+            // clear a live failure or restamp a value (a superseding refresh wins).
+            if Task.isCancelled { return }
+            if let reason = httpStatusReason(response) {   // 401/403/non-2xx before decode
+                await MainActor.run {
+                    self.forecastAQI = nil
+                    self.recordTodayFailure(.forecastAirQuality, reason)
+                }
+                return
+            }
             let decoded = try JSONDecoder().decode(AirPollutionResponse.self, from: data)
             let slots = decoded.list.map {
                 (dt: $0.dt, pm25: $0.components.pm2_5)
@@ -509,13 +590,18 @@ class EnvironmentalDataService: ObservableObject {
             // cross-actor-capture the (non-Sendable) tuple/decoded state.
             let mean = EnvironmentalDataService.meanPM25(slots: slots, now: now())
             let aqi = mean.map { AirQualityIndex.epaAQI(pm25: $0) }
+            if Task.isCancelled { return }
             await MainActor.run {
                 self.forecastAQI = aqi
+                if mean == nil { self.recordTodayFailure(.forecastAirQuality, .insufficientData) }
+                else { self.recordTodaySuccess(.forecastAirQuality) }
             }
         } catch {
+            if self.isCancellation(error) { return }
             Logger.error(error, message: "Error fetching air quality", category: .network)
             await MainActor.run {
                 self.forecastAQI = nil
+                self.recordTodayFailure(.forecastAirQuality, self.classifyThrown(error))
             }
         }
     }
