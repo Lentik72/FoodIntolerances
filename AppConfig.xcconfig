@@ -1,0 +1,10 @@
+// Tracked, secret-free base configuration for the app target.
+//
+// Secrets (API keys) live in the gitignored Secrets.xcconfig — created locally
+// from Secrets.xcconfig.template. The OPTIONAL include below means:
+//   - a clean checkout (no Secrets.xcconfig) still builds, with no key baked in;
+//     the app runs in graceful-degradation mode (weather features disabled)
+//   - a configured machine's Secrets.xcconfig supplies OPENWEATHER_API_KEY,
+//     which Info.plist substitution bakes into the built bundle only
+// Do NOT change this to a non-optional #include — that would break clean checkouts.
+#include? "Secrets.xcconfig"
