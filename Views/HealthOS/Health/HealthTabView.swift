@@ -9,10 +9,19 @@ struct HealthTabView: View {
     @AppStorage("hg.measurementSystem") private var rawUnitSystem = ""
     @Query private var userProfiles: [UserProfile]
     @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var statusStore: EnvironmentStatusStore
 
     private var tempUnitBinding: Binding<TemperatureUnit> {
         Binding(get: { TemperatureUnit.resolved(from: rawTempUnit) },
                 set: { rawTempUnit = $0.rawValue })
+    }
+
+    private var environmentSummaryText: String {
+        switch EnvironmentStatusPresentation.summary(statusStore.statuses) {
+        case .unavailable(let phrase): return phrase
+        case .notChecked:              return "Not checked yet"
+        case .updated(let date):       return "Updated \(date.formatted(date: .omitted, time: .shortened))"
+        }
     }
 
     private var unitSystemBinding: Binding<UnitSystem> {
@@ -67,6 +76,30 @@ struct HealthTabView: View {
                             Divider().padding(.leading, 52)
                         }
                     }
+                }
+                .hgCard()
+
+                VStack(spacing: 0) {
+                    NavigationLink {
+                        EnvironmentStatusView()
+                    } label: {
+                        HStack {
+                            Image(systemName: "cloud.sun")
+                                .foregroundStyle(HealthTheme.accent)
+                            Text("Environment")
+                                .foregroundStyle(HealthTheme.ink)
+                            Spacer()
+                            Text(environmentSummaryText)
+                                .font(.footnote)
+                                .foregroundStyle(HealthTheme.inkMuted)
+                            Image(systemName: "chevron.right")
+                                .font(.footnote)
+                                .foregroundStyle(HealthTheme.inkMuted)
+                        }
+                        .padding(16)
+                        .contentShape(Rectangle())
+                    }
+                    .accessibilityHint("Shows when weather and air quality data last updated")
                 }
                 .hgCard()
 
