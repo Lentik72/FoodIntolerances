@@ -16,6 +16,8 @@ struct HealthGraphDebugView: View {
     @State private var errorMessage: String?
     @State private var isWorking = false
     @EnvironmentObject private var ingestor: HealthKitIngestor
+    @EnvironmentObject private var environmentalService: EnvironmentalDataService
+    @EnvironmentObject private var environmentStatusStore: EnvironmentStatusStore
     @State private var countsByCategory: [String: Int] = [:]
     @State private var countsBySource: [String: Int] = [:]
     @State private var lastIngestSummary: String?
@@ -102,13 +104,14 @@ struct HealthGraphDebugView: View {
                 Button("Emit environmental events now") {
                     Task {
                         errorMessage = nil
-                        // Clear the AQI retry-throttle watermark so the button always
-                        // re-attempts the backfill (today's emit runs unconditionally —
-                        // there's no longer a global daily lock).
-                        UserDefaults.standard.removeObject(
-                            forKey: EnvironmentalEventEmitter.lastAQIAttemptKey)
+                        // Production service + shared status store, so the result reflects the real
+                        // location lifecycle, pressure carry, and status recording. `bypassThrottles`
+                        // forces both backfills regardless of their retry watermarks — replacing the
+                        // old hand-deletion of the AQI attempt key, which mutated real throttle state.
                         await EnvironmentalEventEmitter.emitIfNeeded(
-                            service: EnvironmentalDataService())
+                            service: environmentalService,
+                            statusStore: environmentStatusStore,
+                            bypassThrottles: true)
                         await refresh()
                     }
                 }
