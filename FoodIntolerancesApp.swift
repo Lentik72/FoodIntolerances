@@ -115,6 +115,7 @@ struct FoodIntolerancesApp: App {
                 .environmentObject(redFlagPresenter)
                 .environmentObject(environmentStatusStore)
                 .environmentObject(environmentalService)
+                .environment(\.emitCoordinator, emitCoordinator)
                 .fullScreenCover(item: $redFlagPresenter.pending) { match in
                     switch match.category {
                     case .medicalEmergency:

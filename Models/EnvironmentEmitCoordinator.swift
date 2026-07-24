@@ -8,12 +8,31 @@ import Foundation
 /// which the running loop drains as exactly one trailing pass with
 /// `bypassThrottles: true` — N recovery ticks collapse into that single pass.
 ///
+/// The coalescing is asymmetric BY DESIGN: forced requests coalesce (queued and
+/// drained as one trailing pass) but ordinary unforced requests arriving while a
+/// pass is in flight are simply dropped. Consequence: if the app is suspended
+/// mid-pass, a next-day foreground's `.active` request can be dropped, and the
+/// resumed pass ingests only the reading it had already built — that day gets no
+/// new today-reading until the FOLLOWING foreground. This is intentional:
+/// coalescing unforced requests too would reintroduce the second overlapping pass
+/// this feature removes, and the dropped-day outcome is strictly better than the
+/// pre-fix behaviour, which produced a corrupt nil-valued emit for the same
+/// interleaving.
+///
 /// The pass runs inside a coordinator-owned UNSTRUCTURED `Task`, which inherits
 /// actor isolation but NOT cancellation. That is load-bearing: if the loop ran
 /// inline in `emit`, it would execute in whichever trigger's task called first, and
 /// SwiftUI cancelling that `.task` would leave a queued recovery pass running in a
 /// cancelled context — where the emitter's `Task.isCancelled` fetch guards turn it
 /// into a silent no-op. The queueing would look correct and heal nothing.
+///
+/// KNOWN EDGE, no limiter yet: every drain iteration after the first runs with
+/// `bypassThrottles: true`, so a flapping location-trust signal (denied ↔ granted
+/// in quick succession) could chain several unthrottled backfill passes back to
+/// back. A hard cap on trailing passes is deliberately NOT implemented here — it
+/// could drop a genuine heal and reintroduce the bug this queue exists to prevent.
+/// A diagnostic log fires once a drain schedules more than its first trailing
+/// forced pass, so this can be observed without limiting it.
 @MainActor
 final class EnvironmentEmitCoordinator {
     /// Runs one environment pass. The `Bool` is `bypassThrottles`.
@@ -46,10 +65,18 @@ final class EnvironmentEmitCoordinator {
             var runForced = initialForced || self.pendingForced
             self.pendingForced = false
 
+            // Diagnostic only — does not gate anything. Counts trailing forced passes so a
+            // second (or later) one can be logged; an ordinary single-heal drain (0 or 1
+            // trailing passes) stays silent.
+            var trailingPasses = 0
             while true {
                 await self.perform(runForced)
                 guard self.pendingForced else { break }
                 self.pendingForced = false
+                trailingPasses += 1
+                if trailingPasses > 1 {
+                    Logger.info("Environment drain scheduling trailing forced pass #\(trailingPasses) — possible location-trust flapping", category: .data)
+                }
                 runForced = true                // any queued follow-up is a recovery pass
             }
             // No `await` between the guard above and here, so on the main actor a
