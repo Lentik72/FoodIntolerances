@@ -2,7 +2,8 @@ import Foundation
 import GRDB
 
 public protocol ObjectStore {
-    func findOrCreate(name: String, kind: ObjectKind, metadata: Data?) async throws -> HealthObject
+    func findOrCreate(name: String, kind: ObjectKind, metadata: Data?,
+                      syntheticBatch: String?) async throws -> HealthObject
     func object(id: UUID) async throws -> HealthObject?
     func objects(kind: ObjectKind?, includeArchived: Bool) async throws -> [HealthObject]
     func setArchived(id: UUID, _ archived: Bool) async throws
@@ -16,16 +17,23 @@ public struct GRDBObjectStore: ObjectStore {
         self.dbWriter = database.dbWriter
     }
 
-    public func findOrCreate(name: String, kind: ObjectKind, metadata: Data?) async throws -> HealthObject {
-        let normalized = NameNormalizer.normalize(name)
+    public func findOrCreate(name: String, kind: ObjectKind, metadata: Data?,
+                             syntheticBatch: String? = nil) async throws -> HealthObject {
+        // Same derivation the init uses (both via DemoBatch/NameNormalizer), so the
+        // lookup key and the stored row's normalizedName cannot diverge.
+        let normalized = syntheticBatch
+            .map { DemoBatch.normalizedName(name, batch: $0) }
+            ?? NameNormalizer.normalize(name)
         return try await dbWriter.write { db in
             if let existing = try HealthObject
                 .filter(Column("normalizedName") == normalized)
                 .filter(Column("kind") == kind.rawValue)
+                .filter(Column("syntheticBatch") == syntheticBatch)   // real→IS NULL, demo→= batch
                 .fetchOne(db) {
                 return existing
             }
-            let object = HealthObject(kind: kind, name: name, metadata: metadata)
+            let object = HealthObject(kind: kind, name: name, metadata: metadata,
+                                      syntheticBatch: syntheticBatch)   // normalizedName derived by init
             try object.insert(db)
             return object
         }

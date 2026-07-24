@@ -80,21 +80,27 @@ public struct SyntheticDataset {
     public var objects: [HealthObject]
     public var events: [HealthEvent]
 
-    public func insert(into database: AppDatabase) async throws {
+    /// Inserts the dataset. `batch == nil` → real data (unchanged behaviour).
+    /// `batch != nil` → objects are namespaced via `findOrCreate(syntheticBatch:)`
+    /// and events are marked + dedup-namespaced via `DemoBatch.stamp`.
+    public func insert(into database: AppDatabase, batch: String? = nil) async throws {
         let objectStore = GRDBObjectStore(database: database)
         let eventStore = GRDBEventStore(database: database)
         // findOrCreate remaps object ids; keep event objectIDs consistent.
         var idMap: [UUID: UUID] = [:]
         for object in objects {
             let saved = try await objectStore.findOrCreate(
-                name: object.name, kind: object.kind, metadata: object.metadata)
+                name: object.name, kind: object.kind, metadata: object.metadata,
+                syntheticBatch: batch)
             idMap[object.id] = saved.id
         }
         var remapped = events
         for i in remapped.indices {
             if let oid = remapped[i].objectID { remapped[i].objectID = idMap[oid] ?? oid }
         }
-        try await eventStore.save(remapped)
+        // Stamp AFTER the objectID remap; nil batch leaves events untouched (real).
+        let toSave = batch.map { DemoBatch.stamp(remapped, batch: $0) } ?? remapped
+        try await eventStore.save(toSave)
     }
 }
 
