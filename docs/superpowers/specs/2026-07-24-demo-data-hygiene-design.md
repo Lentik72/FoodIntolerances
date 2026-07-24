@@ -35,7 +35,11 @@
 | 6 | Disable relationship dismissal while any demo batch is loaded | A demo card dismissed by the user would leave a `.userDismissed` row that later suppresses a genuine relationship sharing its `edgeKey`. Blocking dismissal during demo makes "preserve pre-existing dismissals" safe by construction. |
 | 7 | Banner rather than per-card marking for insight honesty | Seeded days shift the engine's baselines, stability windows, and day counts, so relationships computed alongside demo data are contaminated too. Per-card chips would imply unmarked cards are clean when they are not. |
 | 8 | Release builds purge synthetic rows at launch | Containers are shared by bundle ID, so a DEBUG-seeded database survives a Release install — where neither the clear button nor the banner exists. |
-| 9 | Cleanup is one transaction, recompute follows the commit | A partial cleanup that left contaminated relationships behind while the banner disappeared would present fabricated findings as clean. |
+| 9 | Cleanup is one transaction; the caller's single recompute follows the commit | A partial cleanup that left contaminated relationships behind while the banner disappeared would present fabricated findings as clean. |
+| 10 | Object namespacing needs a batch-aware find-or-create, not just a namespaced value on the generated object | `SyntheticDataset.insert` discards the generated object and rebuilds it inside `findOrCreate`, which recomputes `normalizedName` from the display name — so a namespaced value never reaches the database and the merge with real "Coffee" happens anyway. |
+| 11 | The cleanup routine performs no recompute; callers run exactly one | A seed reload is delete-then-insert. Recomputing inside the routine would run a full pass over a knowingly-incomplete database, then a second pass after the insert. |
+| 12 | The Release purge transaction runs synchronously at bootstrap; only its recompute is deferred | `AppDatabase` construction is synchronous and `recompute` is `async`. Deferring the relationship wipe as well would leave contaminated relationships readable — and rendering as ordinary findings — during startup. |
+| 13 | Dismissal is gated in the view model as well as the UI | A card rendered before a seed completes can be tapped after it, and that stale-UI race writes exactly the `.userDismissed` row decision 6 exists to prevent. |
 
 ## Design
 
@@ -52,6 +56,10 @@ Batch identifiers, one per seed button: `"synthetic"`, `"mood"`, `"outsideFactor
 **Events.** Demo dedup keys are prefixed `"demo:<batch>|"` ahead of the normal `DedupKey` value. A demo row can then never dedup-collide with a real row for the same day and subtype.
 
 **Objects.** The user-facing `name` is unchanged — a demo card must still read "Coffee" — while `normalizedName`, which carries the unique key and drives `ObjectStore` lookup, is prefixed `"demo:<batch>|"` for seeded objects. Real and demo objects of the same name and kind then coexist as distinct rows, and the existing real-data dedup guarantee is untouched.
+
+The prefix must be derived in exactly one place, and both the *lookup key* and the *persisted row* must use it. Today they cannot: `SyntheticDataset.insert` (`SyntheticDataGenerator.swift:89-90`) passes only `name`, `kind`, and `metadata` to `findOrCreate`, which recomputes `normalizedName` from the display name (`ObjectStore.swift:20`) and rebuilds the row via `HealthObject(kind:name:metadata:)` (`:28`). Any namespaced value on the generated object is discarded before it reaches SQLite, and the lookup at `:22-26` then matches the real "Coffee" and merges into it — the exact collision this section exists to prevent.
+
+The design therefore requires a **batch-aware find-or-create path**: `findOrCreate` takes the batch, builds its lookup key through the same normalization helper that `HealthObject`'s initializer uses, filters on both the namespaced `normalizedName` and `syntheticBatch`, and persists a row carrying both. Because the helper is the single source of truth, the lookup key and the stored key cannot diverge.
 
 This is deliberately not implemented by extending the unique key to include `syntheticBatch`: SQLite treats `NULL`s as distinct in unique indexes, so `unique(normalizedName, kind, syntheticBatch)` would permit two real rows with the same name and kind and silently destroy the invariant at `AppDatabase.swift:48`.
 
@@ -75,13 +83,22 @@ Every batch delete, batch reload, whole-demo clear, and the Release purge runs t
 
 The order is dictated by the real foreign keys in the schema: `health_events.objectID` references `health_objects` with `onDelete: .setNull` (`AppDatabase.swift:59`), and relationships' object references cascade (`:77`, `:80`). Deleting events before objects prevents demo events from being stranded with a nulled `objectID`; deleting relationships first makes the cascade a no-op for them, and leaves it as a correct backstop for any dismissed row referencing a demo object.
 
-After the transaction commits, `EvidenceEngine.recompute` runs. If it fails, the relationships table holds only pre-existing dismissed rows, so Insights renders empty — the required failure mode. Stale demo findings must never remain on screen once the banner is gone.
+**The routine does not recompute.** It performs the transaction and returns; each caller runs exactly **one** recompute at the end of its whole operation. A seed reload therefore recomputes once, after the replacement dataset is inserted — never once after the delete and again after the insert, which would burn a full pass over a knowingly-incomplete database.
+
+Between the commit and that single recompute, the relationships table holds only pre-existing dismissed rows, so Insights renders empty. That is the required intermediate state, and it is also the required failure mode: if the recompute fails or never runs, Insights stays empty rather than showing stale demo findings as clean.
 
 Real events that already reference a synthetic object — possible only for data seeded before this change — keep their rows and lose the object link, per the `setNull` rule. Real data is never deleted by any path here.
 
 ### 5. Dismissal gating
 
-While any synthetic row exists, the dismiss action in `InsightsViewModel` (`:44-49`) is unavailable. Pre-existing `.userDismissed` rows are therefore always genuine user intent from a clean database, which is what makes preserving them in step 4 safe. In Release builds the purge guarantees no synthetic rows exist, so the gate never engages.
+While any synthetic row exists, dismissal is unavailable — gated at **both** layers:
+
+- **UI:** the Dismiss action is hidden or disabled on every card.
+- **Model:** `InsightsViewModel.dismiss` (`:40-52`) and `undoDismiss` (`:54-60`) each re-check the database for synthetic rows and return without writing if any exist. The UI gate alone is insufficient — a card rendered before a seed completes can be tapped afterwards, and that stale-UI race is precisely what would write the `.userDismissed` row this rule exists to prevent.
+
+Additionally, `pendingUndo` is cleared whenever demo data becomes present. Leaving it set would let an undo write a status onto a relationship id that the cleanup transaction has since deleted and the recompute has rebuilt under a new id.
+
+Pre-existing `.userDismissed` rows are therefore always genuine user intent recorded against a clean database, which is what makes preserving them in step 4 safe rather than a compromise. In Release builds the purge guarantees no synthetic rows exist, so the gate never engages.
 
 ### 6. Insights banner
 
@@ -89,7 +106,14 @@ While any synthetic row exists, the dismiss action in `InsightsViewModel` (`:44-
 
 ### 7. Release purge
 
-Compiled into all configurations, active only in non-DEBUG builds. It runs during database bootstrap, after migration and **before the provider yields a usable handle**, so no reader — Insights, the Timeline, or a routine recompute — can observe the pre-purge state. It delegates to the step-4 routine with the whole-demo scope.
+Compiled into all configurations, active only in non-DEBUG builds. It delegates to the step-4 routine with the whole-demo scope.
+
+Ordering is constrained by a shape mismatch: `AppDatabase` construction is **synchronous**, while `EvidenceEngine.recompute` is `async`, so the recompute cannot run during bootstrap. The split is therefore:
+
+- **Synchronously, during bootstrap**, after migration and **before the provider yields a usable handle**: the whole purge transaction, *including the relationship wipe*. No reader — Insights, the Timeline, or a routine recompute — can observe the pre-purge state. This is possible because the transaction is a plain GRDB write with no `async` work inside it.
+- **Once, scheduled after startup**: the recompute.
+
+Until that recompute finishes, Insights is empty. That is safe; leaving the relationship wipe until after startup would not be, because contaminated relationships would then be readable — and would render as ordinary findings — in the window before the purge completed.
 
 ## Testing
 
@@ -100,15 +124,24 @@ Compiled into all configurations, active only in non-DEBUG builds. It runs durin
 - Deleting one batch removes that batch's events and objects only, leaving real rows and other batches intact.
 - A demo dedup key and the real key for the same day and subtype are never equal.
 - A demo object sharing a real object's display name and kind inserts without violating the unique key, and the real object's row is unchanged.
+- **Seeding through `SyntheticDataset.insert` against a database that already holds a real object of the same name and kind creates a second, batch-scoped row and leaves the real object's `id` and `normalizedName` untouched** — the regression test for the discarded-namespacing defect. Its events reference the demo object's id, not the real one.
 - Cleanup clears every relationship except `.userDismissed`, and a failure partway through rolls the whole transaction back.
+- The cleanup routine performs no recompute of its own.
 - The purge removes synthetic rows and is a no-op on a database with none.
 
 **App**
 
 - The banner is visible exactly when synthetic rows exist.
-- Dismissal is unavailable while demo data is loaded.
-- Tapping a seed button twice leaves the row count unchanged from one tap.
+- Dismissal is unavailable while demo data is loaded, **at the view-model layer specifically**: calling `dismiss` directly while synthetic rows exist writes nothing, as does `undoDismiss`.
+- `pendingUndo` is cleared when demo data becomes present.
+- Tapping a seed button twice leaves the row count unchanged from one tap, and performs one recompute per tap.
 
-## Accepted limitation
+## Accepted limitation — legacy demo rows
 
-Rows seeded **before** this change carry no batch marker, and no migration can retroactively identify them — distinguishing them from real data would require heuristics on names and dedup keys that risk deleting genuine rows. A database already contaminated by earlier demo taps therefore needs one full *Reset Health Graph DB* to reach a clean baseline, after which every subsequent seed is precisely removable.
+Rows seeded **before** this change carry no batch marker, and no migration can retroactively identify them.
+
+**No heuristic cleanup pass will be implemented.** The only signals available — object names like "Coffee" or "Magnesium", and dedup keys matching the real backfill's format — are identical to real data *by construction*: the seeds were written to imitate real rows, which is the defect this design corrects. Any best-effort pass would therefore delete genuine user rows some of the time, violating goal 1, the primary safety goal. A wrong deletion is unrecoverable; a manual reset is not.
+
+**Required one-time action.** A database already contaminated by earlier demo taps must be cleared once with *Reset Health Graph DB* to reach a clean baseline. This deletes all events, objects, and relationships, real data included — so it should be done deliberately, on a device whose real data is either expendable or re-importable from HealthKit. After that single reset, every subsequent seed is precisely and safely removable, and no further reset is ever required.
+
+Until that reset is performed, the banner still behaves correctly for *newly* seeded batches, but legacy rows remain invisible to it: they carry no marker, so a database holding only legacy demo data shows no banner and reports itself clean.
