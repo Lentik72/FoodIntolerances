@@ -145,6 +145,24 @@ struct EnvironmentEmitCoordinatorTests {
         #expect(rec.calls[1].forced == true)
     }
 
+    /// The second P1 regression guard. `Task { }` schedules its body rather than
+    /// running it, so this forced request lands after `drainTask` is stored but BEFORE
+    /// the body's first turn — both `emit` calls happen in one main-actor turn with no
+    /// `await` between them, which makes the interleaving deterministic rather than
+    /// racy. The body must fold that flag into its first pass. A clear-then-read loop
+    /// yields one UNFORCED pass here, so `calls[0].forced == true` is the discriminator.
+    @Test func forcedRequestArrivingBeforeTheDrainBodyStartsIsNotLost() async {
+        let rec = PassRecorder(holdCallIndex: nil)
+        let coordinator = makeCoordinator(rec)
+
+        let drain = coordinator.emit(forced: false)
+        coordinator.emit(forced: true)       // same turn; the drain body has not run yet
+        await drain.value
+
+        #expect(rec.calls.count == 1)
+        #expect(rec.calls[0].forced == true)
+    }
+
     /// The P1 regression guard. The original caller awaits the drain the way a
     /// SwiftUI `.task` would; cancelling it must NOT bleed into the queued recovery.
     /// `wasCancelled == false` is the discriminating assertion: if the drain ran
@@ -238,14 +256,21 @@ final class EnvironmentEmitCoordinator {
         let initialForced = forced
         let task = Task { [weak self] in
             guard let self else { return }
-            var runForced = initialForced
+            // CONSUME the flag rather than clearing it. `Task { }` SCHEDULES this body
+            // rather than running it, so a forced request can land after `drainTask` is
+            // stored but before this first turn — in the same main-actor turn as the
+            // initial `emit`. Clearing at the top of the loop would wipe it and run one
+            // UNFORCED pass: the recovery silently downgraded, not merely delayed.
+            var runForced = initialForced || self.pendingForced
+            self.pendingForced = false
+
             while true {
-                self.pendingForced = false
                 await self.perform(runForced)
-                if !self.pendingForced { break }
+                guard self.pendingForced else { break }
+                self.pendingForced = false
                 runForced = true                // any queued follow-up is a recovery pass
             }
-            // No `await` between the check above and here, so on the main actor a
+            // No `await` between the guard above and here, so on the main actor a
             // trigger cannot slip in after the loop decides to exit but before the
             // handle clears — that gap is where a naive implementation drops a heal.
             self.drainTask = nil
@@ -261,13 +286,13 @@ final class EnvironmentEmitCoordinator {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/EnvironmentEmitCoordinatorTests" -parallel-testing-enabled NO`
-Expected: PASS (6 tests).
+Expected: PASS (7 tests).
 
 - [ ] **Step 5: (Optional) Prove the cancellation test is discriminating**
 
 The P1 this design exists to prevent is invisible to a test that only asserts the trailing pass "ran", so it is worth confirming `trailingForcedPassSurvivesCallerCancellation` actually fails against the pre-fix shape. Unlike a one-line mutation, this requires temporarily reproducing the old structure, so it is **optional** — skip it if the churn isn't worth it; the task reviewer verifies the structural property (an unstructured `Task { }` owned by the coordinator, not an inline loop) by inspection either way.
 
-If you do it, the temporary mutation is: make `emit(forced:)` `async` and return nothing, delete the `Task { [weak self] in … }` wrapper so the `while` loop runs inline in `emit` (using `self` directly, and clearing `drainTask` — now unused — accordingly), and update the six test call sites from `coordinator.emit(…)` / `.value` to `await coordinator.emit(…)`. Re-run `trailingForcedPassSurvivesCallerCancellation` and confirm it **fails on `wasCancelled == false`** (the pass still executes — it just executes cancelled, which is exactly the silent no-op the real emitter would produce). Then **revert every one of those edits**, confirm `git diff` is empty against the implementation from Step 3, and re-run the suite to a clean 6/6.
+If you do it, the temporary mutation is: make `emit(forced:)` `async` and return nothing, delete the `Task { [weak self] in … }` wrapper so the `while` loop runs inline in `emit` (using `self` directly, and clearing `drainTask` — now unused — accordingly), and update the seven test call sites from `coordinator.emit(…)` / `.value` to `await coordinator.emit(…)`. Re-run `trailingForcedPassSurvivesCallerCancellation` and confirm it **fails on `wasCancelled == false`** (the pass still executes — it just executes cancelled, which is exactly the silent no-op the real emitter would produce). Then **revert every one of those edits**, confirm `git diff` is empty against the implementation from Step 3, and re-run the suite to a clean 7/7.
 
 Report whether you ran this and what you observed.
 
@@ -374,6 +399,6 @@ git commit -m "feat(env-emit): route the three environment triggers through the 
 
 ## Self-Review Notes (author)
 
-- **Spec coverage:** §3A coordinator → Task 1; §3B wiring → Task 2; all seven §5 tests → Task 1 Step 1 (bullets "queued recovery" and "force-flag preservation" are the same scenario, so they are one test asserting both the count and the flag); §5 device pass → Device Verification.
+- **Spec coverage:** §3A coordinator → Task 1; §3B wiring → Task 2; all eight §5 tests → Task 1 Step 1 as seven `@Test`s (the "queued recovery" and "force-flag preservation" bullets are the same scenario, so they are one test asserting both the count and the flag); §5 device pass → Device Verification.
 - **Step 5 of Task 1 is optional and explicitly revert-after.** It is marked optional because, unlike a one-line mutation, reproducing the pre-fix shape means changing `emit`'s signature and six call sites. The structural property it would prove (unstructured coordinator-owned task, not an inline loop) is checkable by inspection, so the task reviewer is the backstop if it's skipped.
 - The `PassRecorder` relies on `@MainActor` serialization for determinism: `perform` installs its gate continuation in the same synchronous block that resumes `startedSignal`, so by the time the test resumes, `release()` has something to resume.

@@ -55,6 +55,7 @@ The marker then persists until some unrelated foreground. The recovery trigger m
 | 5 | Trailing pass flag | The trailing pass runs with **`bypassThrottles: true`**. A trailing pass that ran un-forced would hit the very throttles it exists to bypass — including ones the pass it followed may have just stamped. |
 | 6 | Trigger sites | **Unchanged.** Single-flighting makes the trigger count irrelevant, so there is no launch-path behaviour risk. They only change *what they call* — and get simpler, since a synchronous `emit` removes their `Task { }` wrappers. |
 | 7 | Task ownership (Leo, P1) | The coordinator **owns the pass as an unstructured `Task<Void, Never>`**, rather than running the drain loop inline in `emit`. Inline, `perform` executes in whichever trigger's task called first; SwiftUI cancelling that `.task` would leave a queued recovery pass running in a cancelled context, where the fetch-level `Task.isCancelled` guards added last round turn it into a silent no-op — the queueing would look right and heal nothing. An unstructured `Task { }` inherits actor isolation but not cancellation, so the drain outlives its starter. Pinned by a dedicated regression test asserting the trailing pass runs with `Task.isCancelled == false`. |
+| 8 | Pending flag is consumed, not cleared (Leo, P1) | The drain body seeds `runForced = initialForced \|\| pendingForced` and clears the flag **once, up front**, rather than clearing it at the top of each loop iteration. `Task { }` schedules its body instead of running it, so a forced request can land after `drainTask` is stored but before the body's first turn; a clear-then-read loop wipes it and runs one *unforced* pass — the recovery silently downgraded rather than merely delayed. Pinned by a deterministic same-turn test. |
 
 ## 3. Architecture
 
@@ -83,11 +84,16 @@ final class EnvironmentEmitCoordinator {
         let initialForced = forced
         let task = Task { [weak self] in        // UNSTRUCTURED: independent of any caller's cancellation
             guard let self else { return }
-            var runForced = initialForced
+            // CONSUME the flag rather than clearing it. A forced request can land after
+            // `drainTask` is stored but before this body's first turn (same main-actor
+            // turn as the initial `emit`); clearing at the top of the loop would discard it.
+            var runForced = initialForced || self.pendingForced
+            self.pendingForced = false
+
             while true {
-                self.pendingForced = false
                 await self.perform(runForced)
-                if !self.pendingForced { break }
+                guard self.pendingForced else { break }
+                self.pendingForced = false
                 runForced = true                // any queued follow-up is a recovery pass
             }
             self.drainTask = nil
@@ -107,7 +113,10 @@ Properties this shape gives us:
 - **Coalescing:** `pendingForced` is a Bool, so N recovery ticks during one pass yield one trailing pass.
 - **Recovery during the trailing pass** queues one more, via the same loop — no special case.
 - **Cancellation-independent:** the drain survives cancellation of any caller, which is what makes the queued recovery actually heal.
-- **No lost-wakeup window.** Everything is `@MainActor`, and there is no `await` between the final `pendingForced` check, the loop `break`, and `drainTask = nil`. A trigger cannot slip in after the loop decides to exit but before the handle clears — precisely the gap where a naive implementation drops a heal. Likewise `drainTask = task` is assigned synchronously before the task body's first turn can run, so an `emit` can never observe a started-but-unrecorded drain.
+- **No lost-wakeup window, at either end.** The flag is *consumed* (read-then-clear), never cleared-then-read:
+  - **Start of the drain.** `Task { }` schedules its body rather than running it, so a forced request can arrive after `drainTask = task` but before the body's first turn — in the same main-actor turn as the initial `emit`. Seeding `runForced` with `initialForced || pendingForced` before clearing folds that request into the first pass. Clearing at the top of the loop instead would silently downgrade it to an unforced pass and lose the heal.
+  - **End of the drain.** There is no `await` between the `guard self.pendingForced`, the loop `break`, and `drainTask = nil`, so on the main actor a trigger cannot slip in after the loop decides to exit but before the handle clears.
+  - `drainTask = task` is likewise assigned synchronously before the body's first turn, so an `emit` can never observe a started-but-unrecorded drain.
 - **Termination:** the app already gates the recovery trigger on a live location failure existing, so once the trailing pass heals it, no further ticks call in. The loop is not unbounded in practice.
 
 ### B. Wiring
@@ -150,6 +159,7 @@ All against the injected `perform` closure — no network, no database, no `User
 - **Queued recovery:** `emit(forced: true)` arriving while a pass is in flight → exactly **two** passes total, no more.
 - **Force-flag preservation:** that second pass receives `bypassThrottles == true`. (A trailing pass that ran un-forced would hit the throttles it exists to bypass — this is the assertion that makes the queueing worth anything.)
 - **Coalescing:** *multiple* recovery ticks during one pass → exactly **one** trailing pass, not N.
+- **Forced request arriving before the drain body starts (the second P1 guard):** call `emit(forced: false)`, then `emit(forced: true)` in the **same main-actor turn** (no `await` between them, so the task body has not run yet), then await the first handle. Assert exactly **one** pass ran and it was **forced**. Against a clear-then-read loop this yields one *unforced* pass — the recovery silently downgraded.
 - **Survives caller cancellation (the P1 regression guard):** start a pass from inside a task that awaits the returned drain handle; while `perform` #1 is held open, queue `emit(forced: true)`, then **cancel that caller task**; release #1. Assert the trailing pass **ran**, received `forced == true`, **and observed `Task.isCancelled == false`**. The cancellation assertion is the one that matters — under the inline-drain design the trailing pass would still "run" but in a cancelled context, where the emitter's real fetch guards make it a silent no-op. Merely asserting it ran would pass on the broken design.
 - **Cleanup:** after everything settles, a later `emit` starts a fresh pass — `drainTask` is back to `nil` and `pendingForced` is reset.
 - **First-call forced:** `emit(forced: true)` with nothing in flight runs a single pass with `bypassThrottles == true` (the recovery trigger's normal, uncontended path).
