@@ -316,7 +316,7 @@ struct DashboardView: View {
         }
         
         // Use the environmental service directly - with cooldown
-        let success = await viewModel.environmentalService.requestRefreshWithCooldown()
+        let success = await viewModel.environmentalService.requestRefreshWithCooldown(bypassCooldown: false)
         
         // Final UI updates
         await MainActor.run {

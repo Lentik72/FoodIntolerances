@@ -16,6 +16,8 @@ struct HealthGraphDebugView: View {
     @State private var errorMessage: String?
     @State private var isWorking = false
     @EnvironmentObject private var ingestor: HealthKitIngestor
+    @EnvironmentObject private var environmentalService: EnvironmentalDataService
+    @EnvironmentObject private var environmentStatusStore: EnvironmentStatusStore
     @State private var countsByCategory: [String: Int] = [:]
     @State private var countsBySource: [String: Int] = [:]
     @State private var lastIngestSummary: String?
@@ -102,13 +104,16 @@ struct HealthGraphDebugView: View {
                 Button("Emit environmental events now") {
                     Task {
                         errorMessage = nil
-                        // Clear the AQI retry-throttle watermark so the button always
-                        // re-attempts the backfill (today's emit runs unconditionally —
-                        // there's no longer a global daily lock).
-                        UserDefaults.standard.removeObject(
-                            forKey: EnvironmentalEventEmitter.lastAQIAttemptKey)
+                        // Production service + shared status store, so the result reflects the real
+                        // location lifecycle, pressure carry, and status recording. `bypassThrottles`
+                        // skips the backfills' retry-interval CHECK so a forced run always attempts,
+                        // replacing the old pre-emptive deletion of the AQI attempt key. Note the run
+                        // still records fresh attempt timestamps for both backfills afterward — correct,
+                        // since it really did attempt; it just no longer rewrites history to get there.
                         await EnvironmentalEventEmitter.emitIfNeeded(
-                            service: EnvironmentalDataService())
+                            service: environmentalService,
+                            statusStore: environmentStatusStore,
+                            bypassThrottles: true)
                         await refresh()
                     }
                 }

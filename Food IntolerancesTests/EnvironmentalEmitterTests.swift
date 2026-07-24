@@ -20,8 +20,8 @@ struct EnvironmentalEmitterTests {
     /// A canned `EnvironmentalDataProviding`: fixed forecast/pressure values and a
     /// scripted `AQIRangeResult`, counting range calls and recording the last span.
     private final class StubProvider: EnvironmentalDataProviding, @unchecked Sendable {
-        var currentPressure: Double = 1015
-        var previousPressure: Double = 1015
+        var latestFetchedPressure: Double? = 1015
+        var lastTrustedPressure: Double? = nil
         var forecastHighC: Double? = 24
         var forecastLowC: Double? = 6
         var forecastHumidity: Double? = 55
@@ -32,7 +32,7 @@ struct EnvironmentalEmitterTests {
         private(set) var lastThrough: Date?
         private(set) var refreshCount = 0
 
-        func requestRefreshWithCooldown() async -> Bool {
+        func requestRefreshWithCooldown(bypassCooldown: Bool) async -> Bool {
             refreshCount += 1
             return true
         }
@@ -48,7 +48,7 @@ struct EnvironmentalEmitterTests {
         /// Default `.fetchError` keeps every pre-existing AQI/orchestration test
         /// meaningful unchanged: the weather pass aborts, emits nothing.
         var weatherByDay: [Date: WeatherDayResult] = [:]
-        var weatherDefault: WeatherDayResult = .fetchError
+        var weatherDefault: WeatherDayResult = .fetchError(.badResponse)
         private(set) var weatherCallCount = 0
         private(set) var weatherDaysRequested: [Date] = []
 
@@ -106,7 +106,7 @@ struct EnvironmentalEmitterTests {
         let db = try AppDatabase.inMemory()
         let store = MemoryWatermarkStore()
         let provider = StubProvider()
-        provider.rangeResult = .fetchError
+        provider.rangeResult = .fetchError(.badResponse)
 
         var clock = now0
         await EnvironmentalEventEmitter.emitIfNeeded(
@@ -409,6 +409,62 @@ struct EnvironmentalEmitterTests {
         #expect(store.date(for: weatherDayKey) == day(cal, 6, 7))   // held
     }
 
+    /// A per-day fetchError records ONE observedWeather failure scoped to the whole
+    /// intended range (start…yesterday), even though the pass aborts on day 2.
+    @Test func weatherFetchErrorRecordsScopeOverWholeIntendedRange() async throws {
+        let cal = utc
+        let db = try AppDatabase.inMemory()
+        let stub = StubProvider()
+        let store = MemoryWatermarkStore()
+        let status = EnvironmentStatusStore(defaults: UserDefaults(suiteName: "t." + UUID().uuidString)!)
+        let now = day(cal, 6, 10).addingTimeInterval(9 * 3600)   // yesterday = 06-09
+        store.set(day(cal, 6, 6), for: weatherDayKey)            // start = 06-07
+        stub.weatherByDay = [day(cal, 6, 7): .value(highC: 20, lowC: 10, humidityPct: 50)]
+        stub.weatherDefault = .fetchError(.rejected)             // 06-08 fails → abort
+        await EnvironmentalEventEmitter.emitIfNeeded(database: db, service: stub,
+            now: { now }, calendar: cal, store: store, statusStore: status)
+        let f = status.statuses[.observedWeather]?.liveFailure
+        #expect(f?.reason == .rejected)
+        #expect(f?.scopeStart == day(cal, 6, 7))
+        #expect(f?.scopeEnd == day(cal, 6, 9))                   // yesterday, not day-of-abort
+        // The emitter records `calendar.timeZone.identifier`; Foundation normalizes
+        // the `utc` helper's TimeZone(identifier: "UTC") to "GMT" (verified: they
+        // share the +0 zone), so the recorded identifier is "GMT".
+        #expect(f?.timezoneID == "GMT")
+    }
+
+    /// A cancelled weather day records NOTHING: no status, watermark held.
+    @Test func weatherCancelledRecordsNothing() async throws {
+        let cal = utc
+        let db = try AppDatabase.inMemory()
+        let stub = StubProvider()
+        let store = MemoryWatermarkStore()
+        let status = EnvironmentStatusStore(defaults: UserDefaults(suiteName: "t." + UUID().uuidString)!)
+        let now = day(cal, 6, 10).addingTimeInterval(9 * 3600)
+        store.set(day(cal, 6, 7), for: weatherDayKey)
+        stub.weatherDefault = .cancelled
+        await EnvironmentalEventEmitter.emitIfNeeded(database: db, service: stub,
+            now: { now }, calendar: cal, store: store, statusStore: status)
+        #expect(status.statuses[.observedWeather] == nil)        // nothing recorded
+        #expect(store.date(for: weatherDayKey) == day(cal, 6, 7))
+    }
+
+    /// A completed weather pass records observedWeather success.
+    @Test func weatherSuccessfulPassRecordsSuccess() async throws {
+        let cal = utc
+        let db = try AppDatabase.inMemory()
+        let stub = StubProvider()
+        let store = MemoryWatermarkStore()
+        let status = EnvironmentStatusStore(defaults: UserDefaults(suiteName: "t." + UUID().uuidString)!)
+        let now = day(cal, 6, 10).addingTimeInterval(9 * 3600)
+        store.set(day(cal, 6, 8), for: weatherDayKey)            // start = 06-09 = yesterday
+        stub.weatherByDay = [day(cal, 6, 9): .value(highC: 22, lowC: 11, humidityPct: 55)]
+        await EnvironmentalEventEmitter.emitIfNeeded(database: db, service: stub,
+            now: { now }, calendar: cal, store: store, statusStore: status)
+        #expect(status.statuses[.observedWeather]?.lastSuccess != nil)
+        #expect(status.statuses[.observedWeather]?.liveFailure == nil)
+    }
+
     /// Recent absent day (grace) holds the contiguous watermark; old absent advances it.
     @Test func weatherWatermarkStopsAtRecentGapButAdvancesOverOldGap() async throws {
         let cal = utc
@@ -502,5 +558,28 @@ struct EnvironmentalEmitterTests {
             #expect(stub.rangeCallCount == 1)       // AQI pass unaffected
             #expect(stub.weatherCallCount == 0)     // weather pass throttled
         }
+    }
+
+    // MARK: - Throttle bypass (location-recovery pass)
+
+    /// `bypassThrottles: true` forces BOTH backfills to fetch even when BOTH retry
+    /// attempt watermarks are RECENT (within the interval) — the guard the
+    /// non-bypass path would trip. Peer of `eachBackfillRunsWhenOnlyTheOtherIsThrottled`,
+    /// which proves the default (non-bypass) path still blocks.
+    @Test func bypassThrottlesForcesBothBackfillsDespiteRecentAttemptWatermarks() async throws {
+        let cal = utc
+        let now = day(cal, 6, 10).addingTimeInterval(9 * 3600)   // yesterday = 06-09
+        let db = try AppDatabase.inMemory()
+        let stub = StubProvider()
+        let store = MemoryWatermarkStore()
+        // Both attempt watermarks RECENT → the non-bypass path blocks both passes.
+        store.set(now.addingTimeInterval(-60), for: EnvironmentalEventEmitter.lastAQIAttemptKey)
+        store.set(now.addingTimeInterval(-60), for: EnvironmentalEventEmitter.lastWeatherAttemptKey)
+
+        await EnvironmentalEventEmitter.emitIfNeeded(
+            database: db, service: stub, now: { now }, calendar: cal, store: store, bypassThrottles: true)
+
+        #expect(stub.rangeCallCount >= 1)     // AQI throttle bypassed
+        #expect(stub.weatherCallCount >= 1)   // weather throttle bypassed
     }
 }

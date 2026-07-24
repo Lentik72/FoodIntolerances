@@ -19,5 +19,6 @@ extension URLSession: HTTPTransport {}
 /// forecast, air quality) can be tested with a fixed coordinate instead of
 /// depending on CoreLocation / the real LocationService.
 public protocol LocationProviding {
-    var coordinate: CLLocationCoordinate2D? { get }
+    var coordinate: CLLocationCoordinate2D? { get }   // trusted only — nil hides a fabricated fix
+    var authorization: EnvironmentLocationAuthorization { get }
 }

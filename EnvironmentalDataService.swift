@@ -19,7 +19,8 @@ enum AQIDayValue: Equatable {
 /// (transport error OR a decode error — never conflated with per-day absence),
 /// or a dictionary of local-day → `AQIDayValue`, keyed by `calendar.startOfDay(for:)`.
 enum AQIRangeResult: Equatable {
-    case fetchError
+    case fetchError(EnvironmentFailureReason)
+    case cancelled
     case days([Date: AQIDayValue])
 }
 
@@ -30,7 +31,8 @@ enum AQIRangeResult: Equatable {
 /// humidity and can be missing independently of temperature (nil → the emitter
 /// writes no observed humidity event for that day).
 enum WeatherDayResult: Equatable {
-    case fetchError
+    case fetchError(EnvironmentFailureReason)
+    case cancelled
     case absent
     case value(highC: Double, lowC: Double, humidityPct: Double?)
 }
@@ -61,7 +63,23 @@ class EnvironmentalDataService: ObservableObject {
     @Published var lastUpdated: Date = Date()
     @Published var showZipCodePrompt: Bool = false
     @Published private(set) var currentAtmosphericTask: Task<Void, Never>? = nil
-    
+
+    /// Bumped whenever a TRUSTED coordinate (re)appears — the location-recovery
+    /// signal the App observes to fire a throttle/cooldown-bypassing emit so the
+    /// live `locationDenied`/`locationUnavailable` markers self-heal in one pass
+    /// (return-from-Settings, or a cold-launch fix that resolves seconds later).
+    @Published private(set) var locationRecoveryTick: Int = 0
+
+    /// The emitter's inputs. `latestFetchedPressure` is this refresh's genuine
+    /// reading (nil on failure/fallback). `lastTrustedPressure` is the prior
+    /// genuine reading, exposed only when recent enough to compare.
+    @Published private(set) var latestFetchedPressure: Double? = nil
+    @Published private(set) var lastTrustedPressure: Double? = nil
+    /// The last genuine API reading + when it landed. Never cleared at refresh
+    /// start, never written by a fallback/cancellation — the carry that makes the
+    /// previous/current shift correct across refreshes.
+    private var mostRecentGenuinePressure: (value: Double, at: Date)? = nil
+
     // Private properties
     private var pressureReadings: [(pressure: Double, timestamp: Date)] = []
     private let pressureChangeThreshold: Double = 6.0  // hPa threshold for sudden change
@@ -72,6 +90,10 @@ class EnvironmentalDataService: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var lastRefreshRequest = Date.distantPast
     private let minimumRefreshInterval: TimeInterval = 300  // 5 minutes
+    /// Trusted-cache window: a cached fix older than this is not ingested (it is
+    /// still shown by the legacy display). Matches the existing 300 s location
+    /// cadence used elsewhere in `LocationService`.
+    static let locationFreshnessInterval: TimeInterval = 300
 
     // Dependency-injection seams. Default to real production behavior
     // (URLSession, wall-clock `Date`, the current calendar/timezone, and the
@@ -82,6 +104,11 @@ class EnvironmentalDataService: ObservableObject {
     private let now: () -> Date
     private let calendar: Calendar
     private let injectedLocation: LocationProviding?
+    /// The single source of truth for env-fetch health (Task 2). Optional with a
+    /// `nil` default: `EnvironmentStatusStore` is `@MainActor`, so a constructed
+    /// default argument would not compile at the non-`@MainActor` test call sites;
+    /// a nil store makes every `recordToday*` a no-op. The App passes the real one.
+    private let statusStore: EnvironmentStatusStore?
     /// Lazy because the default provider needs `self` — evaluated on first use,
     /// well after `init` has finished setting every other stored property.
     private lazy var locationProvider: LocationProviding = injectedLocation ?? DefaultLocationProvider(service: self)
@@ -93,7 +120,19 @@ class EnvironmentalDataService: ObservableObject {
         private unowned let service: EnvironmentalDataService
         init(service: EnvironmentalDataService) { self.service = service }
         var coordinate: CLLocationCoordinate2D? {
-            service.manualLocation ?? service.locationManager?.currentLocation
+            guard let loc = service.locationManager else { return service.manualLocation }
+            return LocationTrust.trustedCoordinate(
+                manual: service.manualLocation,
+                provenance: loc.provenance,
+                deviceCoordinate: loc.currentLocation,
+                cachedCoordinate: loc.lastKnownLocation,
+                cachedAt: loc.cachedLocationAt,
+                authorization: loc.authorization,
+                now: service.now(),
+                freshness: EnvironmentalDataService.locationFreshnessInterval)
+        }
+        var authorization: EnvironmentLocationAuthorization {
+            service.locationManager?.authorization ?? .notDetermined
         }
     }
 
@@ -101,17 +140,32 @@ class EnvironmentalDataService: ObservableObject {
          transport: HTTPTransport = URLSession.shared,
          now: @escaping () -> Date = Date.init,
          calendar: Calendar = { var c = Calendar(identifier: .gregorian); c.timeZone = .current; return c }(),
-         location: LocationProviding? = nil) {
+         location: LocationProviding? = nil,
+         statusStore: EnvironmentStatusStore? = nil) {
         self.transport = transport
         self.now = now
         self.calendar = calendar
         self.injectedLocation = location
+        self.statusStore = statusStore
         if let locationManager = locationManager {
             self.locationManager = locationManager
         } else {
             // Create a new location service instance if none provided
             self.locationManager = LocationService()
         }
+
+        // Location-recovery signal: when the device coordinate changes, defer to the
+        // main queue so `apply()`'s follow-on `provenance` write (set right after
+        // `currentLocation`) is visible, then bump the tick only if a TRUSTED
+        // coordinate is now resolvable. The App observes this tick to fire a
+        // throttle/cooldown-bypassing emit so location-failure markers self-heal.
+        self.locationManager?.$currentLocation
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                if self.resolvedCoordinate() != nil { self.locationRecoveryTick += 1 }
+            }
+            .store(in: &cancellables)
     }
     
     func setLocation(latitude: Double, longitude: Double) {
@@ -220,7 +274,11 @@ class EnvironmentalDataService: ObservableObject {
         pressureReadings.removeAll()
         currentPressure = 0.0
         previousPressure = 0.0
-        
+
+        // Not a genuine reading: clear what the emitter would see, but preserve
+        // the genuine carry so a later real reading can still compute a real drop.
+        latestFetchedPressure = nil
+
         // Cancel any existing fetch tasks
         currentAtmosphericTask?.cancel()
         currentAtmosphericTask = nil
@@ -248,10 +306,65 @@ class EnvironmentalDataService: ObservableObject {
         locationProvider.coordinate
     }
 
-    public func requestRefreshWithCooldown() async -> Bool {
-        // Check if it's too soon for another refresh
+    /// Cancellation must never be recorded as a failure or a success.
+    private func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return true }
+        return false
+    }
+
+    /// The reason to record when there is no trusted coordinate.
+    private func locationReason() -> EnvironmentFailureReason {
+        switch locationProvider.authorization {
+        case .denied, .restricted: return .locationDenied
+        default:                   return .locationUnavailable
+        }
+    }
+
+    /// Maps a thrown error into a reason (used in every fetch's `catch`).
+    /// A `URLError` (not cancelled) is a connectivity failure; anything else
+    /// reaching the catch is a decode/unexpected-shape failure.
+    private func classifyThrown(_ error: Error) -> EnvironmentFailureReason {
+        if let urlError = error as? URLError, urlError.code != .cancelled { return .offline }
+        return .badResponse
+    }
+
+    /// A non-2xx HTTP status → a reason, checked BEFORE decode (a 401 body decodes
+    /// to a throw that would otherwise be miscounted as `.badResponse`). nil for
+    /// 2xx or a non-`HTTPURLResponse` stub (no status info → proceed to decode).
+    /// Used by BOTH backfill fetches AND the three today fetches (Task 8).
+    private func httpStatusReason(_ response: URLResponse?) -> EnvironmentFailureReason? {
+        guard let http = response as? HTTPURLResponse else { return nil }
+        if http.statusCode == 401 || http.statusCode == 403 { return .rejected }
+        if !(200...299).contains(http.statusCode) { return .badResponse }
+        return nil
+    }
+
+    /// The scope a "today" fetch blocks when it fails: this local day only
+    /// (start == end == today's local midnight), in the calendar's timezone.
+    private func todayScope() -> (start: Date, end: Date, tz: String) {
+        let d = calendar.startOfDay(for: now())
+        return (d, d, calendar.timeZone.identifier)
+    }
+
+    /// Record a today-fetch success (a nil store is a no-op).
+    @MainActor private func recordTodaySuccess(_ capability: EnvironmentCapability) {
+        guard let statusStore else { return }
+        statusStore.recordSuccess(capability, at: now())
+    }
+
+    /// Record a today-fetch failure scoped to this local day (a nil store is a no-op).
+    @MainActor private func recordTodayFailure(_ capability: EnvironmentCapability, _ reason: EnvironmentFailureReason) {
+        guard let statusStore else { return }
+        let s = todayScope()
+        statusStore.recordFailure(capability, reason: reason, scopeStart: s.start, scopeEnd: s.end, timezoneID: s.tz, at: now())
+    }
+
+    public func requestRefreshWithCooldown(bypassCooldown: Bool = false) async -> Bool {
+        // Check if it's too soon for another refresh. A location-recovery pass
+        // (`bypassCooldown`) skips ONLY this early-return — everything else runs.
         let currentTime = now()
-        if currentTime.timeIntervalSince(lastRefreshRequest) < minimumRefreshInterval {
+        if !bypassCooldown, currentTime.timeIntervalSince(lastRefreshRequest) < minimumRefreshInterval {
             return false
         }
 
@@ -284,6 +397,11 @@ class EnvironmentalDataService: ObservableObject {
             self.atmosphericPressureCategory = "Loading..."
         }
 
+        // Start of a genuine attempt: clear any previously-fetched value so a
+        // cancelled/failing refresh leaves nothing stale for the emitter to
+        // restamp. The carry (`mostRecentGenuinePressure`) is untouched.
+        await MainActor.run { self.clearFetchedPressure() }
+
         // Local timeout: if location never resolves / the fetch stalls, publish
         // fallback pressure after 5s so the UI doesn't sit on "Loading..." forever.
         // Scoped entirely to this call — it never references `currentAtmosphericTask`.
@@ -302,23 +420,38 @@ class EnvironmentalDataService: ObservableObject {
         // Check if location is available
         guard let location = self.resolvedCoordinate() else {
             Logger.warning("No location available, using fallback pressure data.", category: .location)
-            await MainActor.run { self.useFallbackPressureData() }
+            await MainActor.run {
+                self.recordTodayFailure(.currentPressure, self.locationReason())
+                self.useFallbackPressureData()
+            }
             return
         }
 
         guard let url = APIConfig.weatherURL(latitude: location.latitude, longitude: location.longitude) else {
             Logger.error("Invalid URL for weather API", category: .network)
+            await MainActor.run { self.recordTodayFailure(.currentPressure, .notConfigured) }
             return
         }
 
         do {
-            let (data, _) = try await self.transport.data(from: url)
+            let (data, response) = try await self.transport.data(from: url)
+            // Cancelled AFTER a clean transport throws nothing → the catch can't see
+            // it. Bail before recording/publishing so a superseding refresh wins.
+            if Task.isCancelled { return }
+            if let reason = httpStatusReason(response) {   // 401/403/non-2xx before decode
+                await MainActor.run {
+                    self.recordTodayFailure(.currentPressure, reason)
+                    self.useFallbackPressureData()
+                }
+                return
+            }
             let decodedResponse = try JSONDecoder().decode(WeatherResponse.self, from: data)
 
             let pressureValue = Double(decodedResponse.main.pressure)
             let temp = decodedResponse.main.temp
             let humidity = decodedResponse.main.humidity.map(Double.init)
 
+            if Task.isCancelled { return }
             await MainActor.run {
                 self.updateAtmosphericPressure(pressureValue)
                 self.atmosphericPressure = "\(Int(pressureValue)) hPa"
@@ -326,10 +459,19 @@ class EnvironmentalDataService: ObservableObject {
                 self.currentTemperatureC = temp
                 self.currentHumidityPct = humidity
                 self.lastUpdated = Date()
+                self.recordGenuinePressure(pressureValue, at: self.now())
+                self.recordTodaySuccess(.currentPressure)
             }
         } catch {
+            // A cancelled fetch must not apply the legacy fallback and must record
+            // nothing — a superseding refresh is coming. `clearFetchedPressure()`
+            // already nil'd `latestFetchedPressure` at the start of this attempt.
+            if self.isCancellation(error) { return }
             Logger.error(error, message: "Error fetching atmospheric pressure", category: .network)
-            await MainActor.run { self.useFallbackPressureData() }
+            await MainActor.run {
+                self.recordTodayFailure(.currentPressure, self.classifyThrown(error))
+                self.useFallbackPressureData()
+            }
         }
     }
 
@@ -361,17 +503,31 @@ class EnvironmentalDataService: ObservableObject {
                 self.forecastHighC = nil
                 self.forecastLowC = nil
                 self.forecastHumidity = nil
+                self.recordTodayFailure(.forecastWeather, self.locationReason())
             }
             return
         }
 
         guard let url = APIConfig.forecastURL(latitude: location.latitude, longitude: location.longitude) else {
             Logger.error("Invalid URL for forecast API", category: .network)
+            await MainActor.run { self.recordTodayFailure(.forecastWeather, .notConfigured) }
             return
         }
 
         do {
-            let (data, _) = try await transport.data(from: url)
+            let (data, response) = try await transport.data(from: url)
+            // Cancelled AFTER a clean transport throws nothing → bail before it can
+            // clear a live failure or restamp a value (a superseding refresh wins).
+            if Task.isCancelled { return }
+            if let reason = httpStatusReason(response) {   // 401/403/non-2xx before decode
+                await MainActor.run {
+                    self.forecastHighC = nil
+                    self.forecastLowC = nil
+                    self.forecastHumidity = nil
+                    self.recordTodayFailure(.forecastWeather, reason)
+                }
+                return
+            }
             let decoded = try JSONDecoder().decode(ForecastResponse.self, from: data)
             let slots = decoded.list.map {
                 (dt: $0.dt, temp: $0.main.temp, humidity: Double($0.main.humidity))
@@ -382,17 +538,22 @@ class EnvironmentalDataService: ObservableObject {
             let high = aggregate?.high
             let low = aggregate?.low
             let humidity = aggregate?.humidity
+            if Task.isCancelled { return }
             await MainActor.run {
                 self.forecastHighC = high
                 self.forecastLowC = low
                 self.forecastHumidity = humidity
+                if aggregate == nil { self.recordTodayFailure(.forecastWeather, .insufficientData) }
+                else { self.recordTodaySuccess(.forecastWeather) }
             }
         } catch {
+            if self.isCancellation(error) { return }
             Logger.error(error, message: "Error fetching daily forecast", category: .network)
             await MainActor.run {
                 self.forecastHighC = nil
                 self.forecastLowC = nil
                 self.forecastHumidity = nil
+                self.recordTodayFailure(.forecastWeather, self.classifyThrown(error))
             }
         }
     }
@@ -418,17 +579,29 @@ class EnvironmentalDataService: ObservableObject {
             Logger.warning("No location available for air quality fetch.", category: .location)
             await MainActor.run {
                 self.forecastAQI = nil
+                self.recordTodayFailure(.forecastAirQuality, self.locationReason())
             }
             return
         }
 
         guard let url = APIConfig.airPollutionURL(latitude: location.latitude, longitude: location.longitude) else {
             Logger.error("Invalid URL for air pollution API", category: .network)
+            await MainActor.run { self.recordTodayFailure(.forecastAirQuality, .notConfigured) }
             return
         }
 
         do {
-            let (data, _) = try await transport.data(from: url)
+            let (data, response) = try await transport.data(from: url)
+            // Cancelled AFTER a clean transport throws nothing → bail before it can
+            // clear a live failure or restamp a value (a superseding refresh wins).
+            if Task.isCancelled { return }
+            if let reason = httpStatusReason(response) {   // 401/403/non-2xx before decode
+                await MainActor.run {
+                    self.forecastAQI = nil
+                    self.recordTodayFailure(.forecastAirQuality, reason)
+                }
+                return
+            }
             let decoded = try JSONDecoder().decode(AirPollutionResponse.self, from: data)
             let slots = decoded.list.map {
                 (dt: $0.dt, pm25: $0.components.pm2_5)
@@ -437,13 +610,18 @@ class EnvironmentalDataService: ObservableObject {
             // cross-actor-capture the (non-Sendable) tuple/decoded state.
             let mean = EnvironmentalDataService.meanPM25(slots: slots, now: now())
             let aqi = mean.map { AirQualityIndex.epaAQI(pm25: $0) }
+            if Task.isCancelled { return }
             await MainActor.run {
                 self.forecastAQI = aqi
+                if mean == nil { self.recordTodayFailure(.forecastAirQuality, .insufficientData) }
+                else { self.recordTodaySuccess(.forecastAirQuality) }
             }
         } catch {
+            if self.isCancellation(error) { return }
             Logger.error(error, message: "Error fetching air quality", category: .network)
             await MainActor.run {
                 self.forecastAQI = nil
+                self.recordTodayFailure(.forecastAirQuality, self.classifyThrown(error))
             }
         }
     }
@@ -497,7 +675,7 @@ class EnvironmentalDataService: ObservableObject {
     func fetchCompletedAirQualityRange(from startDay: Date, through endDay: Date) async -> AQIRangeResult {
         guard let location = self.resolvedCoordinate() else {
             Logger.warning("No location available for air quality range fetch.", category: .location)
-            return .fetchError
+            return .fetchError(locationReason())
         }
 
         let requestWindow = (
@@ -512,11 +690,13 @@ class EnvironmentalDataService: ObservableObject {
             end: requestWindow.end.timeIntervalSince1970
         ) else {
             Logger.error("Invalid URL for air pollution history API", category: .network)
-            return .fetchError
+            return .fetchError(.notConfigured)
         }
 
         do {
-            let (data, _) = try await transport.data(from: url)
+            let (data, response) = try await transport.data(from: url)
+            if Task.isCancelled { return .cancelled }   // cancellation wins over classification (before httpStatusReason/decode)
+            if let reason = httpStatusReason(response) { return .fetchError(reason) }   // 401/403 before decode
             let decoded = try JSONDecoder().decode(AirPollutionResponse.self, from: data)
             let slots = decoded.list.map {
                 (dt: $0.dt, pm25: $0.components.pm2_5)
@@ -542,10 +722,12 @@ class EnvironmentalDataService: ObservableObject {
                 guard let nextDay = calendar.date(byAdding: .day, value: 1, to: day) else { break }
                 day = nextDay
             }
+            if Task.isCancelled { return .cancelled }   // cancelled AFTER a clean transport → not a failure
             return .days(byDay)
         } catch {
+            if isCancellation(error) { return .cancelled }
             Logger.error(error, message: "Error fetching air quality history range", category: .network)
-            return .fetchError
+            return .fetchError(classifyThrown(error))
         }
     }
 
@@ -564,7 +746,7 @@ class EnvironmentalDataService: ObservableObject {
     func fetchCompletedWeatherDay(for day: Date) async -> WeatherDayResult {
         guard let location = self.resolvedCoordinate() else {
             Logger.warning("No location available for weather day fetch.", category: .location)
-            return .fetchError
+            return .fetchError(locationReason())
         }
         let formatter = DateFormatter()
         formatter.calendar = calendar
@@ -585,10 +767,12 @@ class EnvironmentalDataService: ObservableObject {
             latitude: location.latitude, longitude: location.longitude,
             date: formatter.string(from: day), tz: tzOffset) else {
             Logger.error("Invalid URL for One Call day_summary API", category: .network)
-            return .fetchError
+            return .fetchError(.notConfigured)
         }
         do {
-            let (data, _) = try await transport.data(from: url)
+            let (data, response) = try await transport.data(from: url)
+            if Task.isCancelled { return .cancelled }   // cancellation wins over classification (before httpStatusReason/decode)
+            if let reason = httpStatusReason(response) { return .fetchError(reason) }   // 401/403 before decode
             let decoded = try JSONDecoder().decode(DaySummaryResponse.self, from: data)
             guard let high = decoded.temperature?.max, let low = decoded.temperature?.min else {
                 // An auth/error body decodes to an empty shell (no temperature) —
@@ -596,14 +780,16 @@ class EnvironmentalDataService: ObservableObject {
                 // always carries "message"; treat that as fetchError, else absent.
                 if let errorBody = try? JSONDecoder().decode(OneCallErrorBody.self, from: data) {
                     Logger.error("One Call day_summary error body: \(errorBody.message)", category: .network)
-                    return .fetchError
+                    return .fetchError(.rejected)   // not-subscribed / bad key — retryable, never absent
                 }
                 return .absent
             }
+            if Task.isCancelled { return .cancelled }   // cancelled AFTER a clean transport → not a failure
             return .value(highC: high, lowC: low, humidityPct: decoded.humidity?.afternoon)
         } catch {
+            if isCancellation(error) { return .cancelled }
             Logger.error(error, message: "Error fetching weather day summary", category: .network)
-            return .fetchError
+            return .fetchError(classifyThrown(error))
         }
     }
 
@@ -627,9 +813,13 @@ class EnvironmentalDataService: ObservableObject {
         self.currentPressure = fallbackPressure
         self.previousPressure = fallbackPressure
         self.suddenPressureChange = false
-        
+
         // Important: update lastUpdated to trigger UI refresh
         self.lastUpdated = Date()
+
+        // Not a genuine reading: clear what the emitter would see, but preserve
+        // the genuine carry so a later real reading can still compute a real drop.
+        self.latestFetchedPressure = nil
     }
     
     private func fetchMoonPhase(for date: Date) async {
@@ -644,6 +834,24 @@ class EnvironmentalDataService: ObservableObject {
         MercuryRetrograde.isRetrograde(on: date)
     }
     
+    /// Record a genuine API pressure reading: shift the carry and expose the prior
+    /// genuine value ONLY if within `pressureReadingInterval`. This is the sole
+    /// writer of `latestFetchedPressure`/`lastTrustedPressure`/`mostRecentGenuinePressure`.
+    /// It deliberately does NOT touch `suddenPressureChange` — that legacy-dashboard
+    /// flag is owned solely by `updateAtmosphericPressure` (the emitter never reads it;
+    /// the core factory computes the mined drop from the two optionals).
+    func recordGenuinePressure(_ value: Double, at: Date) {
+        let prior = mostRecentGenuinePressure
+        let comparable = prior.map { at.timeIntervalSince($0.at) <= pressureReadingInterval } ?? false
+        lastTrustedPressure = comparable ? prior?.value : nil
+        mostRecentGenuinePressure = (value, at)
+        latestFetchedPressure = value
+    }
+
+    /// Clear the fetched reading at the start of a genuine refresh, so a cancelled
+    /// refresh leaves nothing for the emitter to restamp. Carry untouched.
+    func clearFetchedPressure() { latestFetchedPressure = nil }
+
     private func updateAtmosphericPressure(_ pressure: Double) {
         let currentTime = now()
 
@@ -691,6 +899,9 @@ class EnvironmentalDataService: ObservableObject {
             updateAtmosphericPressure(cachedPressure)
             self.atmosphericPressure = "\(Int(cachedPressure)) hPa"
             self.atmosphericPressureCategory = self.categorizePressure(cachedPressure)
+            // Not a genuine reading: clear what the emitter would see, but
+            // preserve the genuine carry.
+            self.latestFetchedPressure = nil
             return
         }
         
@@ -709,7 +920,10 @@ class EnvironmentalDataService: ObservableObject {
         updateAtmosphericPressure(fallbackPressure)
         self.atmosphericPressure = "\(Int(fallbackPressure)) hPa"
         self.atmosphericPressureCategory = self.categorizePressure(fallbackPressure)
-        
+        // Not a genuine reading: clear what the emitter would see, but preserve
+        // the genuine carry.
+        self.latestFetchedPressure = nil
+
         // Cache this value for future fallbacks
         UserDefaults.standard.set(fallbackPressure, forKey: "lastKnownPressure")
     }
@@ -766,11 +980,37 @@ class EnvironmentalDataService: ObservableObject {
 class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
     private let locationManager = CLLocationManager()
     @Published var currentLocation: CLLocationCoordinate2D?
+    /// Where `currentLocation` came from. Default `.fabricated` so an un-set state
+    /// is untrusted (safe default); every real assignment stamps it via `apply(_:provenance:)`.
+    @Published private(set) var provenance: LocationProvenance = .fabricated
     private var timeoutTask: Task<Void, Never>?
-    
+
     // Add location caching
     @AppStorage("lastKnownLatitude") private var cachedLatitude: Double?
     @AppStorage("lastKnownLongitude") private var cachedLongitude: Double?
+    /// Epoch of the last DEVICE fix, persisted alongside the cached lat/lon so the
+    /// cache's age is knowable. Nil until a device fix has ever landed.
+    @AppStorage("lastKnownLocationAt") private var cachedLocationAtEpoch: Double = 0
+
+    var cachedLocationAt: Date? { cachedLocationAtEpoch == 0 ? nil : Date(timeIntervalSince1970: cachedLocationAtEpoch) }
+
+    /// App-level authorization, mapped from the private `CLLocationManager`.
+    var authorization: EnvironmentLocationAuthorization {
+        switch locationManager.authorizationStatus {
+        case .authorizedWhenInUse, .authorizedAlways: return .authorized
+        case .denied:      return .denied
+        case .restricted:  return .restricted
+        case .notDetermined: return .notDetermined
+        @unknown default:  return .notDetermined
+        }
+    }
+
+    /// Single choke point for setting `currentLocation` with its provenance, so no
+    /// call site can set the coordinate without also declaring where it came from.
+    private func apply(_ coordinate: CLLocationCoordinate2D?, provenance: LocationProvenance) {
+        self.currentLocation = coordinate
+        self.provenance = provenance
+    }
     
     // Add these tracking variables to reduce logging
     private var hasLoggedPermissionRequest = false
@@ -882,12 +1122,12 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
                 await MainActor.run {
                     // Use cached location if available
                     if let cached = lastKnownLocation {
-                        self.currentLocation = cached
+                        self.apply(cached, provenance: .cached)
                     } else {
                         // Fallback to a default location if we've never had one
                         if !silent {
                         }
-                        self.currentLocation = CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060) // NYC as fallback
+                        self.apply(CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060), provenance: .fabricated) // NYC as fallback
                     }
                 }
             }
@@ -901,10 +1141,10 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
             await MainActor.run {
                 // Try to use cached location first
                 if let cached = lastKnownLocation {
-                    self.currentLocation = cached
+                    self.apply(cached, provenance: .cached)
                 } else {
                     // Use fallback location
-                    self.currentLocation = CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060) // NYC as fallback
+                    self.apply(CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060), provenance: .fabricated) // NYC as fallback
                 }
             }
         }
@@ -957,12 +1197,13 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
         }
         
         DispatchQueue.main.async {
-            self.currentLocation = newLocation.coordinate
-            
+            self.apply(newLocation.coordinate, provenance: .device)
+
             // Cache the location
             self.cachedLatitude = newLocation.coordinate.latitude
             self.cachedLongitude = newLocation.coordinate.longitude
-            
+            self.cachedLocationAtEpoch = Date().timeIntervalSince1970
+
             // Only log if it's a significant change
             if shouldLog {
                 self.lastLoggedLocation = newLocation.coordinate
@@ -995,10 +1236,10 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
         await MainActor.run {
             // Use a cached location if available
             if let cachedLat = cachedLatitude, let cachedLon = cachedLongitude {
-                self.currentLocation = CLLocationCoordinate2D(latitude: cachedLat, longitude: cachedLon)
+                self.apply(CLLocationCoordinate2D(latitude: cachedLat, longitude: cachedLon), provenance: .cached)
             } else {
                 // Use a default fallback location (NYC)
-                self.currentLocation = CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060)
+                self.apply(CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060), provenance: .fabricated)
             }
             
             // Persist that we've handled location denial
@@ -1024,10 +1265,10 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
             Task { @MainActor in
                 // Use cached location if available or a reasonable default
                 if let cachedLat = cachedLatitude, let cachedLon = cachedLongitude {
-                    currentLocation = CLLocationCoordinate2D(latitude: cachedLat, longitude: cachedLon)
+                    apply(CLLocationCoordinate2D(latitude: cachedLat, longitude: cachedLon), provenance: .cached)
                 } else {
                     // Use a default location (NYC) as absolute fallback
-                    currentLocation = CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060)
+                    apply(CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060), provenance: .fabricated)
                 }
                 
                 // Rather than show an intrusive alert, use a non-blocking notification

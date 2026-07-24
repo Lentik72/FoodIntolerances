@@ -10,7 +10,8 @@ struct FoodIntolerancesApp: App {
     }()
     
     @StateObject private var logItemViewModel = LogItemViewModel()
-    @StateObject private var environmentalService = EnvironmentalDataService(locationManager: LocationService())
+    @StateObject private var environmentStatusStore: EnvironmentStatusStore
+    @StateObject private var environmentalService: EnvironmentalDataService
     @StateObject private var tabManager = TabManager()
     @StateObject private var healthKitManager = HealthKitManager()
     @StateObject private var healthKitIngestor = HealthKitIngestor()
@@ -36,6 +37,11 @@ struct FoodIntolerancesApp: App {
         let muteStore = RedFlagMuteStore()
         _redFlagMuteStore = StateObject(wrappedValue: muteStore)
         _redFlagPresenter = StateObject(wrappedValue: RedFlagPresenter(muteStore: muteStore))
+
+        let statusStore = EnvironmentStatusStore()
+        _environmentStatusStore = StateObject(wrappedValue: statusStore)
+        _environmentalService = StateObject(wrappedValue:
+            EnvironmentalDataService(locationManager: LocationService(), statusStore: statusStore))
 
         setupGlobalErrorHandling()
 
@@ -100,6 +106,8 @@ struct FoodIntolerancesApp: App {
                 .environmentObject(captureCoordinator)
                 .environmentObject(redFlagMuteStore)
                 .environmentObject(redFlagPresenter)
+                .environmentObject(environmentStatusStore)
+                .environmentObject(environmentalService)
                 .fullScreenCover(item: $redFlagPresenter.pending) { match in
                     switch match.category {
                     case .medicalEmergency:
@@ -119,10 +127,21 @@ struct FoodIntolerancesApp: App {
                     }
                 }
                 .task { healthKitIngestor.startObserving() }
-                .task { await EnvironmentalEventEmitter.emitIfNeeded(service: environmentalService) }
+                .task { await EnvironmentalEventEmitter.emitIfNeeded(service: environmentalService, statusStore: environmentStatusStore) }
                 .onChange(of: scenePhase) { _, phase in
                     guard phase == .active else { return }
-                    Task { await EnvironmentalEventEmitter.emitIfNeeded(service: environmentalService) }
+                    Task { await EnvironmentalEventEmitter.emitIfNeeded(service: environmentalService, statusStore: environmentStatusStore) }
+                }
+                .onChange(of: environmentalService.locationRecoveryTick) { _, _ in
+                    // A trusted coordinate (re)appeared. Only force a bypass emit when a
+                    // live location failure actually exists — this bounds the throttle/
+                    // cooldown bypass to real recovery and prevents a fetch storm on every
+                    // routine device fix.
+                    let hasLiveLocationFailure = environmentStatusStore.statuses.values.contains {
+                        $0.liveFailure?.reason == .locationDenied || $0.liveFailure?.reason == .locationUnavailable
+                    }
+                    guard hasLiveLocationFailure else { return }
+                    Task { await EnvironmentalEventEmitter.emitIfNeeded(service: environmentalService, statusStore: environmentStatusStore, bypassThrottles: true) }
                 }
         }
     }

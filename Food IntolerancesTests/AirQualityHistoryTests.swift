@@ -108,7 +108,8 @@ struct AirQualityHistoryTests {
 
     private struct CountingStubTransport: HTTPTransport {
         let payload: Data
-        let makeError: Bool
+        var makeError: Bool = false
+        var statusCode: Int? = nil          // nil → plain URLResponse (no HTTP status)
         let callCount: Counter
 
         final class Counter: @unchecked Sendable {
@@ -119,16 +120,18 @@ struct AirQualityHistoryTests {
 
         func data(from url: URL) async throws -> (Data, URLResponse) {
             callCount.increment()
-            struct StubError: Error {}
-            if makeError { throw StubError() }
-            let response = URLResponse(url: url, mimeType: "application/json",
-                                        expectedContentLength: payload.count, textEncodingName: "utf-8")
+            if makeError { throw URLError(.timedOut) }
+            let response: URLResponse = statusCode.map {
+                HTTPURLResponse(url: url, statusCode: $0, httpVersion: nil, headerFields: nil)!
+            } ?? URLResponse(url: url, mimeType: "application/json",
+                             expectedContentLength: payload.count, textEncodingName: "utf-8")
             return (payload, response)
         }
     }
 
     private struct StubLocation: LocationProviding {
-        let coordinate: CLLocationCoordinate2D?
+        var coordinate: CLLocationCoordinate2D?
+        var authorization: EnvironmentLocationAuthorization = .authorized
     }
 
     private func ensureTestAPIKeyConfigured() {
@@ -227,7 +230,7 @@ struct AirQualityHistoryTests {
 
         let result = await service.fetchCompletedAirQualityRange(from: day0, through: day0)
 
-        #expect(result == .fetchError)
+        #expect(result == .fetchError(.offline))
         #expect(counter.count == 1)
     }
 
@@ -245,7 +248,7 @@ struct AirQualityHistoryTests {
 
         let result = await service.fetchCompletedAirQualityRange(from: day0, through: day0)
 
-        #expect(result == .fetchError)
+        #expect(result == .fetchError(.badResponse))
         #expect(counter.count == 1)
     }
 
@@ -260,7 +263,73 @@ struct AirQualityHistoryTests {
 
         let result = await service.fetchCompletedAirQualityRange(from: day0, through: day0)
 
-        #expect(result == .fetchError)
+        #expect(result == .fetchError(.locationUnavailable))
         #expect(counter.count == 0)
+    }
+
+    /// A non-2xx status on the history endpoint is honored BEFORE decode — a 403
+    /// body that would otherwise decode (empty `{}` → all-absent `.days`) surfaces
+    /// as `.fetchError(.rejected)`, not a silent all-absent range.
+    @Test func httpRejectionStatusIsRejected() async {
+        ensureTestAPIKeyConfigured()
+        let calendar = utcCalendar
+        let day0 = calendar.date(from: DateComponents(year: 2025, month: 6, day: 1))!
+        let counter = CountingStubTransport.Counter()
+        let transport = CountingStubTransport(payload: Data("{}".utf8), statusCode: 403, callCount: counter)
+        let location = StubLocation(coordinate: CLLocationCoordinate2D(latitude: 40.0, longitude: -74.0))
+        let service = EnvironmentalDataService(transport: transport, calendar: calendar, location: location)
+
+        let result = await service.fetchCompletedAirQualityRange(from: day0, through: day0)
+
+        #expect(result == .fetchError(.rejected))
+        #expect(counter.count == 1)
+    }
+
+    /// A transport that cancels its OWN calling task then returns a clean 200 range
+    /// payload — no throw, so only the post-transport `Task.isCancelled` guard can
+    /// catch it. (No `Task {}` wrapper: capturing the non-Sendable service trips
+    /// strict concurrency; the self-cancelling transport avoids that.)
+    @Test func postTransportCancellationReturnsCancelled() async {
+        struct SelfCancellingTransport: HTTPTransport {
+            let payload: Data
+            func data(from url: URL) async throws -> (Data, URLResponse) {
+                withUnsafeCurrentTask { $0?.cancel() }
+                return (payload, HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            }
+        }
+        ensureTestAPIKeyConfigured()
+        let calendar = utcCalendar
+        let day0 = calendar.date(from: DateComponents(year: 2025, month: 6, day: 1))!
+        let location = StubLocation(coordinate: CLLocationCoordinate2D(latitude: 40.0, longitude: -74.0))
+        let service = EnvironmentalDataService(
+            transport: SelfCancellingTransport(payload: Data(#"{"list":[]}"#.utf8)),
+            calendar: calendar, location: location)
+
+        let result = await service.fetchCompletedAirQualityRange(from: day0, through: day0)
+
+        #expect(result == .cancelled)   // clean transport+decode, bailed at the guard
+    }
+
+    /// Cancellation must win over classification: a transport that cancels its OWN
+    /// calling task then returns an HTTP 401 must yield `.cancelled`, NOT
+    /// `.fetchError(.rejected)` — proving the early post-transport guard runs
+    /// BEFORE `httpStatusReason` (Fix B).
+    @Test func cancellationBeforeHTTPStatusClassificationReturnsCancelledNotRejected() async {
+        struct SelfCancelling401Transport: HTTPTransport {
+            func data(from url: URL) async throws -> (Data, URLResponse) {
+                withUnsafeCurrentTask { $0?.cancel() }
+                return (Data("{}".utf8), HTTPURLResponse(url: url, statusCode: 401, httpVersion: nil, headerFields: nil)!)
+            }
+        }
+        ensureTestAPIKeyConfigured()
+        let calendar = utcCalendar
+        let day0 = calendar.date(from: DateComponents(year: 2025, month: 6, day: 1))!
+        let location = StubLocation(coordinate: CLLocationCoordinate2D(latitude: 40.0, longitude: -74.0))
+        let service = EnvironmentalDataService(
+            transport: SelfCancelling401Transport(), calendar: calendar, location: location)
+
+        let result = await service.fetchCompletedAirQualityRange(from: day0, through: day0)
+
+        #expect(result == .cancelled)   // early guard precedes the 401 → .rejected classification
     }
 }
