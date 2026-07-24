@@ -812,10 +812,12 @@ class EnvironmentalDataService: ObservableObject {
         MercuryRetrograde.isRetrograde(on: date)
     }
     
-    /// Record a genuine API pressure reading: shift the carry, expose the prior
-    /// genuine value ONLY if within `pressureReadingInterval`, and set the legacy
-    /// sudden-change flag off that gated comparison. This is the sole writer of
-    /// `latestFetchedPressure`/`lastTrustedPressure`/`mostRecentGenuinePressure`.
+    /// Record a genuine API pressure reading: shift the carry and expose the prior
+    /// genuine value ONLY if within `pressureReadingInterval`. This is the sole
+    /// writer of `latestFetchedPressure`/`lastTrustedPressure`/`mostRecentGenuinePressure`.
+    /// It deliberately does NOT touch `suddenPressureChange` — that legacy-dashboard
+    /// flag is owned solely by `updateAtmosphericPressure` (the emitter never reads it;
+    /// the core factory computes the mined drop from the two optionals).
     func recordGenuinePressure(_ value: Double, at: Date) {
         let prior = mostRecentGenuinePressure
         let comparable = prior.map { at.timeIntervalSince($0.at) <= pressureReadingInterval } ?? false
