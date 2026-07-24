@@ -42,7 +42,7 @@
 - `HealthGraphCore/Sources/HealthGraphCore/Models/HealthEvent.swift` — add `syntheticBatch: String?`.
 - `HealthGraphCore/Sources/HealthGraphCore/Models/HealthObject.swift` — add `syntheticBatch: String?`.
 - `HealthGraphCore/Sources/HealthGraphCore/Database/ObjectStore.swift` — `findOrCreate` gains defaulted `syntheticBatch:`.
-- `HealthGraphCore/Sources/HealthGraphCore/Synthetic/SyntheticDataGenerator.swift` — `generate`/`SyntheticDataset` thread a required `batch`.
+- `HealthGraphCore/Sources/HealthGraphCore/Synthetic/SyntheticDataGenerator.swift` — `SyntheticDataset.insert(into:batch:)` gains an optional `batch` (marking at the persistence boundary); `generate(config:)` is unchanged.
 - `Views/HealthGraphDebugView.swift` — seed buttons use reload mode + one recompute; new Clear button; hand-built seeds stamp+namespace.
 - `Views/HealthOS/Insights/InsightsViewModel.swift` — dismissal gate + `demoDataLoaded` flag + `pendingUndo` clear.
 - `Views/HealthOS/Insights/InsightsView.swift` — DEBUG banner; hide Dismiss while demo loaded.
@@ -382,12 +382,14 @@ git commit -m "feat(graph): DemoBatch namespace helper (single source of truth)"
 
 ---
 
-## Task 3: Batch-aware `findOrCreate` + thread `batch` through the generator (P0 object identity)
+## Task 3: Batch-aware `findOrCreate` + object namespacing + optional-batch insert (P0 object identity)
+
+> **Design note (marking at the insert boundary):** `SyntheticDataGenerator.generate` is a general test-data generator with many non-demo users (real-feature fixtures, previews, acceptance/perf suites). Marking therefore lives at the **persistence boundary**, not on `generate`: `generate(config:)` stays UNCHANGED and neutral, and `SyntheticDataset.insert(into:batch:)` takes an **optional** batch (`nil` = real). Only the demo seed buttons opt in. This keeps every existing `generate(...)` call site compiling untouched (no required-arg breakage, no fixture accidentally marked synthetic), while objects are still namespaced via `findOrCreate(syntheticBatch:)` and events via `DemoBatch.stamp`.
 
 **Files:**
 - Modify: `HealthGraphCore/Sources/HealthGraphCore/Models/HealthObject.swift:26-32` (init — derive the namespaced `normalizedName` when `syntheticBatch` is set; the field itself was added in Task 1)
 - Modify: `HealthGraphCore/Sources/HealthGraphCore/Database/ObjectStore.swift:5` (protocol), `:19-32` (impl)
-- Modify: `HealthGraphCore/Sources/HealthGraphCore/Synthetic/SyntheticDataGenerator.swift:79-99` (`SyntheticDataset`), `:104` (`generate`)
+- Modify: `HealthGraphCore/Sources/HealthGraphCore/Synthetic/SyntheticDataGenerator.swift:83-98` (`SyntheticDataset.insert` gains an optional `batch`; `generate` itself is NOT changed)
 - Test: `HealthGraphCore/Tests/HealthGraphCoreTests/BatchAwareObjectTests.swift`
 
 **Interfaces:**
@@ -395,8 +397,7 @@ git commit -m "feat(graph): DemoBatch namespace helper (single source of truth)"
 - Produces:
   - `HealthObject.init` derives `normalizedName` from `syntheticBatch`: `demo` objects get `DemoBatch.normalizedName(name, batch:)`, real objects keep `NameNormalizer.normalize(name)`. This enforces the namespacing invariant at the model boundary — a direct `HealthObject(…, syntheticBatch: b)` is correct without any store-side override.
   - `ObjectStore.findOrCreate(name:kind:metadata:syntheticBatch:)` — new final defaulted param `syntheticBatch: String? = nil`. When non-nil, the lookup filters on the namespaced `normalizedName`, `kind`, and `syntheticBatch`, and constructs a `HealthObject` whose init self-derives the same `normalizedName` (no post-init mutation).
-  - `SyntheticDataGenerator.generate(config:batch:)` — new **required** `batch: String`; every event is stamped via `DemoBatch.stamp`.
-  - `SyntheticDataset` gains `public var batch: String`; `insert(into:)` passes it to `findOrCreate`.
+  - `SyntheticDataset.insert(into:batch:)` — new final defaulted param `batch: String? = nil`. When non-nil, objects go through `findOrCreate(syntheticBatch: batch)` and events are stamped via `DemoBatch.stamp(_, batch:)`; when nil, behaviour is unchanged (real data). `SyntheticDataGenerator.generate(config:)` is **unchanged** — no `batch` param, no stored `batch` on `SyntheticDataset`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -448,10 +449,10 @@ import Foundation
         #expect(try await store.count() == 1)
     }
 
-    @Test func generatedDatasetInsertsBatchScopedObjectsAndStampedEvents() async throws {
+    @Test func demoInsertMarksObjectsAndEventsAndLinksToTheDemoObject() async throws {
         let db = try AppDatabase.inMemory()
         // Seed a real "Coffee" first so the demo must NOT merge into it.
-        _ = try await GRDBObjectStore(database: db)
+        let realCoffee = try await GRDBObjectStore(database: db)
             .findOrCreate(name: "Coffee", kind: .food, metadata: nil)
 
         let config = SyntheticConfig(
@@ -460,21 +461,30 @@ import Foundation
                                       outcomeSubtype: "mood", lagHours: 4, lagJitterHours: 2,
                                       followProbability: 0.8, exposureProbabilityPerDay: 0.6)],
             outcomeBaseRatePerDay: 0, noiseFoodsPerDay: 0...0)
-        try await SyntheticDataGenerator.generate(config: config, batch: DemoBatch.mood)
-            .insert(into: db)
+        // generate() is neutral; the batch is supplied to insert().
+        try await SyntheticDataGenerator.generate(config: config)
+            .insert(into: db, batch: DemoBatch.mood)
 
         // The real Coffee is still present and unmarked; a demo Coffee exists too.
         let coffees = try await GRDBObjectStore(database: db).objects(kind: .food, includeArchived: true)
             .filter { $0.name == "Coffee" }
         #expect(coffees.count == 2)
         #expect(coffees.contains { $0.syntheticBatch == nil })
-        #expect(coffees.contains { $0.syntheticBatch == "mood" })
+        let demoCoffee = coffees.first { $0.syntheticBatch == "mood" }
+        #expect(demoCoffee != nil)
 
         // Every seeded event is marked.
         let events = try await GRDBEventStore(database: db)
             .events(in: DateInterval(start: .distantPast, end: .distantFuture), category: nil)
         #expect(!events.isEmpty)
         #expect(events.allSatisfy { $0.syntheticBatch == "mood" })
+
+        // Spec T6: the seeded Coffee EXPOSURE events reference the DEMO Coffee's id,
+        // NOT the real one — the exact regression the namespacing prevents.
+        let coffeeExposures = events.filter { $0.subtype == "Coffee" && $0.objectID != nil }
+        #expect(!coffeeExposures.isEmpty)
+        #expect(coffeeExposures.allSatisfy { $0.objectID == demoCoffee?.id })
+        #expect(coffeeExposures.allSatisfy { $0.objectID != realCoffee.id })
     }
 }
 ```
@@ -482,7 +492,7 @@ import Foundation
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `swift test --package-path HealthGraphCore --filter BatchAwareObjectTests`
-Expected: FAIL — `findOrCreate` has no `syntheticBatch:` param, `generate` has no `batch:` param, and `HealthObject.init` does not yet derive the namespaced `normalizedName` (so `healthObjectInitDerivesNamespacedNameForDemoBatch` fails).
+Expected: FAIL — `findOrCreate` has no `syntheticBatch:` param, `SyntheticDataset.insert` has no `batch:` param, and `HealthObject.init` does not yet derive the namespaced `normalizedName` (so `healthObjectInitDerivesNamespacedNameForDemoBatch` fails).
 
 - [ ] **Step 3: Derive the namespaced name in `HealthObject.init`, then add `syntheticBatch` to `findOrCreate`**
 
@@ -530,77 +540,71 @@ Replace the impl (lines 19-32). No post-init override — the init now self-deri
 
 The `syntheticBatch` filter matches the spec: a real lookup (`syntheticBatch == nil`) generates `syntheticBatch IS NULL` in GRDB, and a demo lookup matches its own batch — so a demo find-or-create can never reuse a real row, and vice versa, even beyond the namespaced `normalizedName`. The callers that omit the argument (`CaptureService.swift:71,82`; `SwiftDataMigrator.swift:109,123,153,173,193,271`) rely on the `= nil` default and keep matching only real rows — no change needed there.
 
-- [ ] **Step 4: Thread `batch` through the generator**
+- [ ] **Step 4: Add the optional `batch` to `SyntheticDataset.insert` (generate stays unchanged)**
 
-In `HealthGraphCore/Sources/HealthGraphCore/Synthetic/SyntheticDataGenerator.swift`:
-
-Add the stored `batch` to `SyntheticDataset` (after `public var events: [HealthEvent]`, line 81):
+In `HealthGraphCore/Sources/HealthGraphCore/Synthetic/SyntheticDataGenerator.swift`, change ONLY `SyntheticDataset.insert`. Do **not** touch `generate` and do **not** add a stored `batch` to `SyntheticDataset`. The current `insert(into:)` is:
 ```swift
-    public var batch: String
+    public func insert(into database: AppDatabase) async throws {
+        let objectStore = GRDBObjectStore(database: database)
+        let eventStore = GRDBEventStore(database: database)
+        var idMap: [UUID: UUID] = [:]
+        for object in objects {
+            let saved = try await objectStore.findOrCreate(
+                name: object.name, kind: object.kind, metadata: object.metadata)
+            idMap[object.id] = saved.id
+        }
+        var remapped = events
+        for i in remapped.indices {
+            if let oid = remapped[i].objectID { remapped[i].objectID = idMap[oid] ?? oid }
+        }
+        try await eventStore.save(remapped)
+    }
 ```
-Update `insert(into:)`'s `findOrCreate` call (lines 89-90) to pass the batch:
+Replace it with an optional-batch version:
 ```swift
+    /// Inserts the dataset. `batch == nil` → real data (unchanged behaviour).
+    /// `batch != nil` → objects are namespaced via `findOrCreate(syntheticBatch:)`
+    /// and events are marked + dedup-namespaced via `DemoBatch.stamp`.
+    public func insert(into database: AppDatabase, batch: String? = nil) async throws {
+        let objectStore = GRDBObjectStore(database: database)
+        let eventStore = GRDBEventStore(database: database)
+        var idMap: [UUID: UUID] = [:]
+        for object in objects {
             let saved = try await objectStore.findOrCreate(
                 name: object.name, kind: object.kind, metadata: object.metadata,
                 syntheticBatch: batch)
+            idMap[object.id] = saved.id
+        }
+        var remapped = events
+        for i in remapped.indices {
+            if let oid = remapped[i].objectID { remapped[i].objectID = idMap[oid] ?? oid }
+        }
+        // Stamp AFTER the objectID remap; nil batch leaves events untouched (real).
+        let toSave = batch.map { DemoBatch.stamp(remapped, batch: $0) } ?? remapped
+        try await eventStore.save(toSave)
+    }
 ```
-Change `generate` to require `batch` and stamp events. Replace the signature (line 104):
-```swift
-    public static func generate(config: SyntheticConfig, batch: String) -> SyntheticDataset {
-```
-At the end of `generate`, where it currently returns the dataset, stamp the events and pass the batch. Find the final `return SyntheticDataset(objects: objects, events: events)` and replace with:
-```swift
-        return SyntheticDataset(objects: objects,
-                                events: DemoBatch.stamp(events, batch: batch),
-                                batch: batch)
-```
-(If `generate` returns via a different final expression, wrap `events` in `DemoBatch.stamp(events, batch: batch)` and add `batch: batch` there.)
+Because `batch` is defaulted `nil`, **every existing `SyntheticDataGenerator.generate(config:).insert(into:)` call site compiles unchanged and keeps producing real data** — no call-site migration, and no fixture is accidentally marked synthetic. Only the demo seed buttons (Task 5) pass a batch.
 
-- [ ] **Step 5: Update EVERY existing `generate` call site to pass a batch**
-
-Making `batch` required breaks all 15 pre-existing call sites (the two in `HealthGraphDebugView.swift` are rewritten in Task 5 and are excluded here). The tree MUST compile at this task's boundary, so fix all of them now. Add `, batch: DemoBatch.synthetic` to each `generate(config: …)` call (the batch value is irrelevant to these assertions — it only marks rows; use `DemoBatch.synthetic` uniformly):
-
-Package tests (`swift test` target):
-- `HealthGraphCore/Tests/HealthGraphCoreTests/EvidenceEnginePerformanceTests.swift:18`
-- `HealthGraphCore/Tests/HealthGraphCoreTests/SyntheticMoodPatternTests.swift:14, :29`
-- `HealthGraphCore/Tests/HealthGraphCoreTests/EvidenceEngineAcceptanceTests.swift:24, :132`
-- `HealthGraphCore/Tests/HealthGraphCoreTests/SyntheticDataTests.swift:22, :23, :31, :65, :77`
-- `HealthGraphCore/Tests/HealthGraphCoreTests/OnDiskRecomputeTests.swift:63, :84`
-
-App target:
-- `Food IntolerancesTests/InsightsViewModelTests.swift:10`
-- `Food IntolerancesTests/InsightsRefreshCoordinatorTests.swift:11`
-- `Views/HealthOS/Insights/InsightDetailView.swift:229` (a `#if DEBUG` SwiftUI preview corpus)
-
-Re-verify none remain: `grep -rn "SyntheticDataGenerator.generate(" --include="*.swift" . | grep -v "func generate" | grep -v ", batch:"` should return only the two `HealthGraphDebugView.swift` lines (handled in Task 5). Every other line must now carry `batch:`.
-
-- [ ] **Step 6: Run the tests and build both targets to verify the whole tree compiles**
+- [ ] **Step 5: Run the tests and build to verify the whole tree compiles**
 
 Run: `swift test --package-path HealthGraphCore --filter BatchAwareObjectTests`
-Expected: PASS — 4 tests (the model-boundary derivation + the three store/generator tests).
+Expected: PASS — 4 tests (the model-boundary derivation, the two direct-findOrCreate tests, and the demo-insert linkage test).
 
 Run: `swift test --package-path HealthGraphCore`
-Expected: PASS — full package suite green (all package call sites now pass a batch).
+Expected: PASS — full package suite green. Existing `generate(...).insert(into:)` callers are unchanged (optional batch defaults nil), so no other package test needs editing.
 
 Run: `xcodebuild build -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`
-Expected: BUILD SUCCEEDED — the app target's `generate` call sites (`InsightDetailView.swift` preview + the two app test files) now pass a batch. The required argument breaks the build until they do, so this build gate is load-bearing for this task.
+Expected: BUILD SUCCEEDED. The app target compiles because the `ObjectStore` protocol change is source-compatible (defaulted arg) and no app-target `generate`/`insert` call site changed — including `HealthGraphDebugView.swift:211,241` and `InsightDetailView.swift:229`, which are edited only in Task 5 (if at all). This is why marking-at-insert removes the Task-3-boundary build breakage entirely.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add "HealthGraphCore/Sources/HealthGraphCore/Models/HealthObject.swift" \
         "HealthGraphCore/Sources/HealthGraphCore/Database/ObjectStore.swift" \
         "HealthGraphCore/Sources/HealthGraphCore/Synthetic/SyntheticDataGenerator.swift" \
-        "HealthGraphCore/Tests/HealthGraphCoreTests/BatchAwareObjectTests.swift" \
-        "HealthGraphCore/Tests/HealthGraphCoreTests/SyntheticDataTests.swift" \
-        "HealthGraphCore/Tests/HealthGraphCoreTests/SyntheticMoodPatternTests.swift" \
-        "HealthGraphCore/Tests/HealthGraphCoreTests/EvidenceEnginePerformanceTests.swift" \
-        "HealthGraphCore/Tests/HealthGraphCoreTests/EvidenceEngineAcceptanceTests.swift" \
-        "HealthGraphCore/Tests/HealthGraphCoreTests/OnDiskRecomputeTests.swift" \
-        "Food IntolerancesTests/InsightsViewModelTests.swift" \
-        "Food IntolerancesTests/InsightsRefreshCoordinatorTests.swift" \
-        "Views/HealthOS/Insights/InsightDetailView.swift"
-git commit -m "feat(graph): batch-aware findOrCreate + generator threads a required batch"
+        "HealthGraphCore/Tests/HealthGraphCoreTests/BatchAwareObjectTests.swift"
+git commit -m "feat(graph): batch-aware findOrCreate + object namespacing + optional-batch insert"
 ```
 
 ---
@@ -719,6 +723,10 @@ import GRDB
         try await seedEvent(db, batch: nil, subtype: "real")
         try await seedEvent(db, batch: DemoBatch.mood, subtype: "moodEvent")
         try await seedEvent(db, batch: DemoBatch.weather, subtype: "weatherEvent")
+        // Spec T3: prove the OBJECTS half too — mood objects go, weather + real stay.
+        try await seedObject(db, batch: nil, name: "RealFood")
+        try await seedObject(db, batch: DemoBatch.mood, name: "MoodFood")
+        try await seedObject(db, batch: DemoBatch.weather, name: "WeatherFood")
 
         let didClean = try await db.purgeSyntheticData(scope: .batch(DemoBatch.mood))
 
@@ -726,6 +734,8 @@ import GRDB
         let events = try await GRDBEventStore(database: db)
             .events(in: DateInterval(start: .distantPast, end: .distantFuture), category: nil)
         #expect(Set(events.map { $0.subtype }) == ["real", "weatherEvent"])
+        let objects = try await GRDBObjectStore(database: db).objects(kind: .food, includeArchived: true)
+        #expect(Set(objects.map { $0.name }) == ["RealFood", "WeatherFood"])   // MoodFood gone only
     }
 
     @Test func reloadModeWipesRelationshipsEvenWhenItsBatchIsAbsent() async throws {
@@ -880,6 +890,8 @@ Note: the interpolated `\(where_)` values are compile-time constants (`"syntheti
 
 Atomicity is structural, not tested by fault injection: each entry point wraps its whole sequence in a single GRDB `write`, which runs in one deferred transaction — any thrown error rolls the entire sequence back. The spec's "failure partway through rolls back" requirement is satisfied by construction (there is no seam to force a mid-transaction failure without a contrived hook, so no flaky rollback test is added).
 
+Note on the `userDismissed` + FK-cascade edge: `relationships.fromObjectID`/`toObjectID` are `ON DELETE CASCADE`, so a *dismissed* edge that referenced a demo object would be removed when that object is deleted — bypassing the "preserve dismissed" wipe. This is **unreachable**: dismissal is blocked whenever any synthetic row exists (Task 6's gate), and demo objects exist only while demo data is loaded, so no `userDismissed` edge can ever point at a demo object. If a future change ever relaxes the dismissal gate, revisit this. No code change needed now.
+
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `swift test --package-path HealthGraphCore --filter DemoDataMaintenanceTests`
@@ -907,7 +919,7 @@ git commit -m "feat(graph): DemoDataMaintenance — guarded purge / unconditiona
 - Test: `HealthGraphCore/Tests/HealthGraphCoreTests/DemoDataMaintenanceTests.swift` (add one reload-idempotence test — deterministic, at the store layer, not the UI)
 
 **Interfaces:**
-- Consumes: `AppDatabase.resetForSeedReload(batch:)`, `AppDatabase.purgeSyntheticData(scope:)`, `DemoBatch.*`, `DemoBatch.stamp(_:batch:)`, `SyntheticDataGenerator.generate(config:batch:)`, `EvidenceEngine.recompute(asOf:)`, `GRDBEventStore.save(_:)`.
+- Consumes: `AppDatabase.resetForSeedReload(batch:)`, `AppDatabase.purgeSyntheticData(scope:)`, `DemoBatch.*`, `DemoBatch.stamp(_:batch:)`, `SyntheticDataGenerator.generate(config:)` + `SyntheticDataset.insert(into:batch:)`, `EvidenceEngine.recompute(asOf:)`, `GRDBEventStore.save(_:)`.
 - Produces: no new API — wires the debug UI to the Task 3/4 surfaces.
 
 - [ ] **Step 1: Write the failing test (reload idempotence at the store layer)**
@@ -926,7 +938,7 @@ Add to `DemoDataMaintenanceTests.swift`:
 
         func seedOnce() async throws {
             try await db.resetForSeedReload(batch: DemoBatch.mood)
-            try await SyntheticDataGenerator.generate(config: config, batch: DemoBatch.mood).insert(into: db)
+            try await SyntheticDataGenerator.generate(config: config).insert(into: db, batch: DemoBatch.mood)
         }
         try await seedOnce()
         let afterFirst = try await GRDBEventStore(database: db).count()
@@ -947,16 +959,16 @@ In `Views/HealthGraphDebugView.swift`, replace the `loadSynthetic` body's insert
 
 ```swift
             try await database.resetForSeedReload(batch: DemoBatch.synthetic)
-            try await SyntheticDataGenerator.generate(config: config, batch: DemoBatch.synthetic)
-                .insert(into: database)
+            try await SyntheticDataGenerator.generate(config: config)
+                .insert(into: database, batch: DemoBatch.synthetic)
             _ = try await EvidenceEngine(database: database).recompute(asOf: Date())
 ```
 
 In `loadMoodDemo`, replace its insert + recompute (lines ~241-242):
 ```swift
             try await database.resetForSeedReload(batch: DemoBatch.mood)
-            try await SyntheticDataGenerator.generate(config: config, batch: DemoBatch.mood)
-                .insert(into: database)
+            try await SyntheticDataGenerator.generate(config: config)
+                .insert(into: database, batch: DemoBatch.mood)
             _ = try await EvidenceEngine(database: database).recompute(asOf: Date())
 ```
 (`loadMoodDemo` already recomputes; ensure there is exactly ONE `recompute` call after the insert — remove the pre-existing one at line 242 and use the block above.)
@@ -1032,6 +1044,8 @@ git commit -m "feat(debug): seed buttons reload+recompute-once; add Clear demo d
 **Files:**
 - Modify: `Views/HealthOS/Insights/InsightsViewModel.swift:6-8` (add flag), `:22-38` (`load`), `:40-60` (`dismiss`/`undoDismiss`)
 - Test: `Food IntolerancesTests/InsightsDismissalGateTests.swift` (create)
+
+> **No change to the existing `InsightsViewModelTests`.** Its `dismissMovesCardToArchive` / `undoRestoresDismissedCard` seed via `SyntheticDataGenerator.generate(config:).insert(into: db)` — with the marking-at-insert design (Task 3) that is a **nil batch → real data**, so `hasSyntheticData()` is false and the new gate is inert for them. They keep testing dismissal exactly as before. (This is the reason the plan chose marking-at-insert over a required batch on `generate`, which would have marked those fixtures synthetic and broken both tests.)
 
 **Interfaces:**
 - Consumes: `AppDatabase.hasSyntheticData()`.
@@ -1132,6 +1146,17 @@ import HealthGraphCore
                         source: .manual, syntheticBatch: DemoBatch.weather))
         await vm.load()
         #expect(vm.demoDataLoaded == true)
+    }
+
+    @Test func loadClearsPendingUndoWhenDemoDataBecomesPresent() async throws {
+        // Spec T16: the load()-driven reconciliation (not the undo guard's own clear).
+        let db = try AppDatabase.inMemory()
+        let id = try await makeEdge(db, status: .userDismissed)
+        let vm = InsightsViewModel(database: db, now: { Date(timeIntervalSince1970: 0) })
+        vm.pendingUndo = .init(id: id, priorStatus: .active)
+        try await markDemoLoaded(db)                 // demo data "becomes present"
+        await vm.load()
+        #expect(vm.pendingUndo == nil)               // cleared by load(), before its early return
     }
 
     @Test func presenceCheckFailsClosedWhenItThrows() async throws {
