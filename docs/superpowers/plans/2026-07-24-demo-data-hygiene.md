@@ -107,28 +107,37 @@ import GRDB
         }
     }
 
-    @Test func migrationIsIdempotentAndColumnReadsNil() throws {
-        // Two AppDatabase instances over the same queue must both migrate cleanly
-        // (the migrator is append-only), and the column reads nil for a row that
-        // never set it — proving v7 is additive, not destructive.
+    @Test func v7PreservesPopulatedPreV7RowsWithNilBatch() throws {
+        // Build a genuinely populated pre-v7 store: migrate ONLY through v6, insert
+        // an event AND an object, THEN run the full migrator (through v7). v7 must
+        // preserve both rows and read their new column as nil. Migrating up to a
+        // named migration is the established pattern (EnvProvenanceMigrationTests:30).
         let queue = try DatabaseQueue()
-        _ = try AppDatabase(queue)                    // migrates through v7
+        try AppDatabase.migrator.migrate(queue, upTo: "v6")   // stop at v6 — column absent
         try queue.write { db in
+            try db.execute(sql: """
+                INSERT INTO health_objects (id, kind, name, normalizedName, isArchived, createdAt)
+                VALUES (randomblob(16), 'food', 'Coffee', 'coffee', 0, 0)
+                """)
             try db.execute(sql: """
                 INSERT INTO health_events (id, timestamp, timezoneID, category, source, confidence, createdAt)
                 VALUES (randomblob(16), 0, 'UTC', 'symptom', 'manual', 1.0, 0)
                 """)
         }
-        _ = try AppDatabase(queue)                    // re-migrate: no-op, must not throw
-        let batch = try queue.read { db in
-            try String.fetchOne(db, sql: "SELECT syntheticBatch FROM health_events LIMIT 1")
+
+        _ = try AppDatabase(queue)                            // full migrator → adds v7
+
+        try queue.read { db in
+            #expect(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM health_events") == 1)
+            #expect(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM health_objects") == 1)
+            #expect(try String.fetchOne(db, sql: "SELECT syntheticBatch FROM health_events LIMIT 1") == nil)
+            #expect(try String.fetchOne(db, sql: "SELECT syntheticBatch FROM health_objects LIMIT 1") == nil)
         }
-        #expect(batch == nil)
     }
 }
 ```
 
-`AppDatabase(_ dbWriter:)` is already `public` (`AppDatabase.swift:9`) and runs the full migrator in its init, and `AppDatabase.dbWriter` is `public let` (`:7`), so both the index test's `db.dbWriter.read` and this test compile against the existing surface — no new accessor is needed.
+`AppDatabase(_ dbWriter:)` is already `public` (`AppDatabase.swift:9`) and runs the full migrator in its init; `AppDatabase.migrator` is internal but reachable via `@testable import`; `AppDatabase.dbWriter` is `public let` (`:7`). Both the index test's `db.dbWriter.read` and this test compile against the existing surface — no new accessor is needed.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -198,7 +207,7 @@ No test-only accessor is required: the Step 1 tests drive everything through the
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `swift test --package-path HealthGraphCore --filter SyntheticBatchMigrationTests`
-Expected: PASS — 3 tests (`columnsExistAndDefaultToNilForPreExistingRows`, `partialIndexesExistOnBothTables`, `migrationIsIdempotentAndColumnReadsNil`).
+Expected: PASS — 3 tests (`columnsExistAndDefaultToNilForPreExistingRows`, `partialIndexesExistOnBothTables`, `v7PreservesPopulatedPreV7RowsWithNilBatch`).
 
 - [ ] **Step 6: Run the full package suite to confirm no regressions**
 
@@ -455,6 +464,7 @@ Replace the impl (lines 19-32):
             if let existing = try HealthObject
                 .filter(Column("normalizedName") == normalized)
                 .filter(Column("kind") == kind.rawValue)
+                .filter(Column("syntheticBatch") == syntheticBatch)   // real→IS NULL, demo→= batch
                 .fetchOne(db) {
                 return existing
             }
@@ -467,7 +477,7 @@ Replace the impl (lines 19-32):
     }
 ```
 
-The four real callers (`CaptureService.swift:71,82`; `SwiftDataMigrator.swift:109,123,153,173,193,271`) omit the new argument and rely on the `= nil` default — no change needed there.
+The `syntheticBatch` filter matches the spec: a real lookup (`syntheticBatch == nil`) generates `syntheticBatch IS NULL` in GRDB, and a demo lookup matches its own batch — so a demo find-or-create can never reuse a real row, and vice versa, even beyond the namespaced `normalizedName`. The callers that omit the argument (`CaptureService.swift:71,82`; `SwiftDataMigrator.swift:109,123,153,173,193,271`) rely on the `= nil` default and keep matching only real rows — no change needed there.
 
 - [ ] **Step 4: Thread `batch` through the generator**
 
@@ -495,17 +505,34 @@ At the end of `generate`, where it currently returns the dataset, stamp the even
 ```
 (If `generate` returns via a different final expression, wrap `events` in `DemoBatch.stamp(events, batch: batch)` and add `batch: batch` there.)
 
-- [ ] **Step 5: Update existing generator tests to pass a batch**
+- [ ] **Step 5: Update EVERY existing `generate` call site to pass a batch**
 
-`SyntheticDataTests.swift` and `SyntheticMoodPatternTests.swift` call `SyntheticDataGenerator.generate(config:)`. Add `, batch: DemoBatch.synthetic` to each call so they compile. Run `swift test --package-path HealthGraphCore --filter SyntheticData` to find the exact call sites, then add the argument. Their assertions are unaffected — the batch only marks rows.
+Making `batch` required breaks all 15 pre-existing call sites (the two in `HealthGraphDebugView.swift` are rewritten in Task 5 and are excluded here). The tree MUST compile at this task's boundary, so fix all of them now. Add `, batch: DemoBatch.synthetic` to each `generate(config: …)` call (the batch value is irrelevant to these assertions — it only marks rows; use `DemoBatch.synthetic` uniformly):
 
-- [ ] **Step 6: Run the tests to verify they pass**
+Package tests (`swift test` target):
+- `HealthGraphCore/Tests/HealthGraphCoreTests/EvidenceEnginePerformanceTests.swift:18`
+- `HealthGraphCore/Tests/HealthGraphCoreTests/SyntheticMoodPatternTests.swift:14, :29`
+- `HealthGraphCore/Tests/HealthGraphCoreTests/EvidenceEngineAcceptanceTests.swift:24, :132`
+- `HealthGraphCore/Tests/HealthGraphCoreTests/SyntheticDataTests.swift:22, :23, :31, :65, :77`
+- `HealthGraphCore/Tests/HealthGraphCoreTests/OnDiskRecomputeTests.swift:63, :84`
+
+App target:
+- `Food IntolerancesTests/InsightsViewModelTests.swift:10`
+- `Food IntolerancesTests/InsightsRefreshCoordinatorTests.swift:11`
+- `Views/HealthOS/Insights/InsightDetailView.swift:229` (a `#if DEBUG` SwiftUI preview corpus)
+
+Re-verify none remain: `grep -rn "SyntheticDataGenerator.generate(" --include="*.swift" . | grep -v "func generate" | grep -v ", batch:"` should return only the two `HealthGraphDebugView.swift` lines (handled in Task 5). Every other line must now carry `batch:`.
+
+- [ ] **Step 6: Run the tests and build both targets to verify the whole tree compiles**
 
 Run: `swift test --package-path HealthGraphCore --filter BatchAwareObjectTests`
 Expected: PASS — 3 tests.
 
 Run: `swift test --package-path HealthGraphCore`
-Expected: PASS — full suite green (generator tests updated to pass a batch).
+Expected: PASS — full package suite green (all package call sites now pass a batch).
+
+Run: `xcodebuild build -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`
+Expected: BUILD SUCCEEDED — the app target's `generate` call sites (`InsightDetailView.swift` preview + the two app test files) now pass a batch. The required argument breaks the build until they do, so this build gate is load-bearing for this task.
 
 - [ ] **Step 7: Commit**
 
@@ -514,7 +541,13 @@ git add "HealthGraphCore/Sources/HealthGraphCore/Database/ObjectStore.swift" \
         "HealthGraphCore/Sources/HealthGraphCore/Synthetic/SyntheticDataGenerator.swift" \
         "HealthGraphCore/Tests/HealthGraphCoreTests/BatchAwareObjectTests.swift" \
         "HealthGraphCore/Tests/HealthGraphCoreTests/SyntheticDataTests.swift" \
-        "HealthGraphCore/Tests/HealthGraphCoreTests/SyntheticMoodPatternTests.swift"
+        "HealthGraphCore/Tests/HealthGraphCoreTests/SyntheticMoodPatternTests.swift" \
+        "HealthGraphCore/Tests/HealthGraphCoreTests/EvidenceEnginePerformanceTests.swift" \
+        "HealthGraphCore/Tests/HealthGraphCoreTests/EvidenceEngineAcceptanceTests.swift" \
+        "HealthGraphCore/Tests/HealthGraphCoreTests/OnDiskRecomputeTests.swift" \
+        "Food IntolerancesTests/InsightsViewModelTests.swift" \
+        "Food IntolerancesTests/InsightsRefreshCoordinatorTests.swift" \
+        "Views/HealthOS/Insights/InsightDetailView.swift"
 git commit -m "feat(graph): batch-aware findOrCreate + generator threads a required batch"
 ```
 
@@ -669,12 +702,25 @@ import GRDB
         #expect(try await db.hasSyntheticData() == true)
     }
 
-    @Test func syncPurgeMatchesAsyncBehaviour() throws {
+    @Test func syncPurgeNoOpOnCleanDatabaseLeavesRelationshipsIntact() throws {
         let db = try AppDatabase.inMemory()
         // No synthetic rows → sync purge is a no-op returning false, relationships intact.
         try insertRelationship(db, status: .active)
         #expect(try db.purgeSyntheticDataSync(scope: .all) == false)
         #expect(try relationshipCount(db) == 1)
+    }
+
+    @Test func syncPurgeRemovesSyntheticRowsAndReturnsTrue() async throws {
+        let db = try AppDatabase.inMemory()
+        // This is the Release-bootstrap path: a container that DID hold demo data.
+        try await seedEvent(db, batch: DemoBatch.weather, subtype: "demo")
+        try await seedObject(db, batch: DemoBatch.weather, name: "DemoFood")
+        try insertRelationship(db, status: .active)
+
+        #expect(try db.purgeSyntheticDataSync(scope: .all) == true)
+        #expect(try await eventCount(db) == 0)
+        #expect(try objectCount(db) == 0)
+        #expect(try relationshipCount(db) == 0)     // non-dismissed edge wiped for rebuild
     }
 }
 ```
@@ -785,7 +831,7 @@ Atomicity is structural, not tested by fault injection: each entry point wraps i
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `swift test --package-path HealthGraphCore --filter DemoDataMaintenanceTests`
-Expected: PASS — 10 tests, including both-table orphan guards and the P0 clean-database no-op.
+Expected: PASS — 10 tests, including both-table orphan guards, the P0 clean-database no-op, and both sync-purge paths (no-op and successful removal).
 
 - [ ] **Step 5: Run the full package suite**
 
@@ -952,15 +998,16 @@ import HealthGraphCore
 @MainActor
 @Suite struct InsightsDismissalGateTests {
 
-    private func makeActiveEdge(_ db: AppDatabase) throws -> UUID {
+    /// Insert a relationship with a given status; returns its id.
+    private func makeEdge(_ db: AppDatabase, status: RelStatus) throws -> UUID {
         let id = UUID()
         try db.dbWriter.write { database in
             try database.execute(sql: """
                 INSERT INTO relationships
                 (id, fromCategory, toCategory, type, evidenceCount, contradictionCount,
                  confidence, firstSeen, lastSeen, lastRecomputed, status, edgeKey)
-                VALUES (?, 'food', 'symptom', 'possibleTrigger', 5, 0, 0.9, 0, 0, 0, 'active', 'k1')
-                """, arguments: [id.uuidString])
+                VALUES (?, 'food', 'symptom', 'possibleTrigger', 5, 0, 0.9, 0, 0, 0, ?, 'k1')
+                """, arguments: [id.uuidString, status.rawValue])
         }
         return id
     }
@@ -968,33 +1015,44 @@ import HealthGraphCore
         try db.dbWriter.read { try String.fetchOne($0,
             sql: "SELECT status FROM relationships WHERE id = ?", arguments: [id.uuidString]) }
     }
-
-    @Test func dismissIsBlockedWhileDemoDataExists() async throws {
-        let db = try AppDatabase.inMemory()
-        let id = try makeActiveEdge(db)
-        // Mark the DB as holding demo data.
+    private func markDemoLoaded(_ db: AppDatabase) async throws {
         try await GRDBEventStore(database: db).save(
             HealthEvent(timestamp: Date(), category: .symptom, subtype: "x",
                         source: .manual, syntheticBatch: DemoBatch.mood))
+    }
+    /// A minimal but real card for the given relationship id (public initializer).
+    private func card(_ id: UUID) -> InsightCardModel {
+        InsightCardModel(id: id, claim: "Coffee → mood", exposureCategory: .food,
+                         badge: .moderate, countLine: nil, recentDots: [], subline: nil,
+                         isNew: false, kind: .possibleTrigger)
+    }
+
+    @Test func dismissIsBlockedWhileDemoDataExists() async throws {
+        let db = try AppDatabase.inMemory()
+        let id = try makeEdge(db, status: .active)
+        try await markDemoLoaded(db)
 
         let vm = InsightsViewModel(database: db, now: { Date(timeIntervalSince1970: 0) })
-        await vm.dismiss(InsightCardModel.stub(id: id))     // see Step 3 note on the stub
+        await vm.dismiss(card(id))
 
-        #expect(try status(db, id) == "active")             // NOT dismissed
+        // A working dismiss would flip active → userDismissed; the gate must prevent it.
+        #expect(try status(db, id) == "active")
     }
 
     @Test func undoIsBlockedAndPendingUndoClearedWhileDemoDataExists() async throws {
         let db = try AppDatabase.inMemory()
-        let id = try makeActiveEdge(db)
+        // Start ALREADY dismissed, with a queued undo whose priorStatus is .active.
+        // If the gate fails and undo runs, status flips to "active" — a real
+        // discriminator (starting from .active would pass even on a wrong undo).
+        let id = try makeEdge(db, status: .userDismissed)
         let vm = InsightsViewModel(database: db, now: { Date(timeIntervalSince1970: 0) })
         vm.pendingUndo = .init(id: id, priorStatus: .active)
-        // Demo data arrives.
-        try await GRDBEventStore(database: db).save(
-            HealthEvent(timestamp: Date(), category: .symptom, subtype: "x",
-                        source: .manual, syntheticBatch: DemoBatch.mood))
+        try await markDemoLoaded(db)
+
         await vm.undoDismiss()
-        #expect(vm.pendingUndo == nil)                      // cleared, no write
-        #expect(try status(db, id) == "active")
+
+        #expect(vm.pendingUndo == nil)                      // cleared without writing
+        #expect(try status(db, id) == "userDismissed")      // undo did NOT execute
     }
 
     @Test func demoDataLoadedFlagTracksPresence() async throws {
@@ -1011,7 +1069,7 @@ import HealthGraphCore
 }
 ```
 
-Note on `InsightCardModel.stub(id:)`: if `InsightCardModel` has no ergonomic test initializer, the dismiss test can instead call a small seam. To avoid inventing UI model construction, prefer testing `dismiss` via the relationship id directly: if `InsightCardModel` exposes `id: UUID`, build one with its real initializer using minimal fields. If that is awkward, delete `dismissIsBlockedWhileDemoDataExists` from this file and instead assert the gate through `demoDataLoaded` + a direct `relStore` check; the `undo` and `flag` tests already pin the gate behavior. Choose the smallest construction that compiles.
+`InsightCardModel`'s public initializer (`InsightPresentation.swift:34`) takes `id/claim/exposureCategory/badge/countLine/recentDots/subline/isNew/kind` (plus a defaulted `tier`); `BadgeTier` cases are `earlySignal/moderate/strong`. The card is constructed explicitly — this test is not optional and must not be deleted.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1069,35 +1127,98 @@ git commit -m "feat(insights): gate dismissal/undo at the view-model layer while
 - Consumes: `InsightsViewModel.demoDataLoaded`.
 - Produces: no new API — a `#if DEBUG` banner and a UI-level Dismiss suppression.
 
-- [ ] **Step 1: Add the banner (DEBUG only)**
+- [ ] **Step 1: Add the banner ABOVE the feed/placeholder conditional (DEBUG only)**
 
-In `Views/HealthOS/Insights/InsightsView.swift`, inside the top-level `VStack(alignment: .leading, spacing: 24)` (line 52), add as the first child:
+The banner must survive an **empty** feed — the exact state after a clear or a failed recompute, when `vm.feed.sections.isEmpty` is true and the body renders `InsightsPlaceholderView()`. If the banner lived inside `feed` it would vanish precisely when it matters most. So it goes above the `Group` that chooses feed-vs-placeholder.
+
+In `Views/HealthOS/Insights/InsightsView.swift`, the body currently is (lines 12-27):
 ```swift
+        NavigationStack {
+            Group {
+                if vm.feed.sections.isEmpty {
+                    InsightsPlaceholderView()
+                } else {
+                    feed
+                }
+            }
+            .background(HealthTheme.paper)
+            .navigationDestination(for: UUID.self) { relationshipID in
+                InsightDetailView(relationshipID: relationshipID)
+            }
+            .overlay(alignment: .bottom) { undoToast }
+            .animation(.easeOut(duration: 0.2), value: vm.pendingUndo)
+        }
+```
+Wrap the `Group` in a `VStack(spacing: 0)` with the banner first, leaving the Group's modifiers on the Group:
+```swift
+        NavigationStack {
+            VStack(spacing: 0) {
                 #if DEBUG
-                if vm.demoDataLoaded {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Demo data loaded")
-                            .font(.subheadline.weight(.semibold))
-                        Text("These findings — including ones from your real data — are not trustworthy while demo data is present. Clear it from Health Graph Debug.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
-                    .background(.yellow.opacity(0.15), in: RoundedRectangle(cornerRadius: 10))
-                }
+                if vm.demoDataLoaded { demoDataBanner }
                 #endif
-```
-
-- [ ] **Step 2: Hide the Dismiss action while demo data is loaded**
-
-Search `Views/HealthOS/Insights/InsightsView.swift` for the Dismiss control (the button/swipe action that calls `vm.dismiss`). Wrap its declaration so it only renders when `!vm.demoDataLoaded`. For example, if it is a button:
-```swift
-                if !vm.demoDataLoaded {
-                    Button("Dismiss") { Task { await vm.dismiss(card) } }
+                Group {
+                    if vm.feed.sections.isEmpty {
+                        InsightsPlaceholderView()
+                    } else {
+                        feed
+                    }
                 }
+                .background(HealthTheme.paper)
+                .navigationDestination(for: UUID.self) { relationshipID in
+                    InsightDetailView(relationshipID: relationshipID)
+                }
+                .overlay(alignment: .bottom) { undoToast }
+                .animation(.easeOut(duration: 0.2), value: vm.pendingUndo)
+            }
+        }
 ```
-If it is a `.swipeActions` modifier, guard the same way around the action's content. The model-layer gate from Task 6 is the real safety net; this removes the affordance so the user never taps a no-op.
+Add the banner as a computed property near `feed` (also `#if DEBUG`, so it doesn't exist in Release):
+```swift
+    #if DEBUG
+    private var demoDataBanner: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Demo data loaded")
+                .font(.subheadline.weight(.semibold))
+            Text("These findings — including ones from your real data — are not trustworthy while demo data is present. Clear it from Health Graph Debug.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(.yellow.opacity(0.15))
+    }
+    #endif
+```
+
+- [ ] **Step 2: Suppress Dismiss at the choke point (`cardsStack`)**
+
+Every dismissable card flows through one place — `cardsStack(_:dismissable:)` (lines 110-118), which passes `onDismiss` into `InsightCardView`. Suppress dismissal there by ALSO requiring `!vm.demoDataLoaded`, so a single edit covers every section (Active + No-effect). The current impl:
+```swift
+    private func cardsStack(_ cards: [InsightCardModel], dismissable: Bool = true) -> some View {
+        VStack(spacing: 12) {
+            ForEach(cards) { card in
+                InsightCardView(card: card, onDismiss: dismissable ? {
+                    Task { await vm.dismiss(card) }
+                } : nil)
+            }
+        }
+    }
+```
+Change the `onDismiss` condition to gate on the demo flag as well:
+```swift
+    private func cardsStack(_ cards: [InsightCardModel], dismissable: Bool = true) -> some View {
+        VStack(spacing: 12) {
+            ForEach(cards) { card in
+                // Pass nil while demo data is loaded so the affordance disappears; the
+                // view-model gate (Task 6) is the real safety net, this removes the tap.
+                InsightCardView(card: card, onDismiss: (dismissable && !vm.demoDataLoaded) ? {
+                    Task { await vm.dismiss(card) }
+                } : nil)
+            }
+        }
+    }
+```
+`InsightCardView` already renders no Dismiss control when `onDismiss == nil` (that is how the "Just for fun" section, called with `dismissable: false`, hides it today), so nil-ing the closure is the correct and sufficient suppression.
 
 - [ ] **Step 3: Build to confirm it compiles and renders**
 
@@ -1136,7 +1257,12 @@ In `Models/HealthGraphProvider.swift`, change the `shared` closure so it purges 
             // InsightsRefreshCoordinator recomputes on its lastRecomputeAt==nil
             // never-run branch when Insights loads; a second here could race its
             // single-flight guard.
-            _ = try? db.purgeSyntheticDataSync(scope: .all)
+            //
+            // FAIL CLOSED: `try`, not `try?`. If the purge throws, the outer
+            // `catch` below fails database bootstrap (fatalError) rather than
+            // exposing fabricated demo rows in a shipped build. A silent
+            // `try?` would defeat the entire purpose of the Release purge.
+            _ = try db.purgeSyntheticDataSync(scope: .all)
             #endif
             return db
 ```
@@ -1151,10 +1277,10 @@ Expected: BUILD SUCCEEDED (Release — the purge call is compiled and type-check
 
 - [ ] **Step 3: Verify the purge path with a core test**
 
-The purge logic is already covered by `DemoDataMaintenanceTests.syncPurgeMatchesAsyncBehaviour` (Task 4). Re-run to confirm the sync entry point behaves:
+The sync entry point is already covered by Task 4's `syncPurgeNoOpOnCleanDatabaseLeavesRelationshipsIntact` (the common Release path) and `syncPurgeRemovesSyntheticRowsAndReturnsTrue` (a container that held demo data). Re-run both:
 
-Run: `swift test --package-path HealthGraphCore --filter DemoDataMaintenanceTests/syncPurgeMatchesAsyncBehaviour`
-Expected: PASS.
+Run: `swift test --package-path HealthGraphCore --filter DemoDataMaintenanceTests`
+Expected: PASS — including both sync-purge tests.
 
 - [ ] **Step 4: Commit**
 
