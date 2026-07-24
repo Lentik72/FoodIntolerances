@@ -76,8 +76,9 @@ struct HealthGraphDebugView: View {
                     }
                 }
                 .disabled(isWorking)
-                // Migration is idempotent (deterministic ids); synthetic load
-                // APPENDS a fresh dataset each tap — reset first to reload.
+                // Migration is idempotent (deterministic ids); each synthetic load
+                // now reloads its own demo batch first, so a re-tap replaces (not
+                // appends). This Reset still wipes the WHOLE DB (real data included).
                 Button("Reset Health Graph DB (delete all rows)", role: .destructive) {
                     Task { await resetDatabase() }
                 }
@@ -237,7 +238,7 @@ struct HealthGraphDebugView: View {
 
     /// Seeds two plausible mood correlations (Magnesium → good mood, Coffee → low mood)
     /// and recomputes, so "what lifts your mood" insights render immediately in the
-    /// Insights tab. DEBUG-only; APPENDS — reset first to reload cleanly.
+    /// Insights tab. DEBUG-only; reloads its own demo batch first, so a re-tap replaces (not appends), then recomputes.
     private func loadMoodDemo() async {
         errorMessage = nil
         isWorking = true
@@ -274,7 +275,7 @@ struct HealthGraphDebugView: View {
     /// fun section) render on device. `SyntheticDataGenerator` can't emit these
     /// `.environment` subtypes, so this mirrors `EnvironmentalEventFactory`'s shape
     /// (subtype/metadata/source) by hand and saves via `GRDBEventStore` directly.
-    /// DEBUG-only; APPENDS — reset first to reload cleanly.
+    /// DEBUG-only; reloads its own demo batch first, so a re-tap replaces (not appends), then recomputes.
     private func loadOutsideFactorsDemo() async {
         errorMessage = nil
         isWorking = true
@@ -362,7 +363,7 @@ struct HealthGraphDebugView: View {
     /// computed the same way `TemperatureExposureSource`/`HumidityExposureSource`
     /// compute it (nearest-rank percentile over the full sorted series) so the
     /// symptom-correlation matches what the engine will actually bucket as
-    /// hot/humid. DEBUG-only; APPENDS — reset first to reload cleanly.
+    /// hot/humid. DEBUG-only; reloads its own demo batch first, so a re-tap replaces (not appends), then recomputes.
     private func loadWeatherDemo() async {
         errorMessage = nil
         isWorking = true
