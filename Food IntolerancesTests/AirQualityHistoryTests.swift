@@ -309,4 +309,27 @@ struct AirQualityHistoryTests {
 
         #expect(result == .cancelled)   // clean transport+decode, bailed at the guard
     }
+
+    /// Cancellation must win over classification: a transport that cancels its OWN
+    /// calling task then returns an HTTP 401 must yield `.cancelled`, NOT
+    /// `.fetchError(.rejected)` — proving the early post-transport guard runs
+    /// BEFORE `httpStatusReason` (Fix B).
+    @Test func cancellationBeforeHTTPStatusClassificationReturnsCancelledNotRejected() async {
+        struct SelfCancelling401Transport: HTTPTransport {
+            func data(from url: URL) async throws -> (Data, URLResponse) {
+                withUnsafeCurrentTask { $0?.cancel() }
+                return (Data("{}".utf8), HTTPURLResponse(url: url, statusCode: 401, httpVersion: nil, headerFields: nil)!)
+            }
+        }
+        ensureTestAPIKeyConfigured()
+        let calendar = utcCalendar
+        let day0 = calendar.date(from: DateComponents(year: 2025, month: 6, day: 1))!
+        let location = StubLocation(coordinate: CLLocationCoordinate2D(latitude: 40.0, longitude: -74.0))
+        let service = EnvironmentalDataService(
+            transport: SelfCancelling401Transport(), calendar: calendar, location: location)
+
+        let result = await service.fetchCompletedAirQualityRange(from: day0, through: day0)
+
+        #expect(result == .cancelled)   // early guard precedes the 401 → .rejected classification
+    }
 }

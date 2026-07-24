@@ -80,7 +80,7 @@ struct PressureTrustTests {
         var latestFetchedPressure: Double?
         var lastTrustedPressure: Double?
         var forecastHighC: Double?; var forecastLowC: Double?; var forecastHumidity: Double?
-        func requestRefreshWithCooldown() async -> Bool { true }
+        func requestRefreshWithCooldown(bypassCooldown: Bool) async -> Bool { true }
         func fetchCompletedAirQualityRange(from: Date, through: Date) async -> AQIRangeResult { .days([:]) }
         func fetchCompletedWeatherDay(for day: Date) async -> WeatherDayResult { .cancelled }
     }

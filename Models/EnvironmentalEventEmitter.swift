@@ -11,7 +11,7 @@ protocol EnvironmentalDataProviding {
     var forecastHighC: Double? { get }
     var forecastLowC: Double? { get }
     var forecastHumidity: Double? { get }
-    func requestRefreshWithCooldown() async -> Bool
+    func requestRefreshWithCooldown(bypassCooldown: Bool) async -> Bool
     func fetchCompletedAirQualityRange(from: Date, through: Date) async -> AQIRangeResult
     func fetchCompletedWeatherDay(for day: Date) async -> WeatherDayResult
 }
@@ -87,7 +87,8 @@ enum EnvironmentalEventEmitter {
                              now: @escaping () -> Date = Date.init,
                              calendar: Calendar = defaultCalendar(),
                              store: WatermarkStore = UserDefaultsWatermarkStore(),
-                             statusStore: EnvironmentStatusStore? = nil) async {
+                             statusStore: EnvironmentStatusStore? = nil,
+                             bypassThrottles: Bool = false) async {
         let pipeline = IngestPipeline(database: database)
         let tz = calendar.timeZone.identifier
 
@@ -95,7 +96,7 @@ enum EnvironmentalEventEmitter {
         // date-facts. The service's own cooldown decides whether this refetches;
         // we emit today's reading regardless (dedup makes the re-emit idempotent).
         // NO airQuality: today's completed-day AQI does not exist yet.
-        _ = await service.requestRefreshWithCooldown()
+        _ = await service.requestRefreshWithCooldown(bypassCooldown: bypassThrottles)
         let today = now()
         let todayReading = EnvironmentalReading(
             date: today,
@@ -114,8 +115,8 @@ enum EnvironmentalEventEmitter {
             Logger.info("Environmental today-emit failed; will retry on next foreground", category: .data)
         }
 
-        await backfillObservedAQI(pipeline: pipeline, service: service, now: now, calendar: calendar, store: store, tz: tz, statusStore: statusStore)
-        await backfillObservedWeather(pipeline: pipeline, service: service, now: now, calendar: calendar, store: store, tz: tz, statusStore: statusStore)
+        await backfillObservedAQI(pipeline: pipeline, service: service, now: now, calendar: calendar, store: store, tz: tz, statusStore: statusStore, bypassThrottles: bypassThrottles)
+        await backfillObservedWeather(pipeline: pipeline, service: service, now: now, calendar: calendar, store: store, tz: tz, statusStore: statusStore, bypassThrottles: bypassThrottles)
     }
 
     /// BACKFILL — observed AQI for each completed local day, from a contiguous
@@ -124,7 +125,8 @@ enum EnvironmentalEventEmitter {
     private static func backfillObservedAQI(pipeline: IngestPipeline, service: EnvironmentalDataProviding,
                                             now: () -> Date, calendar: Calendar,
                                             store: WatermarkStore, tz: String,
-                                            statusStore: EnvironmentStatusStore?) async {
+                                            statusStore: EnvironmentStatusStore?,
+                                            bypassThrottles: Bool) async {
         let watermark: Date? = store.date(for: lastAQIDayKey)   // nil when unset
         let yesterday = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: now()))!
         let capFloor = calendar.date(byAdding: .day, value: -(maxBackfillDays - 1), to: yesterday)!
@@ -134,7 +136,7 @@ enum EnvironmentalEventEmitter {
         // `start` stays ≤ yesterday, so without this a rapid foreground would
         // re-download the 30-day range every time (independent of the
         // pressure/forecast cooldown). Own interval, own attempt watermark.
-        if let last = store.date(for: lastAQIAttemptKey), now().timeIntervalSince(last) < minAQIRetryInterval { return }
+        if !bypassThrottles, let last = store.date(for: lastAQIAttemptKey), now().timeIntervalSince(last) < minAQIRetryInterval { return }
         store.set(now(), for: lastAQIAttemptKey)
         let byDay: [Date: AQIDayValue]
         switch await service.fetchCompletedAirQualityRange(from: start, through: yesterday) {
@@ -200,13 +202,14 @@ enum EnvironmentalEventEmitter {
     private static func backfillObservedWeather(pipeline: IngestPipeline, service: EnvironmentalDataProviding,
                                                 now: () -> Date, calendar: Calendar,
                                                 store: WatermarkStore, tz: String,
-                                                statusStore: EnvironmentStatusStore?) async {
+                                                statusStore: EnvironmentStatusStore?,
+                                                bypassThrottles: Bool) async {
         let watermark: Date? = store.date(for: lastWeatherDayKey)
         let yesterday = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: now()))!
         let capFloor = calendar.date(byAdding: .day, value: -(maxBackfillDays - 1), to: yesterday)!
         let start: Date = watermark.map { max(calendar.date(byAdding: .day, value: 1, to: $0)!, capFloor) } ?? capFloor
         guard start <= yesterday else { return }
-        if let last = store.date(for: lastWeatherAttemptKey), now().timeIntervalSince(last) < minWeatherRetryInterval { return }
+        if !bypassThrottles, let last = store.date(for: lastWeatherAttemptKey), now().timeIntervalSince(last) < minWeatherRetryInterval { return }
         store.set(now(), for: lastWeatherAttemptKey)
 
         let scopeStart = start, scopeEnd = yesterday    // intended range, captured before the loop

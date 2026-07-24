@@ -63,7 +63,13 @@ class EnvironmentalDataService: ObservableObject {
     @Published var lastUpdated: Date = Date()
     @Published var showZipCodePrompt: Bool = false
     @Published private(set) var currentAtmosphericTask: Task<Void, Never>? = nil
-    
+
+    /// Bumped whenever a TRUSTED coordinate (re)appears — the location-recovery
+    /// signal the App observes to fire a throttle/cooldown-bypassing emit so the
+    /// live `locationDenied`/`locationUnavailable` markers self-heal in one pass
+    /// (return-from-Settings, or a cold-launch fix that resolves seconds later).
+    @Published private(set) var locationRecoveryTick: Int = 0
+
     /// The emitter's inputs. `latestFetchedPressure` is this refresh's genuine
     /// reading (nil on failure/fallback). `lastTrustedPressure` is the prior
     /// genuine reading, exposed only when recent enough to compare.
@@ -147,6 +153,19 @@ class EnvironmentalDataService: ObservableObject {
             // Create a new location service instance if none provided
             self.locationManager = LocationService()
         }
+
+        // Location-recovery signal: when the device coordinate changes, defer to the
+        // main queue so `apply()`'s follow-on `provenance` write (set right after
+        // `currentLocation`) is visible, then bump the tick only if a TRUSTED
+        // coordinate is now resolvable. The App observes this tick to fire a
+        // throttle/cooldown-bypassing emit so location-failure markers self-heal.
+        self.locationManager?.$currentLocation
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                if self.resolvedCoordinate() != nil { self.locationRecoveryTick += 1 }
+            }
+            .store(in: &cancellables)
     }
     
     func setLocation(latitude: Double, longitude: Double) {
@@ -341,10 +360,11 @@ class EnvironmentalDataService: ObservableObject {
         statusStore.recordFailure(capability, reason: reason, scopeStart: s.start, scopeEnd: s.end, timezoneID: s.tz, at: now())
     }
 
-    public func requestRefreshWithCooldown() async -> Bool {
-        // Check if it's too soon for another refresh
+    public func requestRefreshWithCooldown(bypassCooldown: Bool = false) async -> Bool {
+        // Check if it's too soon for another refresh. A location-recovery pass
+        // (`bypassCooldown`) skips ONLY this early-return — everything else runs.
         let currentTime = now()
-        if currentTime.timeIntervalSince(lastRefreshRequest) < minimumRefreshInterval {
+        if !bypassCooldown, currentTime.timeIntervalSince(lastRefreshRequest) < minimumRefreshInterval {
             return false
         }
 
@@ -675,6 +695,7 @@ class EnvironmentalDataService: ObservableObject {
 
         do {
             let (data, response) = try await transport.data(from: url)
+            if Task.isCancelled { return .cancelled }   // cancellation wins over classification (before httpStatusReason/decode)
             if let reason = httpStatusReason(response) { return .fetchError(reason) }   // 401/403 before decode
             let decoded = try JSONDecoder().decode(AirPollutionResponse.self, from: data)
             let slots = decoded.list.map {
@@ -750,6 +771,7 @@ class EnvironmentalDataService: ObservableObject {
         }
         do {
             let (data, response) = try await transport.data(from: url)
+            if Task.isCancelled { return .cancelled }   // cancellation wins over classification (before httpStatusReason/decode)
             if let reason = httpStatusReason(response) { return .fetchError(reason) }   // 401/403 before decode
             let decoded = try JSONDecoder().decode(DaySummaryResponse.self, from: data)
             guard let high = decoded.temperature?.max, let low = decoded.temperature?.min else {

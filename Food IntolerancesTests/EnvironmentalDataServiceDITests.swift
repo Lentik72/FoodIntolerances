@@ -93,6 +93,22 @@ struct EnvironmentalDataServiceDITests {
         #expect(service.forecastHumidity == nil)
     }
 
+    /// The 5-min refresh cooldown blocks a second call within the window, but
+    /// `bypassCooldown: true` (the location-recovery pass) runs anyway. Injected
+    /// fixed `now` makes the window deterministic; the return value tracks the
+    /// cooldown decision, independent of whether the underlying fetch succeeds.
+    @Test func requestRefreshWithCooldownRespectsCooldownUnlessBypassed() async {
+        ensureTestAPIKeyConfigured()
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let transport = StubTransport(payload: forecastJSON(base: now.timeIntervalSince1970))
+        let location = StubLocation(coordinate: CLLocationCoordinate2D(latitude: 40.0, longitude: -74.0))
+        let service = EnvironmentalDataService(transport: transport, now: { now }, location: location)
+
+        #expect(await service.requestRefreshWithCooldown(bypassCooldown: false) == true)    // first call runs
+        #expect(await service.requestRefreshWithCooldown(bypassCooldown: false) == false)   // within cooldown → blocked
+        #expect(await service.requestRefreshWithCooldown(bypassCooldown: true) == true)     // bypass → runs anyway
+    }
+
     @Test func productionDefaultsStillConstruct() {
         // Behavior-preservation check: the defaulted init (no seams supplied)
         // still builds a usable instance, matching pre-DI call sites like

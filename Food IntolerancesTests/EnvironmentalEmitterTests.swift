@@ -32,7 +32,7 @@ struct EnvironmentalEmitterTests {
         private(set) var lastThrough: Date?
         private(set) var refreshCount = 0
 
-        func requestRefreshWithCooldown() async -> Bool {
+        func requestRefreshWithCooldown(bypassCooldown: Bool) async -> Bool {
             refreshCount += 1
             return true
         }
@@ -558,5 +558,28 @@ struct EnvironmentalEmitterTests {
             #expect(stub.rangeCallCount == 1)       // AQI pass unaffected
             #expect(stub.weatherCallCount == 0)     // weather pass throttled
         }
+    }
+
+    // MARK: - Throttle bypass (location-recovery pass)
+
+    /// `bypassThrottles: true` forces BOTH backfills to fetch even when BOTH retry
+    /// attempt watermarks are RECENT (within the interval) — the guard the
+    /// non-bypass path would trip. Peer of `eachBackfillRunsWhenOnlyTheOtherIsThrottled`,
+    /// which proves the default (non-bypass) path still blocks.
+    @Test func bypassThrottlesForcesBothBackfillsDespiteRecentAttemptWatermarks() async throws {
+        let cal = utc
+        let now = day(cal, 6, 10).addingTimeInterval(9 * 3600)   // yesterday = 06-09
+        let db = try AppDatabase.inMemory()
+        let stub = StubProvider()
+        let store = MemoryWatermarkStore()
+        // Both attempt watermarks RECENT → the non-bypass path blocks both passes.
+        store.set(now.addingTimeInterval(-60), for: EnvironmentalEventEmitter.lastAQIAttemptKey)
+        store.set(now.addingTimeInterval(-60), for: EnvironmentalEventEmitter.lastWeatherAttemptKey)
+
+        await EnvironmentalEventEmitter.emitIfNeeded(
+            database: db, service: stub, now: { now }, calendar: cal, store: store, bypassThrottles: true)
+
+        #expect(stub.rangeCallCount >= 1)     // AQI throttle bypassed
+        #expect(stub.weatherCallCount >= 1)   // weather throttle bypassed
     }
 }

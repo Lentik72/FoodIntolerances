@@ -131,6 +131,17 @@ struct FoodIntolerancesApp: App {
                     guard phase == .active else { return }
                     Task { await EnvironmentalEventEmitter.emitIfNeeded(service: environmentalService, statusStore: environmentStatusStore) }
                 }
+                .onChange(of: environmentalService.locationRecoveryTick) { _, _ in
+                    // A trusted coordinate (re)appeared. Only force a bypass emit when a
+                    // live location failure actually exists — this bounds the throttle/
+                    // cooldown bypass to real recovery and prevents a fetch storm on every
+                    // routine device fix.
+                    let hasLiveLocationFailure = environmentStatusStore.statuses.values.contains {
+                        $0.liveFailure?.reason == .locationDenied || $0.liveFailure?.reason == .locationUnavailable
+                    }
+                    guard hasLiveLocationFailure else { return }
+                    Task { await EnvironmentalEventEmitter.emitIfNeeded(service: environmentalService, statusStore: environmentStatusStore, bypassThrottles: true) }
+                }
         }
     }
 

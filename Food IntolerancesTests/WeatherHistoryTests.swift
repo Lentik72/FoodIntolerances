@@ -158,4 +158,24 @@ struct WeatherHistoryTests {
             location: StubLocation(coordinate: CLLocationCoordinate2D(latitude: 40, longitude: -74)))
         #expect(await svc.fetchCompletedWeatherDay(for: day) == .cancelled)   // clean transport+decode, bailed at the guard
     }
+
+    /// Cancellation must win over classification: a transport that cancels its OWN
+    /// calling task then returns an HTTP 401 must yield `.cancelled`, NOT
+    /// `.fetchError(.rejected)` — proving the early post-transport guard runs
+    /// BEFORE `httpStatusReason` (Fix B).
+    @Test func cancellationBeforeHTTPStatusClassificationReturnsCancelledNotRejected() async {
+        struct SelfCancelling401Transport: HTTPTransport {
+            func data(from url: URL) async throws -> (Data, URLResponse) {
+                withUnsafeCurrentTask { $0?.cancel() }
+                return (Data(#"{"cod":401,"message":"requires a separate subscription"}"#.utf8),
+                        HTTPURLResponse(url: url, statusCode: 401, httpVersion: nil, headerFields: nil)!)
+            }
+        }
+        ensureTestAPIKeyConfigured()
+        let svc = EnvironmentalDataService(
+            transport: SelfCancelling401Transport(),
+            calendar: utcCalendar,
+            location: StubLocation(coordinate: CLLocationCoordinate2D(latitude: 40, longitude: -74)))
+        #expect(await svc.fetchCompletedWeatherDay(for: day) == .cancelled)   // early guard precedes the 401 → .rejected classification
+    }
 }
