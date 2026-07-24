@@ -175,6 +175,7 @@ and the final assignment (after `self.createdAt = createdAt`):
 ```swift
         self.syntheticBatch = syntheticBatch
 ```
+Leave `self.normalizedName = NameNormalizer.normalize(name)` as-is for now. Task 3 refines it to derive a namespaced name from `syntheticBatch` once `DemoBatch` exists (Task 2) — that refinement can't live here because Task 1 has no `DemoBatch` to call yet.
 
 - [ ] **Step 4: Add migration v7**
 
@@ -358,6 +359,7 @@ git commit -m "feat(graph): DemoBatch namespace helper (single source of truth)"
 ## Task 3: Batch-aware `findOrCreate` + thread `batch` through the generator (P0 object identity)
 
 **Files:**
+- Modify: `HealthGraphCore/Sources/HealthGraphCore/Models/HealthObject.swift:26-32` (init — derive the namespaced `normalizedName` when `syntheticBatch` is set; the field itself was added in Task 1)
 - Modify: `HealthGraphCore/Sources/HealthGraphCore/Database/ObjectStore.swift:5` (protocol), `:19-32` (impl)
 - Modify: `HealthGraphCore/Sources/HealthGraphCore/Synthetic/SyntheticDataGenerator.swift:79-99` (`SyntheticDataset`), `:104` (`generate`)
 - Test: `HealthGraphCore/Tests/HealthGraphCoreTests/BatchAwareObjectTests.swift`
@@ -365,7 +367,8 @@ git commit -m "feat(graph): DemoBatch namespace helper (single source of truth)"
 **Interfaces:**
 - Consumes: `DemoBatch.normalizedName(_:batch:)`, `DemoBatch.stamp(_:batch:)`, `NameNormalizer.normalize(_:)`, `HealthObject`, `GRDBObjectStore`, `GRDBEventStore`.
 - Produces:
-  - `ObjectStore.findOrCreate(name:kind:metadata:syntheticBatch:)` — new final defaulted param `syntheticBatch: String? = nil`. When non-nil, the lookup filters on `DemoBatch.normalizedName(name, batch:)` and the persisted row stores that `normalizedName` and `syntheticBatch`.
+  - `HealthObject.init` derives `normalizedName` from `syntheticBatch`: `demo` objects get `DemoBatch.normalizedName(name, batch:)`, real objects keep `NameNormalizer.normalize(name)`. This enforces the namespacing invariant at the model boundary — a direct `HealthObject(…, syntheticBatch: b)` is correct without any store-side override.
+  - `ObjectStore.findOrCreate(name:kind:metadata:syntheticBatch:)` — new final defaulted param `syntheticBatch: String? = nil`. When non-nil, the lookup filters on the namespaced `normalizedName`, `kind`, and `syntheticBatch`, and constructs a `HealthObject` whose init self-derives the same `normalizedName` (no post-init mutation).
   - `SyntheticDataGenerator.generate(config:batch:)` — new **required** `batch: String`; every event is stamped via `DemoBatch.stamp`.
   - `SyntheticDataset` gains `public var batch: String`; `insert(into:)` passes it to `findOrCreate`.
 
@@ -379,6 +382,17 @@ import Foundation
 @testable import HealthGraphCore
 
 @Suite struct BatchAwareObjectTests {
+
+    @Test func healthObjectInitDerivesNamespacedNameForDemoBatch() {
+        // Model-boundary invariant: a synthetic object namespaces its normalizedName
+        // from the batch, WITHOUT any store-side override, while keeping display `name`.
+        let real = HealthObject(kind: .food, name: "Coffee")
+        let demo = HealthObject(kind: .food, name: "Coffee", syntheticBatch: DemoBatch.mood)
+        #expect(real.normalizedName == "coffee")
+        #expect(demo.normalizedName == "demo:mood|coffee")
+        #expect(demo.name == "Coffee")
+        #expect(demo.syntheticBatch == "mood")
+    }
 
     @Test func demoObjectCoexistsWithRealObjectOfSameNameAndKind() async throws {
         let db = try AppDatabase.inMemory()
@@ -442,21 +456,33 @@ import Foundation
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `swift test --package-path HealthGraphCore --filter BatchAwareObjectTests`
-Expected: FAIL — `findOrCreate` has no `syntheticBatch:` param and `generate` has no `batch:` param.
+Expected: FAIL — `findOrCreate` has no `syntheticBatch:` param, `generate` has no `batch:` param, and `HealthObject.init` does not yet derive the namespaced `normalizedName` (so `healthObjectInitDerivesNamespacedNameForDemoBatch` fails).
 
-- [ ] **Step 3: Add `syntheticBatch` to the `ObjectStore` protocol and impl**
+- [ ] **Step 3: Derive the namespaced name in `HealthObject.init`, then add `syntheticBatch` to `findOrCreate`**
 
-In `HealthGraphCore/Sources/HealthGraphCore/Database/ObjectStore.swift`, change the protocol requirement (line 5):
+First, enforce the invariant at the model boundary. In `HealthGraphCore/Sources/HealthGraphCore/Models/HealthObject.swift`, change the init's `normalizedName` derivation. Task 1 left it as `self.normalizedName = NameNormalizer.normalize(name)`; replace that single line with:
+```swift
+        // A synthetic object's identity is namespaced so it can never collide with a
+        // real object of the same name+kind. Deriving it HERE (not via a post-init
+        // override in the store) means any direct `HealthObject(…, syntheticBatch:)`
+        // is correct by construction. `DemoBatch` is same-module.
+        self.normalizedName = syntheticBatch
+            .map { DemoBatch.normalizedName(name, batch: $0) }
+            ?? NameNormalizer.normalize(name)
+```
+(Uses the local `syntheticBatch` param — assigned before `self.syntheticBatch`, so order is irrelevant.)
+
+Then, in `HealthGraphCore/Sources/HealthGraphCore/Database/ObjectStore.swift`, change the protocol requirement (line 5):
 ```swift
     func findOrCreate(name: String, kind: ObjectKind, metadata: Data?,
                       syntheticBatch: String?) async throws -> HealthObject
 ```
-Replace the impl (lines 19-32):
+Replace the impl (lines 19-32). No post-init override — the init now self-derives the same `normalizedName` used for the lookup:
 ```swift
     public func findOrCreate(name: String, kind: ObjectKind, metadata: Data?,
                              syntheticBatch: String? = nil) async throws -> HealthObject {
-        // One computation of the identity key, used for BOTH the lookup and the
-        // persisted row, so a demo object can never merge into a real one.
+        // Same derivation the init uses (both via DemoBatch/NameNormalizer), so the
+        // lookup key and the stored row's normalizedName cannot diverge.
         let normalized = syntheticBatch
             .map { DemoBatch.normalizedName(name, batch: $0) }
             ?? NameNormalizer.normalize(name)
@@ -468,9 +494,8 @@ Replace the impl (lines 19-32):
                 .fetchOne(db) {
                 return existing
             }
-            var object = HealthObject(kind: kind, name: name, metadata: metadata)
-            object.normalizedName = normalized       // override the init's real-name normalization
-            object.syntheticBatch = syntheticBatch
+            let object = HealthObject(kind: kind, name: name, metadata: metadata,
+                                      syntheticBatch: syntheticBatch)   // normalizedName derived by init
             try object.insert(db)
             return object
         }
@@ -526,7 +551,7 @@ Re-verify none remain: `grep -rn "SyntheticDataGenerator.generate(" --include="*
 - [ ] **Step 6: Run the tests and build both targets to verify the whole tree compiles**
 
 Run: `swift test --package-path HealthGraphCore --filter BatchAwareObjectTests`
-Expected: PASS — 3 tests.
+Expected: PASS — 4 tests (the model-boundary derivation + the three store/generator tests).
 
 Run: `swift test --package-path HealthGraphCore`
 Expected: PASS — full package suite green (all package call sites now pass a batch).
@@ -537,7 +562,8 @@ Expected: BUILD SUCCEEDED — the app target's `generate` call sites (`InsightDe
 - [ ] **Step 7: Commit**
 
 ```bash
-git add "HealthGraphCore/Sources/HealthGraphCore/Database/ObjectStore.swift" \
+git add "HealthGraphCore/Sources/HealthGraphCore/Models/HealthObject.swift" \
+        "HealthGraphCore/Sources/HealthGraphCore/Database/ObjectStore.swift" \
         "HealthGraphCore/Sources/HealthGraphCore/Synthetic/SyntheticDataGenerator.swift" \
         "HealthGraphCore/Tests/HealthGraphCoreTests/BatchAwareObjectTests.swift" \
         "HealthGraphCore/Tests/HealthGraphCoreTests/SyntheticDataTests.swift" \
@@ -998,22 +1024,29 @@ import HealthGraphCore
 @MainActor
 @Suite struct InsightsDismissalGateTests {
 
-    /// Insert a relationship with a given status; returns its id.
-    private func makeEdge(_ db: AppDatabase, status: RelStatus) throws -> UUID {
-        let id = UUID()
-        try db.dbWriter.write { database in
-            try database.execute(sql: """
-                INSERT INTO relationships
-                (id, fromCategory, toCategory, type, evidenceCount, contradictionCount,
-                 confidence, firstSeen, lastSeen, lastRecomputed, status, edgeKey)
-                VALUES (?, 'food', 'symptom', 'possibleTrigger', 5, 0, 0.9, 0, 0, 0, ?, 'k1')
-                """, arguments: [id.uuidString, status.rawValue])
-        }
-        return id
+    /// Insert a relationship with a given status through the PRODUCTION store, so
+    /// its `id` (and every column) is encoded exactly as production reads it.
+    /// A raw-SQL insert of `id.uuidString` would store TEXT into the BLOB-affinity
+    /// `id` column; production `relationship(id:)` binds `UUID` as a 16-byte BLOB
+    /// via `fetchOne(db, key:)` and would NOT find that row — making the dismiss
+    /// test pass even with a broken gate (dismiss silently no-ops when the lookup
+    /// returns nil). Using the store guarantees the encodings match.
+    private func makeEdge(_ db: AppDatabase, status: RelStatus) async throws -> UUID {
+        let rel = Relationship(
+            fromCategory: "food", toCategory: "symptom", type: .possibleTrigger,
+            confidence: 0.9,
+            firstSeen: Date(timeIntervalSince1970: 0),
+            lastSeen: Date(timeIntervalSince1970: 0),
+            lastRecomputed: Date(timeIntervalSince1970: 0),
+            status: status, edgeKey: "k1")
+        try await GRDBRelationshipStore(database: db).save(rel)
+        return rel.id
     }
     private func status(_ db: AppDatabase, _ id: UUID) throws -> String? {
+        // Bind the UUID directly (16-byte BLOB) so this query matches the row the
+        // store wrote — the same encoding production `relationship(id:)` uses.
         try db.dbWriter.read { try String.fetchOne($0,
-            sql: "SELECT status FROM relationships WHERE id = ?", arguments: [id.uuidString]) }
+            sql: "SELECT status FROM relationships WHERE id = ?", arguments: [id]) }
     }
     private func markDemoLoaded(_ db: AppDatabase) async throws {
         try await GRDBEventStore(database: db).save(
@@ -1029,7 +1062,7 @@ import HealthGraphCore
 
     @Test func dismissIsBlockedWhileDemoDataExists() async throws {
         let db = try AppDatabase.inMemory()
-        let id = try makeEdge(db, status: .active)
+        let id = try await makeEdge(db, status: .active)
         try await markDemoLoaded(db)
 
         let vm = InsightsViewModel(database: db, now: { Date(timeIntervalSince1970: 0) })
@@ -1044,7 +1077,7 @@ import HealthGraphCore
         // Start ALREADY dismissed, with a queued undo whose priorStatus is .active.
         // If the gate fails and undo runs, status flips to "active" — a real
         // discriminator (starting from .active would pass even on a wrong undo).
-        let id = try makeEdge(db, status: .userDismissed)
+        let id = try await makeEdge(db, status: .userDismissed)
         let vm = InsightsViewModel(database: db, now: { Date(timeIntervalSince1970: 0) })
         vm.pendingUndo = .init(id: id, priorStatus: .active)
         try await markDemoLoaded(db)
@@ -1066,6 +1099,29 @@ import HealthGraphCore
         await vm.load()
         #expect(vm.demoDataLoaded == true)
     }
+
+    @Test func presenceCheckFailsClosedWhenItThrows() async throws {
+        struct Boom: Error {}
+        let db = try AppDatabase.inMemory()
+        // No demo data actually present, but the checker throws — must fail CLOSED.
+        let vm = InsightsViewModel(database: db, now: { Date(timeIntervalSince1970: 0) },
+                                   hasSyntheticData: { throw Boom() })
+
+        await vm.load()
+        #expect(vm.demoDataLoaded == true)                  // unverifiable → treated as present
+
+        // Undo is blocked and pendingUndo cleared, even though the DB has no demo rows.
+        let dismissed = try await makeEdge(db, status: .userDismissed)
+        vm.pendingUndo = .init(id: dismissed, priorStatus: .active)
+        await vm.undoDismiss()
+        #expect(vm.pendingUndo == nil)
+        #expect(try status(db, dismissed) == "userDismissed")   // undo did NOT run
+
+        // Dismiss is blocked too.
+        let active = try await makeEdge(db, status: .active)
+        await vm.dismiss(card(active))
+        #expect(try status(db, active) == "active")             // dismiss did NOT run
+    }
 }
 ```
 
@@ -1076,31 +1132,65 @@ import HealthGraphCore
 Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/InsightsDismissalGateTests" -parallel-testing-enabled NO`
 Expected: FAIL — `demoDataLoaded` does not exist and the gate is not present.
 
-- [ ] **Step 3: Add the flag and the gate**
+- [ ] **Step 3: Add the flag, the injected checker seam, and the fail-CLOSED gate**
 
-In `Views/HealthOS/Insights/InsightsViewModel.swift`, add the published flag after `pendingUndo` (line 7):
+The presence check must **fail closed**: if the query throws, we must treat demo data as present (banner shown, dismissal blocked), never enable a mutation we cannot prove is safe. A `(try? …) ?? false` would fail *open* — hiding the banner and permitting dismissal exactly when the database can't be verified. An injected checker gives a test seam to force a thrown lookup.
+
+In `Views/HealthOS/Insights/InsightsViewModel.swift`:
+
+Add the published flag after `pendingUndo` (line 7):
 ```swift
     @Published private(set) var demoDataLoaded = false
 ```
 
-In `load()`, after computing `feed` (after the `feed = InsightsFeed.build(...)` line, ~line 37), add:
+Add a stored checker property alongside the other `private let`s (after `engine`, ~line 15):
 ```swift
-        let demo = (try? await database.hasSyntheticData()) ?? false
+    private let hasSyntheticDataCheck: @Sendable () async throws -> Bool
+```
+
+Extend `init` to accept and default the checker (the default captures the `database` parameter, which is `Sendable`):
+```swift
+    init(database: AppDatabase = HealthGraphProvider.shared, now: @escaping () -> Date = { Date() },
+         hasSyntheticData: (@Sendable () async throws -> Bool)? = nil) {
+        self.database = database; self.now = now
+        self.relStore = GRDBRelationshipStore(database: database)
+        self.objectStore = GRDBObjectStore(database: database)
+        self.engine = EvidenceEngine(database: database)
+        self.hasSyntheticDataCheck = hasSyntheticData ?? { try await database.hasSyntheticData() }
+    }
+```
+
+Add the fail-closed helper (e.g. just below `undoDismiss`):
+```swift
+    /// Fails CLOSED: any error verifying demo presence is treated as "present", so
+    /// the banner never hides and dismissal never unlocks while the database state
+    /// cannot be confirmed.
+    private func demoDataPresentFailingClosed() async -> Bool {
+        do { return try await hasSyntheticDataCheck() }
+        catch { return true }
+    }
+```
+
+In `load()`, determine the flag **first** — before the `guard let rels = …` early-return — so the banner/gate stay correct even when the feed query itself fails. Insert at the very top of `load()` (before `guard let rels = try? await relStore.all()`, line 25):
+```swift
+        // Set the demo flag first (fail closed) so an early return below still leaves
+        // the banner and dismissal gate in a safe state.
+        let demo = await demoDataPresentFailingClosed()
         if demo { pendingUndo = nil }        // a queued undo would target a rebuilt id
         demoDataLoaded = demo
 ```
 
-Guard `dismiss` — add as the first line of the method body (before the `guard var r = ...`, line 41):
+Guard `dismiss` — first line of the body (before `guard var r = …`, line 41):
 ```swift
-        // Demo data present: dismissal is disabled (a dismissed demo edge could later
-        // suppress a genuine edge sharing its edgeKey). Re-checked here, not just in the
-        // UI, to close the stale-card race.
-        if (try? await database.hasSyntheticData()) == true { return }
+        // Demo present OR unverifiable: dismissal is blocked (a dismissed demo edge could
+        // later suppress a genuine edge sharing its edgeKey). Re-checked here, not only in
+        // the UI, to close the stale-card race; fails closed on a query error.
+        if await demoDataPresentFailingClosed() { return }
 ```
 
-Guard `undoDismiss` — add as the first line (before `guard let undo = ...`, line 55):
+Guard `undoDismiss` — first line (before `guard let undo = …`, line 55):
 ```swift
-        if (try? await database.hasSyntheticData()) == true { pendingUndo = nil; return }
+        if await demoDataPresentFailingClosed() { pendingUndo = nil; return }
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
