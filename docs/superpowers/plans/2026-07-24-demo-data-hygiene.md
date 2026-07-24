@@ -1032,15 +1032,23 @@ import HealthGraphCore
     /// test pass even with a broken gate (dismiss silently no-ops when the lookup
     /// returns nil). Using the store guarantees the encodings match.
     private func makeEdge(_ db: AppDatabase, status: RelStatus) async throws -> UUID {
+        // edgeKey MUST be unique per call: there is a partial UNIQUE index
+        // `idx_rel_edgeKey ON relationships(edgeKey) WHERE edgeKey IS NOT NULL`
+        // (AppDatabase.swift:205), and GRDB `save` INSERTs with the default
+        // `.abort` conflict policy. A shared literal key would throw on the second
+        // edge (e.g. the two edges in presenceCheckFailsClosedWhenItThrows). Derive
+        // it from the row's own UUID so every edge is distinct.
+        let id = UUID()
         let rel = Relationship(
+            id: id,
             fromCategory: "food", toCategory: "symptom", type: .possibleTrigger,
             confidence: 0.9,
             firstSeen: Date(timeIntervalSince1970: 0),
             lastSeen: Date(timeIntervalSince1970: 0),
             lastRecomputed: Date(timeIntervalSince1970: 0),
-            status: status, edgeKey: "k1")
+            status: status, edgeKey: "k-\(id.uuidString)")
         try await GRDBRelationshipStore(database: db).save(rel)
-        return rel.id
+        return id
     }
     private func status(_ db: AppDatabase, _ id: UUID) throws -> String? {
         // Bind the UUID directly (16-byte BLOB) so this query matches the row the
