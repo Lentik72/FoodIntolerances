@@ -31,8 +31,8 @@ import Foundation
 /// in quick succession) could chain several unthrottled backfill passes back to
 /// back. A hard cap on trailing passes is deliberately NOT implemented here — it
 /// could drop a genuine heal and reintroduce the bug this queue exists to prevent.
-/// A diagnostic log fires once a drain schedules more than its first trailing
-/// forced pass, so this can be observed without limiting it.
+/// A diagnostic log fires on each trailing forced pass AFTER the first, so the
+/// chaining can be observed in the field without limiting it.
 @MainActor
 final class EnvironmentEmitCoordinator {
     /// Runs one environment pass. The `Bool` is `bypassThrottles`.
