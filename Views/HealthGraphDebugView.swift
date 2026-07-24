@@ -106,8 +106,10 @@ struct HealthGraphDebugView: View {
                         errorMessage = nil
                         // Production service + shared status store, so the result reflects the real
                         // location lifecycle, pressure carry, and status recording. `bypassThrottles`
-                        // forces both backfills regardless of their retry watermarks — replacing the
-                        // old hand-deletion of the AQI attempt key, which mutated real throttle state.
+                        // skips the backfills' retry-interval CHECK so a forced run always attempts,
+                        // replacing the old pre-emptive deletion of the AQI attempt key. Note the run
+                        // still records fresh attempt timestamps for both backfills afterward — correct,
+                        // since it really did attempt; it just no longer rewrites history to get there.
                         await EnvironmentalEventEmitter.emitIfNeeded(
                             service: environmentalService,
                             statusStore: environmentStatusStore,
