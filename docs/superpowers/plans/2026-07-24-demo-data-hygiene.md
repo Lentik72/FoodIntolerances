@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- **Marking:** a nullable `syntheticBatch TEXT` column on `health_events` and `health_objects`; `NULL` means real. No backfill — existing rows are real by definition.
+- **Marking:** a nullable `syntheticBatch TEXT` column on `health_events` and `health_objects`; `NULL` means real. No backfill — existing rows are left unmarked because synthetic provenance cannot be inferred safely; affected development databases require the documented reset (see Accepted limitation).
 - **Batch identifiers (exact):** `"synthetic"`, `"mood"`, `"outsideFactors"`, `"weather"`. One per seed button.
 - **Namespace prefix (exact):** `"demo:<batch>|"`, applied to both demo event dedup keys and demo object `normalizedName`. Derived in exactly one place (`DemoBatch`), used for both the lookup key and the persisted row.
 - **Object identity is NOT namespaced by extending the unique key.** SQLite treats `NULL`s as distinct in unique indexes, so `unique(normalizedName, kind, syntheticBatch)` would permit two real rows of the same name+kind. Prefix `normalizedName` instead; leave the `unique(normalizedName, kind)` invariant (`AppDatabase.swift:48`) untouched.
@@ -185,7 +185,9 @@ In `HealthGraphCore/Sources/HealthGraphCore/Database/AppDatabase.swift`, registe
 ```swift
         migrator.registerMigration("v7") { db in
             // Demo-data hygiene: mark seeded rows so they are precisely removable.
-            // Nullable, no backfill — every existing row is real by definition.
+            // Nullable, no backfill — existing rows are left unmarked because synthetic
+            // provenance can't be inferred safely (legacy demo rows imitate real data);
+            // affected dev databases require the documented one-time reset.
             try db.alter(table: "health_events") { t in
                 t.add(column: "syntheticBatch", .text)
             }

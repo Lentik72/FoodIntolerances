@@ -46,7 +46,7 @@
 
 ### 1. Marking
 
-Migration **v7** adds a nullable `syntheticBatch TEXT` column to `health_events` and `health_objects`. `NULL` means real; existing rows need no backfill because they are real by definition. Both tables get a **partial index** on the column, conditioned `WHERE syntheticBatch IS NOT NULL`, so the index stays proportional to demo rows rather than to the whole table.
+Migration **v7** adds a nullable `syntheticBatch TEXT` column to `health_events` and `health_objects`. `NULL` means real; existing rows are left unmarked because synthetic provenance cannot be inferred safely (legacy demo rows were written to imitate real data), so affected development databases require the documented reset (see Accepted limitation). Both tables get a **partial index** on the column, conditioned `WHERE syntheticBatch IS NOT NULL`, so the index stays proportional to demo rows rather than to the whole table.
 
 `HealthEvent` and `HealthObject` gain a matching `syntheticBatch: String?` property, defaulting to `nil`.
 
