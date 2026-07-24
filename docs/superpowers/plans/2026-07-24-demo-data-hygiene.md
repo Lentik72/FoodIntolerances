@@ -56,6 +56,7 @@
 - Modify: `HealthGraphCore/Sources/HealthGraphCore/Models/HealthEvent.swift:9-60`
 - Modify: `HealthGraphCore/Sources/HealthGraphCore/Models/HealthObject.swift:9-32`
 - Modify: `HealthGraphCore/Sources/HealthGraphCore/Database/AppDatabase.swift:270` (insert new migration just before `return migrator`)
+- Modify: `HealthGraphCore/Tests/HealthGraphCoreTests/EnvProvenanceMigrationTests.swift:35-45` (convert `seedLegacy`'s record insert to raw SQL — see Step 4b)
 - Test: `HealthGraphCore/Tests/HealthGraphCoreTests/SyntheticBatchMigrationTests.swift`
 
 **Interfaces:**
@@ -205,6 +206,30 @@ In `HealthGraphCore/Sources/HealthGraphCore/Database/AppDatabase.swift`, registe
 
 No test-only accessor is required: the Step 1 tests drive everything through the public `AppDatabase(_:)` init (which runs the full migrator) and the public `dbWriter`.
 
+- [ ] **Step 4b: Fix a pre-existing record-insert that this column breaks**
+
+`EnvProvenanceMigrationTests.seedLegacy` (`EnvProvenanceMigrationTests.swift:44`) inserts a `HealthEvent` **record** (`try event.insert(db)`) into a queue migrated only `upTo: "v5"`. GRDB's encoder names **every** model column — including the new `syntheticBatch` — so after this task the INSERT references a column the v5 schema lacks (`syntheticBatch` is added in v7) and throws `table health_events has no column named syntheticBatch`. Both `@Test`s in that file route through `seedLegacy`, so the whole suite fails at Step 6 — the same hazard the v6 migration body documents (`AppDatabase.swift:222`, "uses raw SQL … not the HealthEvent record — a future column would crash a record-based migration").
+
+Convert `seedLegacy` to a raw INSERT naming only pre-v7 columns (mirroring the v6 body and this task's own Step 1 Test 3). Replace its body:
+```swift
+    private func seedLegacy(_ queue: DatabaseQueue, subtype: String,
+                            metadata: [String: String]? = nil,
+                            deletedAt: Date? = nil) throws {
+        // Raw INSERT, not `HealthEvent.insert`: the record encoder would name the
+        // v7 `syntheticBatch` column, absent at v5. Same rationale as the v6 body.
+        let meta = metadata.flatMap { try? JSONEncoder().encode($0) }
+        try queue.write { db in
+            try db.execute(sql: """
+                INSERT INTO health_events
+                (id, timestamp, timezoneID, category, subtype, source, confidence, metadata, createdAt, dedupKey, deletedAt)
+                VALUES (?, ?, ?, 'environment', ?, 'weatherAPI', 1.0, ?, ?, ?, ?)
+                """, arguments: [UUID(), Self.ts, Self.tz, subtype, meta, Self.ts,
+                                 Self.legacyKey(subtype), deletedAt])
+        }
+    }
+```
+This preserves what the file's assertions read (subtype, source, metadata, `dedupKey`, `deletedAt`) — v6's rewrite and the parity checks are unaffected. Run `swift test --package-path HealthGraphCore --filter EnvProvenanceMigrationTests` and confirm it still passes after the column is added.
+
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `swift test --package-path HealthGraphCore --filter SyntheticBatchMigrationTests`
@@ -213,7 +238,7 @@ Expected: PASS — 3 tests (`columnsExistAndDefaultToNilForPreExistingRows`, `pa
 - [ ] **Step 6: Run the full package suite to confirm no regressions**
 
 Run: `swift test --package-path HealthGraphCore`
-Expected: PASS — existing suites unaffected (adding a nullable column + defaulted init params is source-compatible).
+Expected: PASS — including `EnvProvenanceMigrationTests` (green because of Step 4b). Note: adding a nullable column is source-compatible for the Swift COMPILE, but GRDB record inserts against an OLDER migrated schema (Step 4b) are a runtime hazard the column introduces — Step 4b is what keeps this suite green.
 
 - [ ] **Step 7: Commit**
 
@@ -221,6 +246,7 @@ Expected: PASS — existing suites unaffected (adding a nullable column + defaul
 git add "HealthGraphCore/Sources/HealthGraphCore/Models/HealthEvent.swift" \
         "HealthGraphCore/Sources/HealthGraphCore/Models/HealthObject.swift" \
         "HealthGraphCore/Sources/HealthGraphCore/Database/AppDatabase.swift" \
+        "HealthGraphCore/Tests/HealthGraphCoreTests/EnvProvenanceMigrationTests.swift" \
         "HealthGraphCore/Tests/HealthGraphCoreTests/SyntheticBatchMigrationTests.swift"
 git commit -m "feat(graph): v7 syntheticBatch column + model fields + partial indexes"
 ```
@@ -1050,11 +1076,11 @@ import HealthGraphCore
         try await GRDBRelationshipStore(database: db).save(rel)
         return id
     }
-    private func status(_ db: AppDatabase, _ id: UUID) throws -> String? {
-        // Bind the UUID directly (16-byte BLOB) so this query matches the row the
-        // store wrote — the same encoding production `relationship(id:)` uses.
-        try db.dbWriter.read { try String.fetchOne($0,
-            sql: "SELECT status FROM relationships WHERE id = ?", arguments: [id]) }
+    private func status(_ db: AppDatabase, _ id: UUID) async throws -> RelStatus? {
+        // Read through the SAME public HealthGraphCore store API production uses
+        // (`relationship(id:)`) — so this app-target test needs no direct `import GRDB`,
+        // and it exercises the exact blob-keyed lookup path the dismiss gate depends on.
+        try await GRDBRelationshipStore(database: db).relationship(id: id)?.status
     }
     private func markDemoLoaded(_ db: AppDatabase) async throws {
         try await GRDBEventStore(database: db).save(
@@ -1077,7 +1103,7 @@ import HealthGraphCore
         await vm.dismiss(card(id))
 
         // A working dismiss would flip active → userDismissed; the gate must prevent it.
-        #expect(try status(db, id) == "active")
+        #expect(try await status(db, id) == .active)
     }
 
     @Test func undoIsBlockedAndPendingUndoClearedWhileDemoDataExists() async throws {
@@ -1093,7 +1119,7 @@ import HealthGraphCore
         await vm.undoDismiss()
 
         #expect(vm.pendingUndo == nil)                      // cleared without writing
-        #expect(try status(db, id) == "userDismissed")      // undo did NOT execute
+        #expect(try await status(db, id) == .userDismissed)      // undo did NOT execute
     }
 
     @Test func demoDataLoadedFlagTracksPresence() async throws {
@@ -1123,12 +1149,12 @@ import HealthGraphCore
         vm.pendingUndo = .init(id: dismissed, priorStatus: .active)
         await vm.undoDismiss()
         #expect(vm.pendingUndo == nil)
-        #expect(try status(db, dismissed) == "userDismissed")   // undo did NOT run
+        #expect(try await status(db, dismissed) == .userDismissed)   // undo did NOT run
 
         // Dismiss is blocked too.
         let active = try await makeEdge(db, status: .active)
         await vm.dismiss(card(active))
-        #expect(try status(db, active) == "active")             // dismiss did NOT run
+        #expect(try await status(db, active) == .active)             // dismiss did NOT run
     }
 }
 ```
