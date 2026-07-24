@@ -7,6 +7,7 @@ import HealthGraphCore
 /// display-time aggregate — never navigable, editable, or deletable.
 struct EnvironmentSummaryRow: View {
     let summary: EnvironmentDaySummary
+    var gap: EnvironmentGap? = nil
     let isExpanded: Bool
     let onToggle: () -> Void
 
@@ -47,21 +48,29 @@ struct EnvironmentSummaryRow: View {
                         .foregroundStyle(HealthTheme.ink)
                         .lineLimit(2)
                     Spacer(minLength: 8)
-                    if let aqi = headlineResult.aqi {
-                        AQIValueLabel(value: headline, aqi: aqi)
-                            .font(.footnote)
-                            .foregroundStyle(HealthTheme.inkMuted)
-                            .multilineTextAlignment(.trailing)
-                    } else if let phase = headlineResult.moonPhase {
-                        MoonPhaseLabel(value: headline, phase: phase)
-                            .font(.footnote)
-                            .foregroundStyle(HealthTheme.inkMuted)
-                            .multilineTextAlignment(.trailing)
-                    } else {
-                        Text(headline)
-                            .font(.footnote)
-                            .foregroundStyle(HealthTheme.inkMuted)
-                            .multilineTextAlignment(.trailing)
+                    VStack(alignment: .trailing, spacing: 2) {
+                        if let aqi = headlineResult.aqi {
+                            AQIValueLabel(value: headline, aqi: aqi)
+                                .font(.footnote)
+                                .foregroundStyle(HealthTheme.inkMuted)
+                                .multilineTextAlignment(.trailing)
+                        } else if let phase = headlineResult.moonPhase {
+                            MoonPhaseLabel(value: headline, phase: phase)
+                                .font(.footnote)
+                                .foregroundStyle(HealthTheme.inkMuted)
+                                .multilineTextAlignment(.trailing)
+                        } else {
+                            Text(headline)
+                                .font(.footnote)
+                                .foregroundStyle(HealthTheme.inkMuted)
+                                .multilineTextAlignment(.trailing)
+                        }
+                        if let gap {
+                            Text(gap.label)                    // status, not warning: caption, muted, no color/icon
+                                .font(.caption2)
+                                .foregroundStyle(HealthTheme.inkMuted)
+                                .multilineTextAlignment(.trailing)
+                        }
                     }
                     if isExpandable {
                         Image(systemName: "chevron.right")
@@ -76,7 +85,7 @@ struct EnvironmentSummaryRow: View {
             }
             .buttonStyle(.plain)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Environment, \(headline)")
+            .accessibilityLabel(gap == nil ? "Environment, \(headline)" : "Environment, \(headline), \(gap!.label.lowercased())")
             .accessibilityHint(isExpandable
                                ? (isExpanded ? "Collapses environment details" : "Expands environment details")
                                : "")

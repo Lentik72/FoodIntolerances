@@ -15,6 +15,7 @@ struct TimelineView: View {
     @State private var editingEvent: HealthEvent?
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var captureCoordinator: CaptureCoordinator
+    @EnvironmentObject private var statusStore: EnvironmentStatusStore
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -160,8 +161,11 @@ struct TimelineView: View {
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
                         case .environmentSummary(let summary):
-                            EnvironmentSummaryRow(summary: summary,
-                                                  isExpanded: expandedEnvironment.contains(summary.id)) {
+                            EnvironmentSummaryRow(
+                                summary: summary,
+                                gap: EnvironmentGapResolver.gap(for: summary, status: statusStore.statuses,
+                                                                now: Date(), calendar: Calendar.current),
+                                isExpanded: expandedEnvironment.contains(summary.id)) {
                                 withAnimation(.easeOut(duration: 0.2)) {
                                     if expandedEnvironment.contains(summary.id) { expandedEnvironment.remove(summary.id) }
                                     else { expandedEnvironment.insert(summary.id) }
