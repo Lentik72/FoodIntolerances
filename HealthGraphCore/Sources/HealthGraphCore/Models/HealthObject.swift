@@ -13,6 +13,8 @@ public struct HealthObject: Codable, Identifiable, Equatable,
     public var metadata: Data?
     public var isArchived: Bool
     public var createdAt: Date
+    /// Non-nil marks a demo/seed object and names its batch. NULL = real.
+    public var syntheticBatch: String?
 
     public init(
         id: UUID = UUID(),
@@ -20,7 +22,8 @@ public struct HealthObject: Codable, Identifiable, Equatable,
         name: String,
         metadata: Data? = nil,
         isArchived: Bool = false,
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        syntheticBatch: String? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -29,5 +32,6 @@ public struct HealthObject: Codable, Identifiable, Equatable,
         self.metadata = metadata
         self.isArchived = isArchived
         self.createdAt = createdAt
+        self.syntheticBatch = syntheticBatch
     }
 }

@@ -22,6 +22,8 @@ public struct HealthEvent: Codable, Identifiable, Equatable, Hashable,
     public var createdAt: Date
     public var dedupKey: String?
     public var deletedAt: Date?
+    /// Non-nil marks a demo/seed row and names its batch (`DemoBatch`). NULL = real.
+    public var syntheticBatch: String?
 
     public init(
         id: UUID = UUID(),
@@ -39,7 +41,8 @@ public struct HealthEvent: Codable, Identifiable, Equatable, Hashable,
         attachmentPath: String? = nil,
         createdAt: Date = Date(),
         dedupKey: String? = nil,
-        deletedAt: Date? = nil
+        deletedAt: Date? = nil,
+        syntheticBatch: String? = nil
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -57,5 +60,6 @@ public struct HealthEvent: Codable, Identifiable, Equatable, Hashable,
         self.createdAt = createdAt
         self.dedupKey = dedupKey
         self.deletedAt = deletedAt
+        self.syntheticBatch = syntheticBatch
     }
 }

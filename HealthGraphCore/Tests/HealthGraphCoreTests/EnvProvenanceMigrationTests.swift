@@ -34,14 +34,17 @@ struct EnvProvenanceMigrationTests {
     private func seedLegacy(_ queue: DatabaseQueue, subtype: String,
                             metadata: [String: String]? = nil,
                             deletedAt: Date? = nil) throws {
-        let event = HealthEvent(
-            timestamp: Self.ts, timezoneID: Self.tz,
-            category: .environment, subtype: subtype,
-            source: .weatherAPI,
-            metadata: metadata.flatMap { try? JSONEncoder().encode($0) },
-            dedupKey: Self.legacyKey(subtype),
-            deletedAt: deletedAt)
-        try queue.write { db in try event.insert(db) }
+        // Raw INSERT, not `HealthEvent.insert`: the record encoder would name the
+        // v7 `syntheticBatch` column, absent at v5. Same rationale as the v6 body.
+        let meta = metadata.flatMap { try? JSONEncoder().encode($0) }
+        try queue.write { db in
+            try db.execute(sql: """
+                INSERT INTO health_events
+                (id, timestamp, timezoneID, category, subtype, source, confidence, metadata, createdAt, dedupKey, deletedAt)
+                VALUES (?, ?, ?, 'environment', ?, 'weatherAPI', 1.0, ?, ?, ?, ?)
+                """, arguments: [UUID(), Self.ts, Self.tz, subtype, meta, Self.ts,
+                                 Self.legacyKey(subtype), deletedAt])
+        }
     }
 
     // MARK: - Classification + key PARITY
