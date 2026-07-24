@@ -74,9 +74,9 @@ final class EnvironmentEmitCoordinator {
 
     /// Signals that a pass should run. Returns the coordinator-owned drain task —
     /// newly started, or the one already running — so a caller (or a test) may await
-    /// it. The three triggers ignore the result.
+    /// it. Non-optional: every path yields a task. The three triggers ignore the result.
     @discardableResult
-    func emit(forced: Bool) -> Task<Void, Never>? {
+    func emit(forced: Bool) -> Task<Void, Never> {
         if forced { pendingForced = true }
         if let drainTask { return drainTask }   // a drain is active; it will pick the flag up
 
