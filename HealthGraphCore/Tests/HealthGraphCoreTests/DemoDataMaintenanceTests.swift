@@ -153,4 +153,24 @@ import GRDB
         #expect(try objectCount(db) == 0)
         #expect(try relationshipCount(db) == 0)     // non-dismissed edge wiped for rebuild
     }
+
+    @Test func reloadThenInsertTwiceLeavesOneDatasetsWorthOfRows() async throws {
+        let db = try AppDatabase.inMemory()
+        let config = SyntheticConfig(
+            startDate: Date(timeIntervalSince1970: 0), days: 5, seed: 3,
+            patterns: [PlantedPattern(exposureName: "Coffee", exposureCategory: .food,
+                                      outcomeSubtype: "mood", lagHours: 4, lagJitterHours: 1,
+                                      followProbability: 0.8, exposureProbabilityPerDay: 0.6)],
+            outcomeBaseRatePerDay: 0, noiseFoodsPerDay: 0...0)
+
+        func seedOnce() async throws {
+            try await db.resetForSeedReload(batch: DemoBatch.mood)
+            try await SyntheticDataGenerator.generate(config: config).insert(into: db, batch: DemoBatch.mood)
+        }
+        try await seedOnce()
+        let afterFirst = try await GRDBEventStore(database: db).count()
+        try await seedOnce()                                   // second "tap"
+        let afterSecond = try await GRDBEventStore(database: db).count()
+        #expect(afterSecond == afterFirst)                     // reload replaced, did not append
+    }
 }

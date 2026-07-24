@@ -59,6 +59,23 @@ struct HealthGraphDebugView: View {
                     Task { await loadWeatherDemo() }
                 }
                 .disabled(isWorking)
+                Button("Clear demo data (keeps real data)", role: .destructive) {
+                    Task {
+                        errorMessage = nil
+                        isWorking = true
+                        defer { isWorking = false }
+                        do {
+                            let didClean = try await database.purgeSyntheticData(scope: .all)
+                            if didClean {
+                                _ = try await EvidenceEngine(database: database).recompute(asOf: Date())
+                            }
+                            await refresh()
+                        } catch {
+                            errorMessage = String(describing: error)
+                        }
+                    }
+                }
+                .disabled(isWorking)
                 // Migration is idempotent (deterministic ids); synthetic load
                 // APPENDS a fresh dataset each tap — reset first to reload.
                 Button("Reset Health Graph DB (delete all rows)", role: .destructive) {
@@ -208,7 +225,10 @@ struct HealthGraphDebugView: View {
                 outcomeBaseRatePerDay: 0.05,
                 noiseFoodsPerDay: 1...3
             )
-            try await SyntheticDataGenerator.generate(config: config).insert(into: database)
+            try await database.resetForSeedReload(batch: DemoBatch.synthetic)
+            try await SyntheticDataGenerator.generate(config: config)
+                .insert(into: database, batch: DemoBatch.synthetic)
+            _ = try await EvidenceEngine(database: database).recompute(asOf: Date())
             await refresh()
         } catch {
             errorMessage = String(describing: error)
@@ -238,7 +258,9 @@ struct HealthGraphDebugView: View {
                 ],
                 outcomeBaseRatePerDay: 0,          // no baseline symptom noise for the mood demo
                 noiseFoodsPerDay: 1...2)
-            try await SyntheticDataGenerator.generate(config: config).insert(into: database)
+            try await database.resetForSeedReload(batch: DemoBatch.mood)
+            try await SyntheticDataGenerator.generate(config: config)
+                .insert(into: database, batch: DemoBatch.mood)
             _ = try await EvidenceEngine(database: database).recompute(asOf: Date())
             await refresh()
         } catch {
@@ -319,7 +341,9 @@ struct HealthGraphDebugView: View {
                 }
             }
 
-            try await GRDBEventStore(database: database).save(events)
+            try await database.resetForSeedReload(batch: DemoBatch.outsideFactors)
+            try await GRDBEventStore(database: database)
+                .save(DemoBatch.stamp(events, batch: DemoBatch.outsideFactors))
             _ = try await EvidenceEngine(database: database).recompute(asOf: Date())
             await refresh()
         } catch {
@@ -551,7 +575,9 @@ struct HealthGraphDebugView: View {
                 }
             }
 
-            try await GRDBEventStore(database: database).save(events)
+            try await database.resetForSeedReload(batch: DemoBatch.weather)
+            try await GRDBEventStore(database: database)
+                .save(DemoBatch.stamp(events, batch: DemoBatch.weather))
             _ = try await EvidenceEngine(database: database).recompute(asOf: Date())
             await refresh()
         } catch {
