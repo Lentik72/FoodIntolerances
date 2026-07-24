@@ -10,7 +10,24 @@ enum HealthGraphProvider {
                 appropriateFor: nil, create: true
             )
             let url = support.appendingPathComponent("HealthGraph/healthgraph.sqlite")
-            return try AppDatabase.open(at: url)
+            let db = try AppDatabase.open(at: url)
+            #if !DEBUG
+            // Guarantee fabricated demo rows never reach a shipped build. Runs
+            // synchronously here, after migration and before this handle is
+            // returned, so no reader observes the pre-purge state. The guard makes
+            // it a true no-op on the common case (a DB that never held demo data).
+            // No recompute is scheduled: the freshly constructed
+            // InsightsRefreshCoordinator recomputes on its lastRecomputeAt==nil
+            // never-run branch when Insights loads; a second here could race its
+            // single-flight guard.
+            //
+            // FAIL CLOSED: `try`, not `try?`. If the purge throws, the outer
+            // `catch` below fails database bootstrap (fatalError) rather than
+            // exposing fabricated demo rows in a shipped build. A silent
+            // `try?` would defeat the entire purpose of the Release purge.
+            _ = try db.purgeSyntheticDataSync(scope: .all)
+            #endif
+            return db
         } catch {
             fatalError("Health Graph database could not be opened: \(error)")
         }
