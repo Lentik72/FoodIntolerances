@@ -37,9 +37,10 @@
 | 8 | Release builds purge synthetic rows at launch | Containers are shared by bundle ID, so a DEBUG-seeded database survives a Release install — where neither the clear button nor the banner exists. |
 | 9 | Cleanup is one transaction; the caller's single recompute follows the commit | A partial cleanup that left contaminated relationships behind while the banner disappeared would present fabricated findings as clean. |
 | 10 | Object namespacing needs a batch-aware find-or-create, not just a namespaced value on the generated object | `SyntheticDataset.insert` discards the generated object and rebuilds it inside `findOrCreate`, which recomputes `normalizedName` from the display name — so a namespaced value never reaches the database and the merge with real "Coffee" happens anyway. |
-| 11 | The cleanup routine performs no recompute; callers run exactly one | A seed reload is delete-then-insert. Recomputing inside the routine would run a full pass over a knowingly-incomplete database, then a second pass after the insert. |
-| 12 | The Release purge transaction runs synchronously at bootstrap; only its recompute is deferred | `AppDatabase` construction is synchronous and `recompute` is `async`. Deferring the relationship wipe as well would leave contaminated relationships readable — and rendering as ordinary findings — during startup. |
+| 11 | The cleanup routine performs no recompute; callers run one only when data changed | A seed reload is delete-then-insert — recomputing inside the routine would pass over a knowingly-incomplete database, then again after the insert. A guarded no-op purge changed nothing and must not recompute at all. |
+| 12 | The Release purge transaction runs synchronously at bootstrap; its recompute is delegated to `InsightsRefreshCoordinator`, not scheduled independently | `AppDatabase` construction is synchronous and `recompute` is `async`. Deferring the relationship wipe as well would leave contaminated relationships readable during startup. A separate startup recompute could run concurrently with the coordinator's watermark-driven one, outside its single-flight guard. |
 | 13 | Dismissal is gated in the view model as well as the UI | A card rendered before a seed completes can be tapped after it, and that stale-UI race writes exactly the `.userDismissed` row decision 6 exists to prevent. |
+| 14 | The relationship wipe is conditional in purge mode (existence guard) and unconditional in reload mode | An unconditional wipe would erase real relationships and reset their `firstSeen` on every ordinary Release launch. A reload always changes the baselines, so it must rebuild even when its own batch is currently absent. |
 
 ## Design
 
@@ -69,23 +70,28 @@ Object UUIDs are freshly generated per seed. Combined with delete-then-insert be
 
 ### 3. Seed lifecycle
 
-Each seed button becomes delete-batch-then-insert: it removes its own batch's rows, then writes the fresh dataset. Two taps produce the same state as one. Batches remain independent, so weather and mood can be composed without either clearing the other.
+Each seed button runs the cleanup routine in **reload mode** for its own batch, inserts the fresh dataset, then recomputes once. Two taps produce the same state as one. Batches remain independent, so weather and mood can be composed without either clearing the other — reload mode's scoped delete only touches the batch being reloaded, while its unconditional relationship wipe plus the recompute after insertion rebuild every edge from whatever batches remain.
 
-A new **Clear demo data (keeps real data)** button removes every row with `syntheticBatch IS NOT NULL` across both tables. The existing *Reset Health Graph DB* button is unchanged — it remains the deliberate whole-database wipe.
+A new **Clear demo data (keeps real data)** button runs the routine in **purge mode**, whole-demo scope, and recomputes only if `didClean` came back true. The existing *Reset Health Graph DB* button is unchanged — it remains the deliberate whole-database wipe.
 
 ### 4. Cleanup transaction
 
-Every batch delete, batch reload, whole-demo clear, and the Release purge runs the same routine, parameterised by a scope that is either **one batch** (`syntheticBatch = '<batch>'`, used by seed reload) or **all batches** (`syntheticBatch IS NOT NULL`, used by the clear button and the purge). Inside **one transaction**, in this order:
+Every batch delete, batch reload, whole-demo clear, and the Release purge runs the same routine, parameterised by a **scope** (one batch `syntheticBatch = '<batch>'`, or all batches `syntheticBatch IS NOT NULL`) and a **mode** that decides whether the relationship wipe is conditional. The mode distinction is a P0: the relationship wipe cannot be unconditional, because it would then fire on the common path and destroy real data.
 
-1. Delete all `relationships` except those with `status == .userDismissed`. This step ignores the scope and is always total: relationships carry no batch attribution, and a single batch's events shift the statistics behind every edge, so a partial rebuild would be wrong.
+- **Purge mode** (whole-demo clear button; Release purge). The transaction opens with an **existence guard**: if no row matches the scope, it wipes nothing, deletes nothing, and returns `didClean = false`. Without this guard every ordinary Release launch — a database with no synthetic rows — would wipe all active real relationships and reset their `firstSeen` dates on every launch. Only when matching synthetic rows exist does it proceed to the wipe-and-delete below and return `didClean = true`.
+- **Reload mode** (seed button). The relationship wipe is **unconditional**, even when this batch is currently absent, because the dataset about to be inserted will move the baselines behind every edge regardless. The scoped delete of this batch's old rows may be a no-op on a first load; the insertion that follows is what makes the wipe correct.
+
+When the routine proceeds (purge mode with matches, or any reload), inside **one transaction**, in this order:
+
+1. Delete all `relationships` except those with `status == .userDismissed`. Always total when it runs: relationships carry no batch attribution, and a single batch's events shift the statistics behind every edge, so a partial rebuild would be wrong.
 2. Delete `health_events` matching the scope.
 3. Delete `health_objects` matching the scope.
 
 The order is dictated by the real foreign keys in the schema: `health_events.objectID` references `health_objects` with `onDelete: .setNull` (`AppDatabase.swift:59`), and relationships' object references cascade (`:77`, `:80`). Deleting events before objects prevents demo events from being stranded with a nulled `objectID`; deleting relationships first makes the cascade a no-op for them, and leaves it as a correct backstop for any dismissed row referencing a demo object.
 
-**The routine does not recompute.** It performs the transaction and returns; each caller runs exactly **one** recompute at the end of its whole operation. A seed reload therefore recomputes once, after the replacement dataset is inserted — never once after the delete and again after the insert, which would burn a full pass over a knowingly-incomplete database.
+**The routine does not recompute.** It performs the transaction and returns the `didClean` flag; the caller decides. Recompute runs **only when data actually changed** — when the purge removed rows (`didClean == true`), or when a reload inserted its dataset. A purge that hit the existence guard changed nothing and triggers no recompute. A seed reload recomputes exactly once, after the replacement dataset is inserted — never once after the delete and again after the insert, which would burn a full pass over a knowingly-incomplete database.
 
-Between the commit and that single recompute, the relationships table holds only pre-existing dismissed rows, so Insights renders empty. That is the required intermediate state, and it is also the required failure mode: if the recompute fails or never runs, Insights stays empty rather than showing stale demo findings as clean.
+Between a proceeding transaction's commit and its recompute, the relationships table holds only pre-existing dismissed rows, so Insights renders empty. That is the required intermediate state, and it is also the required failure mode: if the recompute fails or never runs, Insights stays empty rather than showing stale demo findings as clean.
 
 Real events that already reference a synthetic object — possible only for data seeded before this change — keep their rows and lose the object link, per the `setNull` rule. Real data is never deleted by any path here.
 
@@ -98,22 +104,22 @@ While any synthetic row exists, dismissal is unavailable — gated at **both** l
 
 Additionally, `pendingUndo` is cleared whenever demo data becomes present. Leaving it set would let an undo write a status onto a relationship id that the cleanup transaction has since deleted and the recompute has rebuilt under a new id.
 
-Pre-existing `.userDismissed` rows are therefore always genuine user intent recorded against a clean database, which is what makes preserving them in step 4 safe rather than a compromise. In Release builds the purge guarantees no synthetic rows exist, so the gate never engages.
+Pre-existing `.userDismissed` rows are therefore always genuine user intent recorded against a clean database, which is what makes preserving them in the cleanup routine safe rather than a compromise. In Release builds the purge guarantees no synthetic rows exist, so the gate never engages.
 
 ### 6. Insights banner
 
-`#if DEBUG`. A single "any synthetic rows?" query drives a persistent notice at the top of Insights stating that demo data is loaded and the findings below — including ones derived from real data — are not trustworthy. The banner clears when the last batch is removed, which by step 4 cannot happen before the contaminated relationships are gone.
+`#if DEBUG`. A single "any synthetic rows?" query drives a persistent notice at the top of Insights stating that demo data is loaded and the findings below — including ones derived from real data — are not trustworthy. The banner clears when the last batch is removed, which by the cleanup routine cannot happen before the contaminated relationships are gone.
 
 ### 7. Release purge
 
-Compiled into all configurations, active only in non-DEBUG builds. It delegates to the step-4 routine with the whole-demo scope.
+Compiled into all configurations, active only in non-DEBUG builds. It delegates to the cleanup routine in **purge mode**, whole-demo scope — so the existence guard makes it a genuine no-op on the overwhelming common case of a Release database that never held demo data. It touches relationships only when it finds synthetic rows to remove.
 
 Ordering is constrained by a shape mismatch: `AppDatabase` construction is **synchronous**, while `EvidenceEngine.recompute` is `async`, so the recompute cannot run during bootstrap. The split is therefore:
 
-- **Synchronously, during bootstrap**, after migration and **before the provider yields a usable handle**: the whole purge transaction, *including the relationship wipe*. No reader — Insights, the Timeline, or a routine recompute — can observe the pre-purge state. This is possible because the transaction is a plain GRDB write with no `async` work inside it.
-- **Once, scheduled after startup**: the recompute.
+- **Synchronously, during bootstrap**, after migration and **before the provider yields a usable handle**: the whole purge transaction, *including the relationship wipe* — but only when the guard finds synthetic rows. No reader — Insights, the Timeline, or a routine recompute — can observe the pre-purge state. This is possible because the transaction is a plain GRDB write with no `async` work inside it.
+- **The recompute is not scheduled by the purge.** When the purge removes synthetic events, the event count drops, so the existing `InsightsRefreshCoordinator.refreshIfNeeded` (`InsightsRefreshCoordinator.swift:19-32`) sees a changed watermark and performs the first clean recompute when Insights next loads. The purge must **not** add its own startup recompute: the coordinator single-flights on an `isRunning` flag it owns (`:22-24`), and a second, independent recompute launched from bootstrap could run concurrently with the coordinator's, outside that guard. A no-op purge leaves the watermark unchanged, and no recompute is needed because no data changed.
 
-Until that recompute finishes, Insights is empty. That is safe; leaving the relationship wipe until after startup would not be, because contaminated relationships would then be readable — and would render as ordinary findings — in the window before the purge completed.
+Until the coordinator's first recompute finishes, Insights is empty. That is safe; leaving the relationship wipe until after startup would not be, because contaminated relationships would then be readable — and would render as ordinary findings — in the window before the purge completed. Emptiness resolves the moment Insights loads; contamination presented as truth would not.
 
 ## Testing
 
@@ -126,8 +132,10 @@ Until that recompute finishes, Insights is empty. That is safe; leaving the rela
 - A demo object sharing a real object's display name and kind inserts without violating the unique key, and the real object's row is unchanged.
 - **Seeding through `SyntheticDataset.insert` against a database that already holds a real object of the same name and kind creates a second, batch-scoped row and leaves the real object's `id` and `normalizedName` untouched** — the regression test for the discarded-namespacing defect. Its events reference the demo object's id, not the real one.
 - Cleanup clears every relationship except `.userDismissed`, and a failure partway through rolls the whole transaction back.
-- The cleanup routine performs no recompute of its own.
-- The purge removes synthetic rows and is a no-op on a database with none.
+- The cleanup routine performs no recompute of its own; it returns `didClean`.
+- **Purge mode on a database with no matching synthetic rows returns `didClean = false` and leaves every relationship — including active real ones and their `firstSeen` dates — completely untouched** (the regression test for the P0 common-path wipe).
+- **Purge mode with matching synthetic rows returns `didClean = true`** and removes them plus the non-dismissed relationships.
+- **Reload mode wipes the non-dismissed relationships even when its batch is currently absent from the database**, because the incoming dataset changes the baselines.
 
 **App**
 
