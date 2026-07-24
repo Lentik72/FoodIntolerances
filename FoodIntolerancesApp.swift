@@ -18,6 +18,7 @@ struct FoodIntolerancesApp: App {
     @StateObject private var captureCoordinator = CaptureCoordinator()
     @StateObject private var redFlagMuteStore: RedFlagMuteStore
     @StateObject private var redFlagPresenter: RedFlagPresenter
+    @State private var emitCoordinator: EnvironmentEmitCoordinator
     @AppStorage("enableDiagnostics") private var enableDiagnostics = false
     @AppStorage("debugMode") private var debugMode = false
     @Environment(\.scenePhase) private var scenePhase
@@ -40,8 +41,14 @@ struct FoodIntolerancesApp: App {
 
         let statusStore = EnvironmentStatusStore()
         _environmentStatusStore = StateObject(wrappedValue: statusStore)
-        _environmentalService = StateObject(wrappedValue:
-            EnvironmentalDataService(locationManager: LocationService(), statusStore: statusStore))
+        let service = EnvironmentalDataService(locationManager: LocationService(), statusStore: statusStore)
+        _environmentalService = StateObject(wrappedValue: service)
+        // Captures the SAME service + store the triggers and emitter use. Neither of
+        // them holds the coordinator, so there is no retain cycle.
+        _emitCoordinator = State(wrappedValue: EnvironmentEmitCoordinator { forced in
+            await EnvironmentalEventEmitter.emitIfNeeded(
+                service: service, statusStore: statusStore, bypassThrottles: forced)
+        })
 
         setupGlobalErrorHandling()
 
@@ -108,6 +115,7 @@ struct FoodIntolerancesApp: App {
                 .environmentObject(redFlagPresenter)
                 .environmentObject(environmentStatusStore)
                 .environmentObject(environmentalService)
+                .environment(\.emitCoordinator, emitCoordinator)
                 .fullScreenCover(item: $redFlagPresenter.pending) { match in
                     switch match.category {
                     case .medicalEmergency:
@@ -127,10 +135,10 @@ struct FoodIntolerancesApp: App {
                     }
                 }
                 .task { healthKitIngestor.startObserving() }
-                .task { await EnvironmentalEventEmitter.emitIfNeeded(service: environmentalService, statusStore: environmentStatusStore) }
+                .task { emitCoordinator.emit(forced: false) }
                 .onChange(of: scenePhase) { _, phase in
                     guard phase == .active else { return }
-                    Task { await EnvironmentalEventEmitter.emitIfNeeded(service: environmentalService, statusStore: environmentStatusStore) }
+                    emitCoordinator.emit(forced: false)
                 }
                 .onChange(of: environmentalService.locationRecoveryTick) { _, _ in
                     // A trusted coordinate (re)appeared. Only force a bypass emit when a
@@ -141,7 +149,7 @@ struct FoodIntolerancesApp: App {
                         $0.liveFailure?.reason == .locationDenied || $0.liveFailure?.reason == .locationUnavailable
                     }
                     guard hasLiveLocationFailure else { return }
-                    Task { await EnvironmentalEventEmitter.emitIfNeeded(service: environmentalService, statusStore: environmentStatusStore, bypassThrottles: true) }
+                    emitCoordinator.emit(forced: true)
                 }
         }
     }

@@ -16,8 +16,7 @@ struct HealthGraphDebugView: View {
     @State private var errorMessage: String?
     @State private var isWorking = false
     @EnvironmentObject private var ingestor: HealthKitIngestor
-    @EnvironmentObject private var environmentalService: EnvironmentalDataService
-    @EnvironmentObject private var environmentStatusStore: EnvironmentStatusStore
+    @Environment(\.emitCoordinator) private var emitCoordinator
     @State private var countsByCategory: [String: Int] = [:]
     @State private var countsBySource: [String: Int] = [:]
     @State private var lastIngestSummary: String?
@@ -104,16 +103,14 @@ struct HealthGraphDebugView: View {
                 Button("Emit environmental events now") {
                     Task {
                         errorMessage = nil
-                        // Production service + shared status store, so the result reflects the real
-                        // location lifecycle, pressure carry, and status recording. `bypassThrottles`
-                        // skips the backfills' retry-interval CHECK so a forced run always attempts,
-                        // replacing the old pre-emptive deletion of the AQI attempt key. Note the run
-                        // still records fresh attempt timestamps for both backfills afterward — correct,
-                        // since it really did attempt; it just no longer rewrites history to get there.
-                        await EnvironmentalEventEmitter.emitIfNeeded(
-                            service: environmentalService,
-                            statusStore: environmentStatusStore,
-                            bypassThrottles: true)
+                        guard let emitCoordinator else {
+                            errorMessage = "No emit coordinator in the environment — the app root didn't inject it."
+                            return
+                        }
+                        // Route through the coordinator so a forced debug emit is SERIALIZED with any
+                        // in-flight pass (queued as its trailing forced pass) instead of racing it.
+                        // Awaiting the drain handle means the refresh below sees the settled state.
+                        await emitCoordinator.emit(forced: true).value
                         await refresh()
                     }
                 }
