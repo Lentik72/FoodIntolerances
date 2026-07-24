@@ -84,6 +84,7 @@ enum EnvironmentStatusPresentation {
         let body: String
         let showOpenSettings: Bool
         let isResolved: Bool
+        let at: Date              // when the selected failure occurred
     }
 
     static func explanation(_ statuses: [EnvironmentCapability: EnvironmentCapabilityStatus]) -> Explanation? {
@@ -92,7 +93,8 @@ enum EnvironmentStatusPresentation {
             return Explanation(heading: "Why it stopped",
                                body: liveCopy(live.reason, capability: cap),
                                showOpenSettings: live.reason == .locationDenied,
-                               isResolved: false)
+                               isResolved: false,
+                               at: live.at)
         }
         // All healed: the most recent retained failure, past tense, no action.
         let retained = EnvironmentCapability.allCases.compactMap { statuses[$0]?.lastFailure }
@@ -100,9 +102,18 @@ enum EnvironmentStatusPresentation {
             return Explanation(heading: "Last issue — resolved",
                                body: resolvedCopy(mostRecent.reason),
                                showOpenSettings: false,
-                               isResolved: true)
+                               isResolved: true,
+                               at: mostRecent.at)
         }
         return nil
+    }
+
+    // MARK: Adaptive timestamp decision (pure; views own the actual formatting)
+
+    enum TimestampStyle: Equatable { case timeToday, dateOlder }
+
+    static func timestampStyle(for date: Date, now: Date, calendar: Calendar) -> TimestampStyle {
+        calendar.isDate(date, inSameDayAs: now) ? .timeToday : .dateOlder
     }
 
     private static func liveCopy(_ reason: EnvironmentFailureReason, capability: EnvironmentCapability) -> String {

@@ -20,7 +20,14 @@ struct HealthTabView: View {
         switch EnvironmentStatusPresentation.summary(statusStore.statuses) {
         case .unavailable(let phrase): return phrase
         case .notChecked:              return "Not checked yet"
-        case .updated(let date):       return "Updated \(date.formatted(date: .omitted, time: .shortened))"
+        case .updated(let date):       return "Updated \(updatedText(date))"
+        }
+    }
+
+    private func updatedText(_ date: Date) -> String {
+        switch EnvironmentStatusPresentation.timestampStyle(for: date, now: Date(), calendar: .current) {
+        case .timeToday:  return date.formatted(date: .omitted, time: .shortened)
+        case .dateOlder:  return date.formatted(date: .abbreviated, time: .omitted)
         }
     }
 

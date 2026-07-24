@@ -51,7 +51,23 @@ struct EnvironmentStatusView: View {
         switch status {
         case .unavailable:        return "Unavailable"
         case .notChecked:         return "Not checked yet"
-        case .updated(let date):  return "Updated \(date.formatted(date: .omitted, time: .shortened))"
+        case .updated(let date):  return "Updated \(updatedText(date))"
+        }
+    }
+
+    private func updatedText(_ date: Date) -> String {
+        switch EnvironmentStatusPresentation.timestampStyle(for: date, now: Date(), calendar: .current) {
+        case .timeToday:  return date.formatted(date: .omitted, time: .shortened)
+        case .dateOlder:  return date.formatted(date: .abbreviated, time: .omitted)
+        }
+    }
+
+    private func lastTriedText(_ at: Date) -> String {
+        switch EnvironmentStatusPresentation.timestampStyle(for: at, now: Date(), calendar: .current) {
+        case .timeToday:
+            return "Last tried today, \(at.formatted(date: .omitted, time: .shortened))"
+        case .dateOlder:
+            return "Last tried \(at.formatted(date: .abbreviated, time: .omitted)) at \(at.formatted(date: .omitted, time: .shortened))"
         }
     }
 
@@ -60,6 +76,7 @@ struct EnvironmentStatusView: View {
             Text(e.heading.uppercased())
                 .font(.caption).foregroundStyle(HealthTheme.inkMuted)
             Text(e.body).font(.subheadline).foregroundStyle(HealthTheme.inkSecondary)
+            Text(lastTriedText(e.at)).font(.caption).foregroundStyle(HealthTheme.inkMuted)
             if e.showOpenSettings {
                 Button("Open Settings") {
                     if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
