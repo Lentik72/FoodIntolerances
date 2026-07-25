@@ -58,6 +58,11 @@ class EnvironmentalDataService: ObservableObject {
     // (nil on fetch failure or < 3 in-window slots) so the emitter leaves the air
     // quality event unemitted rather than writing a false reading.
     @Published var forecastAQI: Int? = nil
+    /// Pass-scoped freshness for the forecast AQI. `.pending` while a fetch is in
+    /// flight; `.value`/`.unavailable` once the LATEST pass settles. Home decides
+    /// only on a settled state so it never shows/dismisses a stale tier.
+    enum ForecastAQIState: Equatable { case pending, value(Int), unavailable }
+    @Published var forecastAQIState: ForecastAQIState = .pending
     @Published var moonPhase: String = "Loading..."
     @Published var isMercuryRetrograde: Bool = false
     @Published var lastUpdated: Date = Date()
@@ -369,10 +374,17 @@ class EnvironmentalDataService: ObservableObject {
         }
 
         lastRefreshRequest = currentTime
-        
+
+        // Mark the forecast AQI .pending at PASS START (before pressure/forecast/AQI
+        // run) so a stale tier isn't dismissible and Home's foreground handler never
+        // re-decides against an old value mid-pass. `fetchAirQuality()`'s own
+        // pass-start `.pending` (Step 4) would be too late — pressure + forecast
+        // fetch first.
+        await MainActor.run { self.forecastAQIState = .pending }
+
         // Cancel current task if any
         currentAtmosphericTask?.cancel()
-        
+
         // Perform the actual refresh
         await fetchAllData()
         
@@ -574,11 +586,14 @@ class EnvironmentalDataService: ObservableObject {
     /// next-24h EPA AQI derived from mean PM2.5. Reuses the exact location resolution
     /// the pressure fetch uses (manual override → LocationService); no new location path.
     public func fetchAirQuality() async {
+        await MainActor.run { self.forecastAQIState = .pending }
+
         // Resolve location the same way fetchAtmosphericPressure does.
         guard let location = self.resolvedCoordinate() else {
             Logger.warning("No location available for air quality fetch.", category: .location)
             await MainActor.run {
                 self.forecastAQI = nil
+                self.forecastAQIState = .unavailable
                 self.recordTodayFailure(.forecastAirQuality, self.locationReason())
             }
             return
@@ -586,7 +601,11 @@ class EnvironmentalDataService: ObservableObject {
 
         guard let url = APIConfig.airPollutionURL(latitude: location.latitude, longitude: location.longitude) else {
             Logger.error("Invalid URL for air pollution API", category: .network)
-            await MainActor.run { self.recordTodayFailure(.forecastAirQuality, .notConfigured) }
+            await MainActor.run {
+                self.forecastAQI = nil
+                self.forecastAQIState = .unavailable
+                self.recordTodayFailure(.forecastAirQuality, .notConfigured)
+            }
             return
         }
 
@@ -598,6 +617,7 @@ class EnvironmentalDataService: ObservableObject {
             if let reason = httpStatusReason(response) {   // 401/403/non-2xx before decode
                 await MainActor.run {
                     self.forecastAQI = nil
+                    self.forecastAQIState = .unavailable
                     self.recordTodayFailure(.forecastAirQuality, reason)
                 }
                 return
@@ -613,6 +633,7 @@ class EnvironmentalDataService: ObservableObject {
             if Task.isCancelled { return }
             await MainActor.run {
                 self.forecastAQI = aqi
+                if let aqi { self.forecastAQIState = .value(aqi) } else { self.forecastAQIState = .unavailable }
                 if mean == nil { self.recordTodayFailure(.forecastAirQuality, .insufficientData) }
                 else { self.recordTodaySuccess(.forecastAirQuality) }
             }
@@ -621,6 +642,7 @@ class EnvironmentalDataService: ObservableObject {
             Logger.error(error, message: "Error fetching air quality", category: .network)
             await MainActor.run {
                 self.forecastAQI = nil
+                self.forecastAQIState = .unavailable
                 self.recordTodayFailure(.forecastAirQuality, self.classifyThrown(error))
             }
         }
