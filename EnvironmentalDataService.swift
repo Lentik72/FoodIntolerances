@@ -212,8 +212,8 @@ class EnvironmentalDataService: ObservableObject {
             }
         }
         
-        currentAtmosphericTask = newTask
-        
+        await MainActor.run { self.currentAtmosphericTask = newTask }
+
         // Wait for task completion
         await newTask.value
     }
