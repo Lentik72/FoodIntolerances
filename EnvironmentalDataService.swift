@@ -186,7 +186,8 @@ class EnvironmentalDataService: ObservableObject {
         let newTask = Task {
             // Fetch moon phase and Mercury retrograde data
             await fetchMoonPhase(for: now())
-            self.isMercuryRetrograde = checkMercuryInRetrograde(for: now())
+            let retrograde = checkMercuryInRetrograde(for: now())
+            await MainActor.run { self.isMercuryRetrograde = retrograde }
             
             // Make sure we're not cancelled before proceeding with potentially expensive operations
             if !Task.isCancelled {
@@ -248,7 +249,7 @@ class EnvironmentalDataService: ObservableObject {
             }
             
             guard let locationManager = locationManager else {
-                self.atmosphericPressureCategory = "Location Manager Not Available"
+                await MainActor.run { self.atmosphericPressureCategory = "Location Manager Not Available" }
                 return
             }
             
