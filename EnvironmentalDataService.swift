@@ -239,9 +239,12 @@ class EnvironmentalDataService: ObservableObject {
     }
     
     
+    /// Pressure-only legacy refresh. If reused as a full environment refresh, it must
+    /// also settle `forecastAQIState`; otherwise a pending state from another accepted
+    /// refresh could remain stranded.
     func refreshEnvironmentalData() {
         Task {
-            
+
             // Reset state before refresh
             await MainActor.run {
                 resetPressureState()

@@ -1,5 +1,3 @@
-import Foundation
-
 /// The warning to render, or `.none`.
 public enum PoorAirWarning: Equatable {
     case none
