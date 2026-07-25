@@ -5,6 +5,7 @@ struct InsightsView: View {
     @StateObject private var vm = InsightsViewModel()
     @StateObject private var refresh = InsightsRefreshCoordinator()
     @EnvironmentObject private var captureCoordinator: CaptureCoordinator
+    @EnvironmentObject private var graphMutation: GraphMutationCoordinator
     @Environment(\.scenePhase) private var scenePhase
     @State private var archiveExpanded = false
 
@@ -39,6 +40,9 @@ struct InsightsView: View {
             Task { await refresh.refreshIfNeeded(); await vm.load() }
         }
         .onChange(of: captureCoordinator.lastCaptureAt) { _, _ in
+            Task { await refresh.refreshIfNeeded(); await vm.load() }
+        }
+        .onChange(of: graphMutation.revision) { _, _ in
             Task { await refresh.refreshIfNeeded(); await vm.load() }
         }
         .onChange(of: refresh.lastRecomputeAt) { _, _ in
@@ -201,10 +205,12 @@ struct InsightsView: View {
 #Preview("Insights — light") {
     InsightsView()
         .environmentObject(CaptureCoordinator())
+        .environmentObject(GraphMutationCoordinator())
 }
 
 #Preview("Insights — dark") {
     InsightsView()
         .environmentObject(CaptureCoordinator())
+        .environmentObject(GraphMutationCoordinator())
         .preferredColorScheme(.dark)
 }

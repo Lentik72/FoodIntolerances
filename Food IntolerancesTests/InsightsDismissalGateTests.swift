@@ -123,4 +123,20 @@ import HealthGraphCore
         await vm.dismiss(card(active))
         #expect(try await status(db, active) == .active)             // dismiss did NOT run
     }
+
+    @Test func loadReflectsSeedThenClearWithoutRelaunch() async throws {
+        let db = try AppDatabase.inMemory()
+        let vm = InsightsViewModel(database: db, now: { Date(timeIntervalSince1970: 0) })
+
+        await vm.load()
+        #expect(vm.demoDataLoaded == false)          // clean start
+
+        try await markDemoLoaded(db)                 // demo rows appear (seed)
+        await vm.load()                              // the reload the coordinator triggers
+        #expect(vm.demoDataLoaded == true)           // banner would show
+
+        _ = try await db.purgeSyntheticData(scope: .all)   // clear
+        await vm.load()                              // reload again
+        #expect(vm.demoDataLoaded == false)          // banner clears — the second half of the P1
+    }
 }

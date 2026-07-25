@@ -16,6 +16,7 @@ struct FoodIntolerancesApp: App {
     @StateObject private var healthKitManager = HealthKitManager()
     @StateObject private var healthKitIngestor = HealthKitIngestor()
     @StateObject private var captureCoordinator = CaptureCoordinator()
+    @StateObject private var graphMutationCoordinator = GraphMutationCoordinator()
     @StateObject private var redFlagMuteStore: RedFlagMuteStore
     @StateObject private var redFlagPresenter: RedFlagPresenter
     @State private var emitCoordinator: EnvironmentEmitCoordinator
@@ -111,6 +112,7 @@ struct FoodIntolerancesApp: App {
                 .environmentObject(logItemViewModel)
                 .environmentObject(tabManager)
                 .environmentObject(captureCoordinator)
+                .environmentObject(graphMutationCoordinator)
                 .environmentObject(redFlagMuteStore)
                 .environmentObject(redFlagPresenter)
                 .environmentObject(environmentStatusStore)

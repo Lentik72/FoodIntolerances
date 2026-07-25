@@ -16,6 +16,7 @@ struct HealthGraphDebugView: View {
     @State private var errorMessage: String?
     @State private var isWorking = false
     @EnvironmentObject private var ingestor: HealthKitIngestor
+    @EnvironmentObject private var graphMutation: GraphMutationCoordinator
     @Environment(\.emitCoordinator) private var emitCoordinator
     @State private var countsByCategory: [String: Int] = [:]
     @State private var countsBySource: [String: Int] = [:]
@@ -63,7 +64,7 @@ struct HealthGraphDebugView: View {
                     Task {
                         errorMessage = nil
                         isWorking = true
-                        defer { isWorking = false }
+                        defer { isWorking = false; graphMutation.graphMutated() }
                         do {
                             let didClean = try await database.purgeSyntheticData(scope: .all)
                             if didClean {
@@ -213,7 +214,7 @@ struct HealthGraphDebugView: View {
     private func loadSynthetic() async {
         errorMessage = nil
         isWorking = true
-        defer { isWorking = false }
+        defer { isWorking = false; graphMutation.graphMutated() }
         do {
             let config = SyntheticConfig(
                 startDate: Date().addingTimeInterval(-400 * 86_400),
@@ -242,7 +243,7 @@ struct HealthGraphDebugView: View {
     private func loadMoodDemo() async {
         errorMessage = nil
         isWorking = true
-        defer { isWorking = false }
+        defer { isWorking = false; graphMutation.graphMutated() }
         do {
             let config = SyntheticConfig(
                 startDate: Date().addingTimeInterval(-160 * 86_400),
@@ -279,7 +280,7 @@ struct HealthGraphDebugView: View {
     private func loadOutsideFactorsDemo() async {
         errorMessage = nil
         isWorking = true
-        defer { isWorking = false }
+        defer { isWorking = false; graphMutation.graphMutated() }
         do {
             var cal = Calendar(identifier: .gregorian)
             cal.timeZone = .current
@@ -367,7 +368,7 @@ struct HealthGraphDebugView: View {
     private func loadWeatherDemo() async {
         errorMessage = nil
         isWorking = true
-        defer { isWorking = false }
+        defer { isWorking = false; graphMutation.graphMutated() }
         do {
             var cal = Calendar(identifier: .gregorian)
             cal.timeZone = .current
@@ -591,7 +592,7 @@ struct HealthGraphDebugView: View {
         // reloading datasets. Never exists outside #if DEBUG.
         errorMessage = nil
         isWorking = true
-        defer { isWorking = false }
+        defer { isWorking = false; graphMutation.graphMutated() }
         do {
             try await database.eraseAllRows()
             report = nil
