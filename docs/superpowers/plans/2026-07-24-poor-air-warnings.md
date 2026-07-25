@@ -15,7 +15,7 @@
 - **Trigger at AQI ≥ 101** (`AirQualityIndex.poorAirThreshold`); bands come from `AirQualityIndex.category(aqi:)` — the warning code NEVER duplicates numeric AQI ranges.
 - **Freshness:** decide only on a settled pass-scoped state (`.pending`/`.value`/`.unavailable`); the not-configured path must clear the stale value; `.unavailable`/nil ⇒ no warning (fail-safe).
 - **Once per local calendar day; re-show on band escalation.** Persist the **highest DISMISSED band per local day** as a **stable token** (never `name` or `severityRank`).
-- **Lifecycle invariants (VM):** bump the async-invalidation `generation` on EVERY state transition (settle, pending, foreground re-eval, dismissal, toggle change); the banner is **dismissible only when it reflects a SETTLED value** (`isDismissible == false` while `.pending`, so a held cross-day banner can't write today's dismissal); a **foreground/day-rollover** path re-decides the last settled value against today even when the service skips a refetch; **toggle-off clears the mounted banner synchronously and toggle-on re-decides + re-shows** (Home observes the preference — tabs stay mounted, so this is the re-show path since returning to Home fires no scenePhase).
+- **Lifecycle invariants (VM):** bump the async-invalidation `generation` on EVERY state transition (settle, pending, foreground re-eval, dismissal, toggle change); the banner is **dismissible only when it reflects a SETTLED value** (`isDismissible == false` while `.pending`, so a held cross-day banner can't write today's dismissal); on **foreground, Home AWAITS the single-flighted env pass** (`EnvironmentEmitCoordinator.emit(false)`) then `evaluate`s the FINAL settled state — never independently re-deciding an old value mid-pass; the pass publishes AQI `.pending` **when an accepted full refresh begins** (not several fetches later), so the banner is non-dismissible for the whole pass. **Toggle-off calls `disable()` (synchronous clear); toggle-on re-`evaluate`s the live state.** (Home observes the preference; tabs stay mounted, so returning to Home fires no scenePhase — these handlers are the re-show paths.)
 - **Reuse the tuned AQI palette** (`aqiColor(for:)` / `AQIValueLabel`) — do NOT introduce a second color mapping. Dismiss button ≥44×44.
 - **Settings toggle lives on the always-visible Health tab**, NOT inside `NotificationSettingsView`'s notification-gated section.
 - **Personalization** = active graph edge `fromCategory=="poorAirDay"` && `toCategory=="symptom"` && `type==.possibleTrigger`; deterministic pick by `confidence` desc, `evidenceCount` desc, **raw** `toSubtype` asc; humanize via `SymptomCatalog.displayName(for:)`. A personalization failure/empty degrades to the base warning — NEVER suppresses it. A late lookup must not clobber a newer decision (async-staleness guard).
@@ -484,18 +484,25 @@ import CoreLocation
         #expect(s.forecastAQIState == .pending)               // never settled to a stale value
     }
 
-    @Test func stateIsPendingWhileTransportSuspended() async {
-        // While a fetch is suspended (transport awaiting), state must be .pending — an old
-        // value is never surfaced mid-flight. Covers the "old value while suspended" regression.
-        actor Latch {
-            private var cont: CheckedContinuation<Void, Never>?
-            func wait() async { await withCheckedContinuation { cont = $0 } }
-            func open() { cont?.resume(); cont = nil }
+    @Test func stateFlipsToPendingWhileTransportSuspended() async {
+        // Seed an OLD .value first (otherwise the service already starts .pending and the
+        // assertion is not discriminating). While the transport is suspended, the state
+        // must flip to .pending — an old value is never surfaced mid-flight.
+        actor Latch {   // entry handshake + open-before-wait safe
+            private var releaseCont: CheckedContinuation<Void, Never>?
+            private var enteredCont: CheckedContinuation<Void, Never>?
+            private var entered = false, released = false
+            func enterAndWait() async {
+                entered = true; enteredCont?.resume(); enteredCont = nil
+                if !released { await withCheckedContinuation { releaseCont = $0 } }
+            }
+            func waitUntilEntered() async { if entered { return }; await withCheckedContinuation { enteredCont = $0 } }
+            func open() { released = true; releaseCont?.resume(); releaseCont = nil }
         }
         struct GatedTransport: HTTPTransport {
             let latch: Latch; let payload: Data
             func data(from url: URL) async throws -> (Data, URLResponse) {
-                await latch.wait()                            // suspend here
+                await latch.enterAndWait()                    // suspend here (signals entry first)
                 return (payload, HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
             }
         }
@@ -503,9 +510,10 @@ import CoreLocation
         let latch = Latch()
         let s = EnvironmentalDataService(transport: GatedTransport(latch: latch, payload: poorAirJSON()),
                                          now: { self.at }, location: StubLocation())
+        s.forecastAQIState = .value(150)                      // seed a STALE value
         async let fetch: Void = s.fetchAirQuality()
-        await Task.yield(); await Task.yield()
-        #expect(s.forecastAQIState == .pending)               // suspended mid-flight → pending
+        await latch.waitUntilEntered()                        // deterministic: transport is suspended
+        #expect(s.forecastAQIState == .pending)               // flipped to pending despite the stale value
         await latch.open()
         await fetch
         if case .value = s.forecastAQIState {} else { Issue.record("should settle to .value after resume") }
@@ -560,6 +568,16 @@ In `fetchAirQuality()`, set `.pending` first, and settle on EVERY path (all stat
 6. `catch` block — add `self.forecastAQIState = .unavailable` alongside `self.forecastAQI = nil`.
 
 Leave both `Task.isCancelled` early-returns untouched: a cancelled pass keeps `.pending` and the superseding pass re-enters `.pending` then settles — the latest pass wins, which is the intended behaviour.
+
+- [ ] **Step 4b: Publish `.pending` when an ACCEPTED full refresh begins**
+
+`fetchAirQuality()` runs several network calls into a full pass — `requestRefreshWithCooldown()` accepts the refresh (`:363`, past the cooldown early-return at `:367`, sets `lastRefreshRequest`, then `await fetchAllData()` at `:377`), and pressure + forecast-weather are fetched *before* `fetchAirQuality()`. If AQI `.pending` were only set when `fetchAirQuality()` starts, the stale banner would stay dismissible during that interval, and Home's foreground handler could dismiss the old tier. So mark `.pending` at the **start of the accepted refresh**, before `fetchAllData()`:
+
+In `requestRefreshWithCooldown`, immediately after the cooldown check passes (after `lastRefreshRequest` is stamped, before `await fetchAllData()`), add:
+```swift
+        await MainActor.run { self.forecastAQIState = .pending }
+```
+Do NOT set it on the cooldown-SKIP early-return (`:367-368` returns `false`): a skipped refresh leaves the last settled `forecastAQIState` intact, so Home's foreground handler (which awaits this pass's handle) re-decides the unchanged settled value against the new local day. `fetchAllData()` calls `fetchAirQuality()`, which settles the state — **verify** `fetchAllData` invokes `fetchAirQuality()` unconditionally (so the pass-start `.pending` is always resolved); if it can skip AQI, restore the prior state on that branch. The direct-fetch `.pending` (Step 4) stays for isolated `fetchAirQuality()` calls and tests.
 
 - [ ] **Step 5: Run the tests + the existing env suites**
 
@@ -758,50 +776,43 @@ import HealthGraphCore
         } else { Issue.record("expected personalized warning") }
     }
 
-    // Gate to sequence two overlapping lookups.
+    /// Sequences two overlapping personalization lookups with an EXPLICIT entry
+    /// handshake — no `Task.yield()` guessing. `next()` signals when call #1 has
+    /// entered (and is blocked); `waitUntilFirstEntered()` awaits that deterministically;
+    /// `open()` is safe to call before or after the waiter registers (tracks `entered`/
+    /// `released`). Only call #1 blocks; #2+ return immediately.
     actor Gate {
-        private var cont: CheckedContinuation<Void, Never>?
-        private var opened = false
+        private var releaseCont: CheckedContinuation<Void, Never>?
+        private var enteredCont: CheckedContinuation<Void, Never>?
+        private var entered = false
+        private var released = false
         private var calls = 0
         func next() async -> Int {
             calls += 1; let n = calls
-            if n == 1 && !opened { await withCheckedContinuation { cont = $0 } }
+            guard n == 1 else { return n }
+            entered = true; enteredCont?.resume(); enteredCont = nil
+            if !released { await withCheckedContinuation { releaseCont = $0 } }
             return n
         }
-        func open() { opened = true; cont?.resume(); cont = nil }
+        func waitUntilFirstEntered() async {
+            if entered { return }
+            await withCheckedContinuation { enteredCont = $0 }
+        }
+        func open() { released = true; releaseCont?.resume(); releaseCont = nil }
     }
 
     @Test func lateStaleLookupDoesNotClobberNewerDecision() async {
-        // The 1st evaluate's personalization blocks on the gate; a 2nd evaluate supersedes it
-        // (returns nil). Releasing the stale 1st lookup ("cough") must NOT re-personalize.
+        // Call #1's lookup blocks; a 2nd evaluate supersedes it (returns nil). Releasing
+        // the stale #1 lookup ("cough") must NOT re-personalize the newer decision.
         let gate = Gate()
         let vm = makeVM(symptomLookup: { let n = await gate.next(); return n == 1 ? "cough" : nil })
         async let first: Void = vm.evaluate(state: .value(160))   // gen 1 — blocks in lookup
-        await Task.yield(); await Task.yield()
+        await gate.waitUntilFirstEntered()                        // deterministic: #1 is blocked
         await vm.evaluate(state: .value(160))                     // gen 2 — lookup returns nil
         await gate.open()                                         // release gen-1's stale "cough"
         await first
         if case .show(_, _, let symptom) = vm.warning { #expect(symptom == nil) }  // gen-2 won
         else { Issue.record("expected base warning after staleness drop") }
-    }
-
-    @Test func toggleOffInvalidatesInFlightLookup() async {
-        // A lookup in flight from an enabled .value pass must NOT re-show a warning after
-        // the toggle flips off mid-flight (the disabled path bumps generation).
-        let gate = Gate()
-        let d = UserDefaults(suiteName: "poorairvm.\(UUID().uuidString)")!
-        d.set(true, forKey: "hg.poorAirWarningsEnabled")
-        var utc = Calendar(identifier: .gregorian); utc.timeZone = TimeZone(identifier: "UTC")!
-        let vm = PoorAirWarningViewModel(defaults: d, calendar: utc,
-            now: { Date(timeIntervalSince1970: 1_700_000_000) },
-            personalizedSymptomSubtype: { _ = await gate.next(); return "cough" })
-        async let first: Void = vm.evaluate(state: .value(160))   // enabled → base shown, lookup blocks
-        await Task.yield(); await Task.yield()
-        d.set(false, forKey: "hg.poorAirWarningsEnabled")
-        await vm.evaluate(state: .value(160))                     // now disabled → .none, generation bumped
-        await gate.open()
-        await first
-        #expect(vm.warning == .none)                              // stale lookup could not re-show
     }
 
     @Test func dismissDuringPendingIsNoOp() async {
@@ -812,8 +823,7 @@ import HealthGraphCore
         await vm.evaluate(state: .pending)                    // now held, non-dismissible
         vm.dismissCurrent()                                   // must be a no-op
         #expect(vm.warning != .none)                          // still held
-        // And nothing was recorded: a fresh settle of the SAME tier still shows.
-        await vm.evaluate(state: .value(120))
+        await vm.evaluate(state: .value(120))                 // fresh settle of the SAME tier still shows
         #expect(vm.warning != .none)
     }
 
@@ -823,7 +833,7 @@ import HealthGraphCore
         let gate = Gate()
         let vm = makeVM(symptomLookup: { _ = await gate.next(); return "cough" })
         async let first: Void = vm.evaluate(state: .value(160))   // base shown (dismissible), lookup blocks
-        await Task.yield(); await Task.yield()
+        await gate.waitUntilFirstEntered()
         vm.dismissCurrent()                                       // dismiss now — bumps generation
         #expect(vm.warning == .none)
         await gate.open()                                         // release the stale "cough" lookup
@@ -831,36 +841,34 @@ import HealthGraphCore
         #expect(vm.warning == .none)                             // NOT resurrected
     }
 
-    @Test func onEnabledChangedClearsOnOff_andReshowsOnReEnable() async {
-        let d = UserDefaults(suiteName: "poorairvm.\(UUID().uuidString)")!
-        d.set(true, forKey: "hg.poorAirWarningsEnabled")
-        var utc = Calendar(identifier: .gregorian); utc.timeZone = TimeZone(identifier: "UTC")!
-        let vm = PoorAirWarningViewModel(defaults: d, calendar: utc,
-            now: { Date(timeIntervalSince1970: 1_700_000_000) }, personalizedSymptomSubtype: { nil })
-        await vm.evaluate(state: .value(160))
-        #expect(vm.warning != .none)
-        d.set(false, forKey: "hg.poorAirWarningsEnabled")        // OFF
-        await vm.onEnabledChanged()
+    @Test func disableClearsSynchronouslyAndInvalidatesInFlight() async {
+        // Toggle-off (Home calls disable()) clears the banner synchronously AND a lookup
+        // in flight from before must not re-show it (disable bumps generation).
+        let gate = Gate()
+        let vm = makeVM(symptomLookup: { _ = await gate.next(); return "cough" })
+        async let first: Void = vm.evaluate(state: .value(160))   // base shown, lookup blocks
+        await gate.waitUntilFirstEntered()
+        vm.disable()                                             // synchronous
         #expect(vm.warning == .none && vm.isDismissible == false)
-        d.set(true, forKey: "hg.poorAirWarningsEnabled")         // back ON
-        await vm.onEnabledChanged()
-        #expect(vm.warning != .none)                             // re-decides last settled value → re-shows
+        await gate.open()
+        await first
+        #expect(vm.warning == .none)                            // stale lookup dropped, not resurrected
     }
 
-    @Test func foregroundReevaluatesForNewDayAfterDismissal() async {
-        // Dismiss on day 1, then a NEW local day foreground (service skipped a refetch,
-        // so state is unchanged) must re-show via reevaluateForForeground().
+    @Test func evaluateRedecidesForNewDayAfterDismissal() async {
+        // Dismiss on day 1; on a NEW local day, Home re-decides the (unchanged) settled
+        // value via evaluate() — yesterday's dismissal no longer suppresses.
         let d = UserDefaults(suiteName: "poorairvm.\(UUID().uuidString)")!
         d.set(true, forKey: "hg.poorAirWarningsEnabled")
         var utc = Calendar(identifier: .gregorian); utc.timeZone = TimeZone(identifier: "UTC")!
         var currentNow = Date(timeIntervalSince1970: 1_700_000_000)
         let vm = PoorAirWarningViewModel(defaults: d, calendar: utc,
             now: { currentNow }, personalizedSymptomSubtype: { nil })
-        await vm.evaluate(state: .value(140))                    // day 1: settled, shown
+        await vm.evaluate(state: .value(140))                    // day 1: shown
         vm.dismissCurrent()                                     // dismissed for day 1
         #expect(vm.warning == .none)
         currentNow = currentNow.addingTimeInterval(86_400)       // → next local day
-        await vm.reevaluateForForeground()                       // no state change; re-decide last value
+        await vm.evaluate(state: .value(140))                    // Home's post-await evaluate of the unchanged value
         #expect(vm.warning != .none)                             // yesterday's dismissal no longer suppresses
     }
 
@@ -887,8 +895,8 @@ Expected: FAIL — `PoorAirWarningViewModel` undefined.
 Create `Models/PoorAirWarningViewModel.swift`. The lifecycle is the subtle part — read the invariants first:
 - **`generation` is bumped on EVERY state transition** — settle, `.pending`, foreground re-eval, dismissal, toggle change — so no late async personalization can resurrect or clobber a newer decision.
 - **`isDismissible` is true ONLY when the banner reflects a SETTLED value.** It is `false` while a fetch is `.pending`, so a held cross-day banner cannot write *today's* dismissal for *yesterday's* forecast. `dismissCurrent()` is a no-op unless `isDismissible`.
-- **A settle drives the normal path; a foreground/day-rollover re-decides the LAST settled value against TODAY** (via `reevaluateForForeground()`), so a new local day clears yesterday's dismissal even when the service skips a refetch (cooldown).
-- **`onEnabledChanged()` synchronously clears + invalidates** when the toggle flips off.
+- **`evaluate(state:)` is the single re-decision entry point** — the settle path, the foreground path (after Home awaits the shared env-pass handle), and toggle re-enable all funnel through it, always re-deciding against TODAY's dismissed state (so a day-rollover clears yesterday's dismissal). There is NO independent `reevaluateForForeground` path that could race the pass with a stale value.
+- **`disable()` synchronously clears + invalidates** when the toggle flips off (Home calls it directly); re-enable goes through `evaluate(live state)`.
 
 ```swift
 import Foundation
@@ -911,9 +919,6 @@ final class PoorAirWarningViewModel: ObservableObject {
     private let personalizedSymptomSubtype: () async -> String?
     /// Bumped on EVERY state transition — invalidates any in-flight async personalization.
     private var generation = 0
-    /// The last SETTLED forecast AQI, so a foreground/day-rollover can re-decide it
-    /// against today's dismissed state even if the service skips a refetch.
-    private var lastSettledAQI: Int?
 
     init(defaults: UserDefaults = .standard,
          calendar: Calendar = .current,
@@ -930,7 +935,11 @@ final class PoorAirWarningViewModel: ObservableObject {
         defaults.object(forKey: "hg.poorAirWarningsEnabled") as? Bool ?? true   // default ON
     }
 
-    /// SETTLE-driven path (Home observes `forecastAQIState`).
+    /// The one re-decision entry point. Home calls it: on the SETTLE path
+    /// (`.onChange(of: forecastAQIState)`), on FOREGROUND after awaiting the shared
+    /// env-pass handle (with the FINAL settled state — never a mid-pass old value), and
+    /// on toggle re-enable (with the live state). It always re-decides against TODAY's
+    /// dismissed state, so a day-rollover clears yesterday's dismissal.
     func evaluate(state: EnvironmentalDataService.ForecastAQIState) async {
         generation &+= 1                                   // every transition invalidates in-flight work
         let mine = generation
@@ -941,22 +950,10 @@ final class PoorAirWarningViewModel: ObservableObject {
             // and any in-flight lookup is already invalidated by the generation bump above.
             isDismissible = false
         case .unavailable:
-            lastSettledAQI = nil
-            decideBase(aqi: nil)                            // → .none
+            decideBase(aqi: nil)                            // → .none (never a stale value on a failed/absent fetch)
         case .value(let v):
-            lastSettledAQI = v
             await decide(aqi: v, mine: mine)
         }
-    }
-
-    /// FOREGROUND / DAY-ROLLOVER path (Home calls on scenePhase → .active). Re-decides the
-    /// LAST settled value against TODAY, so crossing midnight clears yesterday's dismissal
-    /// and re-shows if still warranted — even when the service's cooldown skips a refetch.
-    func reevaluateForForeground() async {
-        generation &+= 1
-        let mine = generation
-        guard enabled else { clear(); return }
-        await decide(aqi: lastSettledAQI, mine: mine)
     }
 
     func dismissCurrent() {
@@ -967,15 +964,12 @@ final class PoorAirWarningViewModel: ObservableObject {
         clear()
     }
 
-    /// Call when `hg.poorAirWarningsEnabled` changes. OFF → clears the mounted banner
-    /// SYNCHRONOUSLY (before any await). ON → re-decides the last settled value against
-    /// today, so re-enabling re-shows a still-unhealthy forecast immediately (tabs stay
-    /// mounted, so returning to Home fires no scenePhase — this is the only re-show path).
-    func onEnabledChanged() async {
+    /// Toggle turned OFF — clear the mounted banner SYNCHRONOUSLY + invalidate any
+    /// in-flight lookup. (Re-enable is handled by Home calling `evaluate(live state)`,
+    /// so the re-show uses the CURRENT forecast, not a possibly-stale cache.)
+    func disable() {
         generation &+= 1
-        guard enabled else { clear(); return }             // OFF: synchronous clear + invalidate
-        let mine = generation
-        await decide(aqi: lastSettledAQI, mine: mine)       // ON: re-decide + re-show if warranted
+        clear()
     }
 
     // MARK: - internals
@@ -1027,7 +1021,7 @@ final class PoorAirWarningViewModel: ObservableObject {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/PoorAirWarningViewModelTests" -parallel-testing-enabled NO`
-Expected: PASS — 12 tests (incl. async-staleness drop, dismiss-during-pending no-op, dismiss-during-personalization, synchronous toggle-off clear, and foreground/day-rollover re-show).
+Expected: PASS — 11 tests (incl. async-staleness drop, dismiss-during-pending no-op, dismiss-during-personalization, `disable()` synchronous clear + in-flight invalidation, and the new-day re-decision — all using the deterministic `Gate` entry-handshake, no `Task.yield`).
 
 - [ ] **Step 5: Commit**
 
@@ -1049,7 +1043,7 @@ git commit -m "feat(warnings): Home warning VM — freshness gate, staleness gua
 - Test: `Food IntolerancesTests/PoorAirWarningBannerTests.swift`
 
 **Interfaces:**
-- Consumes: `PoorAirWarningViewModel` (`.warning`, `.isDismissible`, `.evaluate(state:)`, `.reevaluateForForeground()`, `.dismissCurrent()`, `.onEnabledChanged()`, `.guidance(for:)`), `PoorAirWarning`, `AirQualityIndex.AQICategory.name`, `AQIValueLabel`, `aqiColor(for:)`, `EnvironmentalDataService.forecastAQIState`, `GRDBRelationshipStore(database:).relationships(status: .active)`, `PoorAirPersonalization.bestSymptomSubtype(from:)`.
+- Consumes: `PoorAirWarningViewModel` (`.warning`, `.isDismissible`, `.evaluate(state:)`, `.dismissCurrent()`, `.disable()`, `.guidance(for:)`), `PoorAirWarning`, `AirQualityIndex.AQICategory.name`, `AQIValueLabel`, `aqiColor(for:)`, `EnvironmentalDataService.forecastAQIState`, `EnvironmentEmitCoordinator.emit(forced:)` (via `@Environment(\.emitCoordinator)`), `GRDBRelationshipStore(database:).relationships(status: .active)`, `PoorAirPersonalization.bestSymptomSubtype(from:)`.
 - Produces: `PoorAirWarningBanner.title(for:)` (a testable static), and the user-facing surface.
 
 - [ ] **Step 1: Build the banner view (reusing the tuned AQI palette)**
@@ -1128,9 +1122,10 @@ import HealthGraphCore
 - [ ] **Step 2: Wire into `HomeView`**
 
 In `Views/HealthOS/Home/HomeView.swift`:
-1. Add the service observation, the toggle binding, and the VM:
+1. Add the service observation, the emit-coordinator, the toggle binding, and the VM:
 ```swift
     @EnvironmentObject private var environmentalService: EnvironmentalDataService
+    @Environment(\.emitCoordinator) private var emitCoordinator          // the single-flighted env pass
     @AppStorage("hg.poorAirWarningsEnabled") private var poorAirEnabled = true
     @StateObject private var poorAir = PoorAirWarningViewModel(
         personalizedSymptomSubtype: {
@@ -1147,18 +1142,25 @@ In `Views/HealthOS/Home/HomeView.swift`:
                                          onDismiss: { poorAir.dismissCurrent() })
                 }
 ```
-3. Wire the three lifecycle triggers (add alongside the existing `.task`/`.onChange`). The scenePhase handler drives the FOREGROUND/day-rollover re-eval; the forecast-state handler drives the SETTLE path; the toggle handler clears synchronously:
+3. Wire the lifecycle triggers. The **foreground path must AWAIT the shared env pass before deciding** — otherwise Home would re-decide a stale value while the app-root-triggered refresh is still running and could re-arm a dismissible cross-day banner. `EnvironmentEmitCoordinator.emit(forced:)` is single-flighted, so awaiting it here JOINS the root's pass (no extra pass); when it completes — whether it refetched or the cooldown skipped — Home decides the FINAL settled state:
 ```swift
         .task { await poorAir.evaluate(state: environmentalService.forecastAQIState) }
         .onChange(of: environmentalService.forecastAQIState) { _, state in
-            Task { await poorAir.evaluate(state: state) }        // settle-driven (incl. pending → non-dismissible hold)
+            Task { await poorAir.evaluate(state: state) }        // SETTLE path (incl. pending → non-dismissible hold)
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await poorAir.reevaluateForForeground() } }  // day-rollover even if the fetch is cooled-down
+            guard phase == .active else { return }
+            Task {
+                if let emitCoordinator { await emitCoordinator.emit(forced: false).value }  // JOIN + await the pass
+                await poorAir.evaluate(state: environmentalService.forecastAQIState)         // decide the FINAL state (handles day-rollover)
+            }
         }
-        .onChange(of: poorAirEnabled) { _, _ in Task { await poorAir.onEnabledChanged() } }  // off → clear now; on → re-show
+        .onChange(of: poorAirEnabled) { _, isOn in
+            if isOn { Task { await poorAir.evaluate(state: environmentalService.forecastAQIState) } }  // re-decide the LIVE value
+            else { poorAir.disable() }                                                                  // OFF → synchronous clear
+        }
 ```
-(`HomeView` already has `@Environment(\.scenePhase)`; reuse it. If it already has a `scenePhase` `.onChange` for `viewModel.refresh()`, add the `poorAir.reevaluateForForeground()` call inside that same handler rather than a second one.)
+(`HomeView` already has `@Environment(\.scenePhase)` and an existing `.onChange(of: scenePhase)` that calls `viewModel.refresh()` — add the emit-join + evaluate inside that SAME handler rather than a second `.onChange(of: scenePhase)`. The env pass at pass-start publishes AQI `.pending` — Task 4 — so the banner goes non-dismissible the instant an accepted refresh begins, closing the window before this handler's post-await evaluate runs.)
 
 - [ ] **Step 3: Inject the service into the root previews**
 
