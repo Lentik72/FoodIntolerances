@@ -267,6 +267,28 @@ public struct AppDatabase: Sendable {
             }
         }
 
+        migrator.registerMigration("v7") { db in
+            // Demo-data hygiene: mark seeded rows so they are precisely removable.
+            // Nullable, no backfill — existing rows are left unmarked because synthetic
+            // provenance can't be inferred safely (legacy demo rows imitate real data);
+            // affected dev databases require the documented one-time reset.
+            try db.alter(table: "health_events") { t in
+                t.add(column: "syntheticBatch", .text)
+            }
+            try db.alter(table: "health_objects") { t in
+                t.add(column: "syntheticBatch", .text)
+            }
+            // Partial indexes: proportional to demo rows, not the whole table.
+            try db.execute(sql: """
+                CREATE INDEX idx_events_syntheticBatch
+                ON health_events(syntheticBatch) WHERE syntheticBatch IS NOT NULL
+                """)
+            try db.execute(sql: """
+                CREATE INDEX idx_objects_syntheticBatch
+                ON health_objects(syntheticBatch) WHERE syntheticBatch IS NOT NULL
+                """)
+        }
+
         return migrator
     }
 }

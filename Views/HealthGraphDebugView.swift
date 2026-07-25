@@ -16,6 +16,7 @@ struct HealthGraphDebugView: View {
     @State private var errorMessage: String?
     @State private var isWorking = false
     @EnvironmentObject private var ingestor: HealthKitIngestor
+    @EnvironmentObject private var graphMutation: GraphMutationCoordinator
     @Environment(\.emitCoordinator) private var emitCoordinator
     @State private var countsByCategory: [String: Int] = [:]
     @State private var countsBySource: [String: Int] = [:]
@@ -59,8 +60,26 @@ struct HealthGraphDebugView: View {
                     Task { await loadWeatherDemo() }
                 }
                 .disabled(isWorking)
-                // Migration is idempotent (deterministic ids); synthetic load
-                // APPENDS a fresh dataset each tap — reset first to reload.
+                Button("Clear demo data (keeps real data)", role: .destructive) {
+                    Task {
+                        errorMessage = nil
+                        isWorking = true
+                        defer { isWorking = false; graphMutation.graphMutated() }
+                        do {
+                            let didClean = try await database.purgeSyntheticData(scope: .all)
+                            if didClean {
+                                _ = try await EvidenceEngine(database: database).recompute(asOf: Date())
+                            }
+                            await refresh()
+                        } catch {
+                            errorMessage = String(describing: error)
+                        }
+                    }
+                }
+                .disabled(isWorking)
+                // Migration is idempotent (deterministic ids); each synthetic load
+                // now reloads its own demo batch first, so a re-tap replaces (not
+                // appends). This Reset still wipes the WHOLE DB (real data included).
                 Button("Reset Health Graph DB (delete all rows)", role: .destructive) {
                     Task { await resetDatabase() }
                 }
@@ -195,7 +214,7 @@ struct HealthGraphDebugView: View {
     private func loadSynthetic() async {
         errorMessage = nil
         isWorking = true
-        defer { isWorking = false }
+        defer { isWorking = false; graphMutation.graphMutated() }
         do {
             let config = SyntheticConfig(
                 startDate: Date().addingTimeInterval(-400 * 86_400),
@@ -208,7 +227,10 @@ struct HealthGraphDebugView: View {
                 outcomeBaseRatePerDay: 0.05,
                 noiseFoodsPerDay: 1...3
             )
-            try await SyntheticDataGenerator.generate(config: config).insert(into: database)
+            try await database.resetForSeedReload(batch: DemoBatch.synthetic)
+            try await SyntheticDataGenerator.generate(config: config)
+                .insert(into: database, batch: DemoBatch.synthetic)
+            _ = try await EvidenceEngine(database: database).recompute(asOf: Date())
             await refresh()
         } catch {
             errorMessage = String(describing: error)
@@ -217,11 +239,11 @@ struct HealthGraphDebugView: View {
 
     /// Seeds two plausible mood correlations (Magnesium → good mood, Coffee → low mood)
     /// and recomputes, so "what lifts your mood" insights render immediately in the
-    /// Insights tab. DEBUG-only; APPENDS — reset first to reload cleanly.
+    /// Insights tab. DEBUG-only; reloads its own demo batch first, so a re-tap replaces (not appends), then recomputes.
     private func loadMoodDemo() async {
         errorMessage = nil
         isWorking = true
-        defer { isWorking = false }
+        defer { isWorking = false; graphMutation.graphMutated() }
         do {
             let config = SyntheticConfig(
                 startDate: Date().addingTimeInterval(-160 * 86_400),
@@ -238,7 +260,9 @@ struct HealthGraphDebugView: View {
                 ],
                 outcomeBaseRatePerDay: 0,          // no baseline symptom noise for the mood demo
                 noiseFoodsPerDay: 1...2)
-            try await SyntheticDataGenerator.generate(config: config).insert(into: database)
+            try await database.resetForSeedReload(batch: DemoBatch.mood)
+            try await SyntheticDataGenerator.generate(config: config)
+                .insert(into: database, batch: DemoBatch.mood)
             _ = try await EvidenceEngine(database: database).recompute(asOf: Date())
             await refresh()
         } catch {
@@ -252,11 +276,11 @@ struct HealthGraphDebugView: View {
     /// fun section) render on device. `SyntheticDataGenerator` can't emit these
     /// `.environment` subtypes, so this mirrors `EnvironmentalEventFactory`'s shape
     /// (subtype/metadata/source) by hand and saves via `GRDBEventStore` directly.
-    /// DEBUG-only; APPENDS — reset first to reload cleanly.
+    /// DEBUG-only; reloads its own demo batch first, so a re-tap replaces (not appends), then recomputes.
     private func loadOutsideFactorsDemo() async {
         errorMessage = nil
         isWorking = true
-        defer { isWorking = false }
+        defer { isWorking = false; graphMutation.graphMutated() }
         do {
             var cal = Calendar(identifier: .gregorian)
             cal.timeZone = .current
@@ -319,7 +343,9 @@ struct HealthGraphDebugView: View {
                 }
             }
 
-            try await GRDBEventStore(database: database).save(events)
+            try await database.resetForSeedReload(batch: DemoBatch.outsideFactors)
+            try await GRDBEventStore(database: database)
+                .save(DemoBatch.stamp(events, batch: DemoBatch.outsideFactors))
             _ = try await EvidenceEngine(database: database).recompute(asOf: Date())
             await refresh()
         } catch {
@@ -338,11 +364,11 @@ struct HealthGraphDebugView: View {
     /// computed the same way `TemperatureExposureSource`/`HumidityExposureSource`
     /// compute it (nearest-rank percentile over the full sorted series) so the
     /// symptom-correlation matches what the engine will actually bucket as
-    /// hot/humid. DEBUG-only; APPENDS — reset first to reload cleanly.
+    /// hot/humid. DEBUG-only; reloads its own demo batch first, so a re-tap replaces (not appends), then recomputes.
     private func loadWeatherDemo() async {
         errorMessage = nil
         isWorking = true
-        defer { isWorking = false }
+        defer { isWorking = false; graphMutation.graphMutated() }
         do {
             var cal = Calendar(identifier: .gregorian)
             cal.timeZone = .current
@@ -551,7 +577,9 @@ struct HealthGraphDebugView: View {
                 }
             }
 
-            try await GRDBEventStore(database: database).save(events)
+            try await database.resetForSeedReload(batch: DemoBatch.weather)
+            try await GRDBEventStore(database: database)
+                .save(DemoBatch.stamp(events, batch: DemoBatch.weather))
             _ = try await EvidenceEngine(database: database).recompute(asOf: Date())
             await refresh()
         } catch {
@@ -564,7 +592,7 @@ struct HealthGraphDebugView: View {
         // reloading datasets. Never exists outside #if DEBUG.
         errorMessage = nil
         isWorking = true
-        defer { isWorking = false }
+        defer { isWorking = false; graphMutation.graphMutated() }
         do {
             try await database.eraseAllRows()
             report = nil

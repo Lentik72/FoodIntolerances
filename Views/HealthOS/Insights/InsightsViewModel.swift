@@ -5,6 +5,7 @@ import HealthGraphCore
 final class InsightsViewModel: ObservableObject {
     @Published private(set) var feed = InsightsFeedModel(sections: [])
     @Published var pendingUndo: PendingUndo?
+    @Published private(set) var demoDataLoaded = false
     struct PendingUndo: Equatable { let id: UUID; let priorStatus: RelStatus }
 
     private let database: AppDatabase
@@ -13,15 +14,23 @@ final class InsightsViewModel: ObservableObject {
     private let objectStore: GRDBObjectStore
     private let engine: EvidenceEngine
     private let config = InsightsConfig.default
+    private let hasSyntheticDataCheck: @Sendable () async throws -> Bool
 
-    init(database: AppDatabase = HealthGraphProvider.shared, now: @escaping () -> Date = { Date() }) {
+    init(database: AppDatabase = HealthGraphProvider.shared, now: @escaping () -> Date = { Date() },
+         hasSyntheticData: (@Sendable () async throws -> Bool)? = nil) {
         self.database = database; self.now = now
         self.relStore = GRDBRelationshipStore(database: database)
         self.objectStore = GRDBObjectStore(database: database)
         self.engine = EvidenceEngine(database: database)
+        self.hasSyntheticDataCheck = hasSyntheticData ?? { try await database.hasSyntheticData() }
     }
 
     func load() async {
+        // Set the demo flag first (fail closed) so an early return below still leaves
+        // the banner and dismissal gate in a safe state.
+        let demo = await demoDataPresentFailingClosed()
+        if demo { pendingUndo = nil }        // a queued undo would target a rebuilt id
+        demoDataLoaded = demo
         guard let rels = try? await relStore.all() else { feed = InsightsFeedModel(sections: []); return }
         var resolved: [ResolvedRelationship] = []
         for r in rels {
@@ -38,6 +47,10 @@ final class InsightsViewModel: ObservableObject {
     }
 
     func dismiss(_ card: InsightCardModel) async {
+        // Demo present OR unverifiable: dismissal is blocked (a dismissed demo edge could
+        // later suppress a genuine edge sharing its edgeKey). Re-checked here, not only in
+        // the UI, to close the stale-card race; fails closed on a query error.
+        if await demoDataPresentFailingClosed() { return }
         guard var r = try? await relStore.relationship(id: card.id) else { return }
         // Only active/no-effect edges are dismissable (mirrors InsightsFeed.build's section
         // split) — belt-and-suspenders against re-suppressing an already-archived edge
@@ -52,11 +65,20 @@ final class InsightsViewModel: ObservableObject {
     }
 
     func undoDismiss() async {
+        if await demoDataPresentFailingClosed() { pendingUndo = nil; return }
         guard let undo = pendingUndo, var r = try? await relStore.relationship(id: undo.id) else { return }
         r.status = undo.priorStatus
         try? await relStore.save(r)
         pendingUndo = nil
         await load()
+    }
+
+    /// Fails CLOSED: any error verifying demo presence is treated as "present", so
+    /// the banner never hides and dismissal never unlocks while the database state
+    /// cannot be confirmed.
+    private func demoDataPresentFailingClosed() async -> Bool {
+        do { return try await hasSyntheticDataCheck() }
+        catch { return true }
     }
 
     /// Resolve the exposure's display label + a representative category for its icon.

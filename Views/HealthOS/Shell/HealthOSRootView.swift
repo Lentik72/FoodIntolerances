@@ -55,6 +55,7 @@ struct HealthOSRootView: View {
 #Preview("Shell — light") {
     HealthOSRootView()
         .environmentObject(CaptureCoordinator())
+        .environmentObject(GraphMutationCoordinator())
         .environmentObject(RedFlagPresenter(muteStore: RedFlagMuteStore()))
         .environmentObject(RedFlagMuteStore())
         .environmentObject(EnvironmentStatusStore(defaults: UserDefaults(suiteName: "preview")!))
@@ -64,6 +65,7 @@ struct HealthOSRootView: View {
 #Preview("Shell — dark") {
     HealthOSRootView()
         .environmentObject(CaptureCoordinator())
+        .environmentObject(GraphMutationCoordinator())
         .environmentObject(RedFlagPresenter(muteStore: RedFlagMuteStore()))
         .environmentObject(RedFlagMuteStore())
         .environmentObject(EnvironmentStatusStore(defaults: UserDefaults(suiteName: "preview")!))

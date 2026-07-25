@@ -5,25 +5,31 @@ struct InsightsView: View {
     @StateObject private var vm = InsightsViewModel()
     @StateObject private var refresh = InsightsRefreshCoordinator()
     @EnvironmentObject private var captureCoordinator: CaptureCoordinator
+    @EnvironmentObject private var graphMutation: GraphMutationCoordinator
     @Environment(\.scenePhase) private var scenePhase
     @State private var archiveExpanded = false
 
     var body: some View {
         NavigationStack {
-            Group {
-                if vm.feed.sections.isEmpty {
-                    // Demoted-to-empty-state coverage strip (spec §5) — reused whole, not duplicated.
-                    InsightsPlaceholderView()
-                } else {
-                    feed
+            VStack(spacing: 0) {
+                #if DEBUG
+                if vm.demoDataLoaded { demoDataBanner }
+                #endif
+                Group {
+                    if vm.feed.sections.isEmpty {
+                        // Demoted-to-empty-state coverage strip (spec §5) — reused whole, not duplicated.
+                        InsightsPlaceholderView()
+                    } else {
+                        feed
+                    }
                 }
+                .background(HealthTheme.paper)
+                .navigationDestination(for: UUID.self) { relationshipID in
+                    InsightDetailView(relationshipID: relationshipID)
+                }
+                .overlay(alignment: .bottom) { undoToast }
+                .animation(.easeOut(duration: 0.2), value: vm.pendingUndo)
             }
-            .background(HealthTheme.paper)
-            .navigationDestination(for: UUID.self) { relationshipID in
-                InsightDetailView(relationshipID: relationshipID)
-            }
-            .overlay(alignment: .bottom) { undoToast }
-            .animation(.easeOut(duration: 0.2), value: vm.pendingUndo)
         }
         .task {
             await refresh.refreshIfNeeded()
@@ -36,6 +42,9 @@ struct InsightsView: View {
         .onChange(of: captureCoordinator.lastCaptureAt) { _, _ in
             Task { await refresh.refreshIfNeeded(); await vm.load() }
         }
+        .onChange(of: graphMutation.revision) { _, _ in
+            Task { await refresh.refreshIfNeeded(); await vm.load() }
+        }
         .onChange(of: refresh.lastRecomputeAt) { _, _ in
             Task { await vm.load() }
         }
@@ -46,6 +55,21 @@ struct InsightsView: View {
             vm.pendingUndo = nil
         }
     }
+
+    #if DEBUG
+    private var demoDataBanner: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Demo data loaded")
+                .font(.subheadline.weight(.semibold))
+            Text("These findings — including ones from your real data — are not trustworthy while demo data is present. Clear it from Health Graph Debug.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(.yellow.opacity(0.15))
+    }
+    #endif
 
     private var feed: some View {
         ScrollView {
@@ -110,7 +134,9 @@ struct InsightsView: View {
     private func cardsStack(_ cards: [InsightCardModel], dismissable: Bool = true) -> some View {
         VStack(spacing: 12) {
             ForEach(cards) { card in
-                InsightCardView(card: card, onDismiss: dismissable ? {
+                // Pass nil while demo data is loaded so the affordance disappears; the
+                // view-model gate (Task 6) is the real safety net, this removes the tap.
+                InsightCardView(card: card, onDismiss: (dismissable && !vm.demoDataLoaded) ? {
                     Task { await vm.dismiss(card) }
                 } : nil)
             }
@@ -179,10 +205,12 @@ struct InsightsView: View {
 #Preview("Insights — light") {
     InsightsView()
         .environmentObject(CaptureCoordinator())
+        .environmentObject(GraphMutationCoordinator())
 }
 
 #Preview("Insights — dark") {
     InsightsView()
         .environmentObject(CaptureCoordinator())
+        .environmentObject(GraphMutationCoordinator())
         .preferredColorScheme(.dark)
 }
