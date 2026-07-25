@@ -404,9 +404,13 @@ import CoreLocation
         var coordinate: CLLocationCoordinate2D? = .init(latitude: 42, longitude: -71)
         var authorization: EnvironmentLocationAuthorization = .authorized
     }
-    func svc(_ payload: Data, status: Int? = 200, error: Error? = nil) -> EnvironmentalDataService {
-        EnvironmentalDataService(transport: StubTransport(payload: payload, status: status, error: error),
-                                 now: { self.at }, location: StubLocation())
+    func svc(_ payload: Data, status: Int? = 200, error: Error? = nil,
+             location: LocationProviding = StubLocation()) -> EnvironmentalDataService {
+        // Sibling env tests do this: without a key, APIConfig.airPollutionURL is nil and
+        // the fetch never reaches the stub transport (it hits the not-configured branch).
+        setenv("OPENWEATHER_API_KEY", "freshness-test-key", 1)
+        return EnvironmentalDataService(transport: StubTransport(payload: payload, status: status, error: error),
+                                        now: { self.at }, location: location)
     }
     // ≥3 next-24h slots whose mean PM2.5 (~40 µg/m³) → EPA AQI ≥ 101.
     func poorAirJSON() -> Data {
@@ -447,6 +451,34 @@ import CoreLocation
         await s.fetchAirQuality()
         #expect(s.forecastAQIState == .unavailable)
         #expect(s.forecastAQI == nil)
+    }
+
+    @Test func noLocationSettlesUnavailableAndClearsValue() async {
+        // The no-location branch — part of the P1 fix. StubLocation with a nil coordinate.
+        let s = svc(poorAirJSON(), location: StubLocation(coordinate: nil))
+        await s.fetchAirQuality()
+        #expect(s.forecastAQIState == .unavailable)
+        #expect(s.forecastAQI == nil)
+    }
+
+    @Test func cancelledPassDoesNotSettleToAStaleValue() async {
+        // A pass whose transport self-cancels after a clean 200 bails at the post-transport
+        // Task.isCancelled guard — it must NOT settle; state stays .pending for the superseding
+        // pass to resolve (never a stale .value/.unavailable). Mirrors EnvironmentFailure-
+        // ClassificationTests.SelfCancellingTransport.
+        struct SelfCancellingTransport: HTTPTransport {
+            let payload: Data
+            func data(from url: URL) async throws -> (Data, URLResponse) {
+                let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                withUnsafeCurrentTask { $0?.cancel() }        // cancel our own calling task
+                return (payload, resp)
+            }
+        }
+        setenv("OPENWEATHER_API_KEY", "freshness-test-key", 1)
+        let s = EnvironmentalDataService(transport: SelfCancellingTransport(payload: poorAirJSON()),
+                                         now: { self.at }, location: StubLocation())
+        await s.fetchAirQuality()
+        #expect(s.forecastAQIState == .pending)               // never settled to a stale value
     }
 }
 
@@ -690,9 +722,57 @@ import HealthGraphCore
         let vm = makeVM(symptomLookup: { "cough" })           // raw subtype
         await vm.evaluate(state: .value(160))
         if case .show(_, _, let symptom) = vm.warning {
-            #expect(symptom == SymptomCatalog.displayName(for: "cough"))
+            // Qualified — the app has its own `SymptomCatalog` struct; use the Core enum.
+            #expect(symptom == HealthGraphCore.SymptomCatalog.displayName(for: "cough"))
         } else { Issue.record("expected personalized warning") }
     }
+
+    // Gate to sequence two overlapping lookups.
+    actor Gate {
+        private var cont: CheckedContinuation<Void, Never>?
+        private var opened = false
+        private var calls = 0
+        func next() async -> Int {
+            calls += 1; let n = calls
+            if n == 1 && !opened { await withCheckedContinuation { cont = $0 } }
+            return n
+        }
+        func open() { opened = true; cont?.resume(); cont = nil }
+    }
+
+    @Test func lateStaleLookupDoesNotClobberNewerDecision() async {
+        // The 1st evaluate's personalization blocks on the gate; a 2nd evaluate supersedes it
+        // (returns nil). Releasing the stale 1st lookup ("cough") must NOT re-personalize.
+        let gate = Gate()
+        let vm = makeVM(symptomLookup: { let n = await gate.next(); return n == 1 ? "cough" : nil })
+        async let first: Void = vm.evaluate(state: .value(160))   // gen 1 — blocks in lookup
+        await Task.yield(); await Task.yield()
+        await vm.evaluate(state: .value(160))                     // gen 2 — lookup returns nil
+        await gate.open()                                         // release gen-1's stale "cough"
+        await first
+        if case .show(_, _, let symptom) = vm.warning { #expect(symptom == nil) }  // gen-2 won
+        else { Issue.record("expected base warning after staleness drop") }
+    }
+
+    @Test func toggleOffInvalidatesInFlightLookup() async {
+        // A lookup in flight from an enabled .value pass must NOT re-show a warning after
+        // the toggle flips off mid-flight (the disabled path bumps generation).
+        let gate = Gate()
+        let d = UserDefaults(suiteName: "poorairvm.\(UUID().uuidString)")!
+        d.set(true, forKey: "hg.poorAirWarningsEnabled")
+        var utc = Calendar(identifier: .gregorian); utc.timeZone = TimeZone(identifier: "UTC")!
+        let vm = PoorAirWarningViewModel(defaults: d, calendar: utc,
+            now: { Date(timeIntervalSince1970: 1_700_000_000) },
+            personalizedSymptomSubtype: { _ = await gate.next(); return "cough" })
+        async let first: Void = vm.evaluate(state: .value(160))   // enabled → base shown, lookup blocks
+        await Task.yield(); await Task.yield()
+        d.set(false, forKey: "hg.poorAirWarningsEnabled")
+        await vm.evaluate(state: .value(160))                     // now disabled → .none, generation bumped
+        await gate.open()
+        await first
+        #expect(vm.warning == .none)                              // stale lookup could not re-show
+    }
+
     @Test func guidanceStringsAreExactPerBand() {
         #expect(PoorAirWarningViewModel.guidance(for: .unhealthySensitive) ==
                 "Sensitive groups should reduce prolonged or heavy outdoor exertion.")
@@ -749,28 +829,30 @@ final class PoorAirWarningViewModel: ObservableObject {
 
     /// Re-decide for a settled forecast state. `.pending` HOLDS the current warning.
     func evaluate(state: EnvironmentalDataService.ForecastAQIState) async {
-        guard enabled else { warning = .none; return }
-        let aqi: Int?
-        switch state {
-        case .pending: return                       // hold — don't re-decide on an in-flight pass
-        case .unavailable: aqi = nil
-        case .value(let v): aqi = v
-        }
+        // `.pending` holds the current warning: don't re-decide AND don't bump generation
+        // (an in-flight lookup for the still-shown warning is still valid).
+        if case .pending = state { return }
+        // Every DECISION-changing path bumps generation, so a late lookup from an older
+        // AQI — or from before the toggle was turned off — can never clobber this decision.
         generation &+= 1
         let mine = generation
+        guard enabled else { warning = .none; return }     // now generation-bumped: stale lookups dropped
+        let aqi: Int? = { if case .value(let v) = state { return v } else { return nil } }()
 
         // Base decision first (no personalization) so a slow/failed lookup never blocks or suppresses it.
         let dismissed = store.highestDismissedBandToday(now: now(), calendar: calendar)
         let base = PoorAirWarningDecision.decide(forecastAQI: aqi, highestDismissedBandToday: dismissed,
                                                  personalizedSymptom: nil)
         warning = base
-        guard case .show = base else { return }     // nothing to personalize
+        guard case .show = base else { return }     // .unavailable / suppressed → nothing to personalize
 
         // Personalize asynchronously; drop the result if a newer evaluate() superseded us.
         let subtype = await personalizedSymptomSubtype()
         guard mine == generation else { return }    // async-staleness guard
         if let subtype {
-            let label = SymptomCatalog.displayName(for: subtype)
+            // MUST qualify: the app target has its own top-level `struct SymptomCatalog`
+            // (no `displayName`) that shadows the imported one — every app call site qualifies.
+            let label = HealthGraphCore.SymptomCatalog.displayName(for: subtype)
             if case .show(let aqi, let band, _) = base {
                 warning = .show(aqi: aqi, band: band, personalizedSymptom: label)
             }
@@ -805,7 +887,7 @@ final class PoorAirWarningViewModel: ObservableObject {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/PoorAirWarningViewModelTests" -parallel-testing-enabled NO`
-Expected: PASS — 6 tests.
+Expected: PASS — 8 tests (incl. the async-staleness drop and the toggle-off-invalidates-in-flight-lookup discriminators).
 
 - [ ] **Step 5: Commit**
 
@@ -919,13 +1001,18 @@ In `Views/HealthOS/Shell/HealthOSRootView.swift`, both `#Preview` blocks now ren
 ```
 (If `HomeView` has its own `#Preview`, inject it there too.)
 
-- [ ] **Step 4: Add the settings toggle**
+- [ ] **Step 4: Add the settings toggle (in an UNGATED section)**
 
-In `NotificationSettingsView.swift`, add `@AppStorage("hg.poorAirWarningsEnabled") private var poorAirWarningsEnabled = true` to the view, and a toggle inside the existing "AI Health Assistant Alerts" `Section` (the one that already holds `Toggle("Environmental Alerts", …)` around line 102):
+The poor-air banner is an **in-app, notification-independent, default-ON** feature. It must NOT live in the "AI Health Assistant Alerts" `Section` — that whole section is inside `NotificationSettingsView.swift`'s `if notificationsEnabled { … }` block (opens at `:51`, `notificationsEnabled` is `settings.authorizationStatus == .authorized` at `:188`). A user who denies notifications would see the always-on banner with no way to turn it off.
+
+Add `@AppStorage("hg.poorAirWarningsEnabled") private var poorAirWarningsEnabled = true` to the view, and a NEW `Section` placed **OUTSIDE** the `if notificationsEnabled` block (e.g. right after the "Notification Permissions" section, so it renders regardless of notification authorization):
 ```swift
+                Section(header: Text("In-App Alerts"),
+                        footer: Text("Shows a banner on Home when the air quality forecast is unhealthy. Works without notification permission.")) {
                     Toggle("Poor air quality warnings", isOn: $poorAirWarningsEnabled)
+                }
 ```
-This is a distinct **in-app-display** preference (a different key), NOT the legacy notification-oriented `enableEnvironmentalAlerts` — leave that toggle and its `proactiveAlertService` binding untouched. `@AppStorage` writes to `.standard`, which is exactly what `PoorAirWarningViewModel` reads.
+This is a distinct **in-app-display** preference (a different key), NOT the legacy notification-oriented `enableEnvironmentalAlerts` — leave that toggle and its `proactiveAlertService` binding untouched. `@AppStorage` writes to `.standard`, which is exactly what `PoorAirWarningViewModel` reads. Verify the toggle is visible even with notifications denied.
 
 - [ ] **Step 5: Build + verify the whole feature suite**
 
