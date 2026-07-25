@@ -15,6 +15,9 @@
 - **Trigger at AQI ≥ 101** (`AirQualityIndex.poorAirThreshold`); bands come from `AirQualityIndex.category(aqi:)` — the warning code NEVER duplicates numeric AQI ranges.
 - **Freshness:** decide only on a settled pass-scoped state (`.pending`/`.value`/`.unavailable`); the not-configured path must clear the stale value; `.unavailable`/nil ⇒ no warning (fail-safe).
 - **Once per local calendar day; re-show on band escalation.** Persist the **highest DISMISSED band per local day** as a **stable token** (never `name` or `severityRank`).
+- **Lifecycle invariants (VM):** bump the async-invalidation `generation` on EVERY state transition (settle, pending, foreground re-eval, dismissal, toggle change); the banner is **dismissible only when it reflects a SETTLED value** (`isDismissible == false` while `.pending`, so a held cross-day banner can't write today's dismissal); a **foreground/day-rollover** path re-decides the last settled value against today even when the service skips a refetch; **toggle-off clears the mounted banner synchronously** (Home observes the preference).
+- **Reuse the tuned AQI palette** (`aqiColor(for:)` / `AQIValueLabel`) — do NOT introduce a second color mapping. Dismiss button ≥44×44.
+- **Settings toggle lives on the always-visible Health tab**, NOT inside `NotificationSettingsView`'s notification-gated section.
 - **Personalization** = active graph edge `fromCategory=="poorAirDay"` && `toCategory=="symptom"` && `type==.possibleTrigger`; deterministic pick by `confidence` desc, `evidenceCount` desc, **raw** `toSubtype` asc; humanize via `SymptomCatalog.displayName(for:)`. A personalization failure/empty degrades to the base warning — NEVER suppresses it. A late lookup must not clobber a newer decision (async-staleness guard).
 - **The four tier guidance strings are finalized (Task 6) and pinned verbatim in tests.**
 - **Not a takeover.** Dismissible banner; salience scales with band; stays outside the red-flag/crisis interstitial system.
@@ -132,7 +135,7 @@ In `AirQualityIndex.swift`, extend the `AQICategory` enum (keep `name` as-is). A
             }
         }
 ```
-And make the enum `Comparable` by its rank — change the declaration line `public enum AQICategory: Sendable, Equatable {` to `public enum AQICategory: Sendable, Equatable, Comparable {` and add:
+And make the enum `Comparable` + `Hashable` — change the declaration line `public enum AQICategory: Sendable, Equatable {` to `public enum AQICategory: Sendable, Equatable, Comparable, Hashable {` (`Hashable` is synthesized for this payload-free enum; the test uses `AQICategory` as a dictionary key) and add:
 ```swift
         public static func < (lhs: Self, rhs: Self) -> Bool { lhs.severityRank < rhs.severityRank }
 ```
@@ -480,6 +483,33 @@ import CoreLocation
         await s.fetchAirQuality()
         #expect(s.forecastAQIState == .pending)               // never settled to a stale value
     }
+
+    @Test func stateIsPendingWhileTransportSuspended() async {
+        // While a fetch is suspended (transport awaiting), state must be .pending — an old
+        // value is never surfaced mid-flight. Covers the "old value while suspended" regression.
+        actor Latch {
+            private var cont: CheckedContinuation<Void, Never>?
+            func wait() async { await withCheckedContinuation { cont = $0 } }
+            func open() { cont?.resume(); cont = nil }
+        }
+        struct GatedTransport: HTTPTransport {
+            let latch: Latch; let payload: Data
+            func data(from url: URL) async throws -> (Data, URLResponse) {
+                await latch.wait()                            // suspend here
+                return (payload, HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            }
+        }
+        setenv("OPENWEATHER_API_KEY", "freshness-test-key", 1)
+        let latch = Latch()
+        let s = EnvironmentalDataService(transport: GatedTransport(latch: latch, payload: poorAirJSON()),
+                                         now: { self.at }, location: StubLocation())
+        async let fetch: Void = s.fetchAirQuality()
+        await Task.yield(); await Task.yield()
+        #expect(s.forecastAQIState == .pending)               // suspended mid-flight → pending
+        await latch.open()
+        await fetch
+        if case .value = s.forecastAQIState {} else { Issue.record("should settle to .value after resume") }
+    }
 }
 
 // Small test helper — add to the test file.
@@ -693,12 +723,13 @@ import HealthGraphCore
         await vm.evaluate(state: .value(160))
         #expect(vm.warning == .none)
     }
-    @Test func unavailableIsNone_pendingHolds() async {
+    @Test func pendingHoldsNonDismissible_unavailableClears() async {
         let vm = makeVM()
         await vm.evaluate(state: .value(160))
-        #expect(vm.warning != .none)                          // showing
+        #expect(vm.warning != .none && vm.isDismissible)      // settled → dismissible
         await vm.evaluate(state: .pending)
         #expect(vm.warning != .none)                          // HELD — pending doesn't clear
+        #expect(vm.isDismissible == false)                    // …but NOT dismissible while pending
         await vm.evaluate(state: .unavailable)
         #expect(vm.warning == .none)                          // settled-unavailable clears
     }
@@ -773,6 +804,63 @@ import HealthGraphCore
         #expect(vm.warning == .none)                              // stale lookup could not re-show
     }
 
+    @Test func dismissDuringPendingIsNoOp() async {
+        // Cross-day hazard: a held banner while a fresh fetch is pending must not be
+        // dismissible — otherwise it writes TODAY's dismissal for YESTERDAY's forecast.
+        let vm = makeVM()
+        await vm.evaluate(state: .value(120))                 // settled → dismissible
+        await vm.evaluate(state: .pending)                    // now held, non-dismissible
+        vm.dismissCurrent()                                   // must be a no-op
+        #expect(vm.warning != .none)                          // still held
+        // And nothing was recorded: a fresh settle of the SAME tier still shows.
+        await vm.evaluate(state: .value(120))
+        #expect(vm.warning != .none)
+    }
+
+    @Test func dismissDuringPersonalizationDropsLateLookup() async {
+        // Dismiss while personalization is in flight: the late lookup must NOT resurrect
+        // the dismissed banner (dismiss bumps generation).
+        let gate = Gate()
+        let vm = makeVM(symptomLookup: { _ = await gate.next(); return "cough" })
+        async let first: Void = vm.evaluate(state: .value(160))   // base shown (dismissible), lookup blocks
+        await Task.yield(); await Task.yield()
+        vm.dismissCurrent()                                       // dismiss now — bumps generation
+        #expect(vm.warning == .none)
+        await gate.open()                                         // release the stale "cough" lookup
+        await first
+        #expect(vm.warning == .none)                             // NOT resurrected
+    }
+
+    @Test func onEnabledChangedClearsMountedBannerSynchronously() async {
+        let d = UserDefaults(suiteName: "poorairvm.\(UUID().uuidString)")!
+        d.set(true, forKey: "hg.poorAirWarningsEnabled")
+        var utc = Calendar(identifier: .gregorian); utc.timeZone = TimeZone(identifier: "UTC")!
+        let vm = PoorAirWarningViewModel(defaults: d, calendar: utc,
+            now: { Date(timeIntervalSince1970: 1_700_000_000) }, personalizedSymptomSubtype: { nil })
+        await vm.evaluate(state: .value(160))
+        #expect(vm.warning != .none)
+        d.set(false, forKey: "hg.poorAirWarningsEnabled")        // user flips it off
+        vm.onEnabledChanged()                                    // synchronous
+        #expect(vm.warning == .none && vm.isDismissible == false)
+    }
+
+    @Test func foregroundReevaluatesForNewDayAfterDismissal() async {
+        // Dismiss on day 1, then a NEW local day foreground (service skipped a refetch,
+        // so state is unchanged) must re-show via reevaluateForForeground().
+        let d = UserDefaults(suiteName: "poorairvm.\(UUID().uuidString)")!
+        d.set(true, forKey: "hg.poorAirWarningsEnabled")
+        var utc = Calendar(identifier: .gregorian); utc.timeZone = TimeZone(identifier: "UTC")!
+        var currentNow = Date(timeIntervalSince1970: 1_700_000_000)
+        let vm = PoorAirWarningViewModel(defaults: d, calendar: utc,
+            now: { currentNow }, personalizedSymptomSubtype: { nil })
+        await vm.evaluate(state: .value(140))                    // day 1: settled, shown
+        vm.dismissCurrent()                                     // dismissed for day 1
+        #expect(vm.warning == .none)
+        currentNow = currentNow.addingTimeInterval(86_400)       // → next local day
+        await vm.reevaluateForForeground()                       // no state change; re-decide last value
+        #expect(vm.warning != .none)                             // yesterday's dismissal no longer suppresses
+    }
+
     @Test func guidanceStringsAreExactPerBand() {
         #expect(PoorAirWarningViewModel.guidance(for: .unhealthySensitive) ==
                 "Sensitive groups should reduce prolonged or heavy outdoor exertion.")
@@ -793,7 +881,12 @@ Expected: FAIL — `PoorAirWarningViewModel` undefined.
 
 - [ ] **Step 3: Implement**
 
-Create `Models/PoorAirWarningViewModel.swift`:
+Create `Models/PoorAirWarningViewModel.swift`. The lifecycle is the subtle part — read the invariants first:
+- **`generation` is bumped on EVERY state transition** — settle, `.pending`, foreground re-eval, dismissal, toggle change — so no late async personalization can resurrect or clobber a newer decision.
+- **`isDismissible` is true ONLY when the banner reflects a SETTLED value.** It is `false` while a fetch is `.pending`, so a held cross-day banner cannot write *today's* dismissal for *yesterday's* forecast. `dismissCurrent()` is a no-op unless `isDismissible`.
+- **A settle drives the normal path; a foreground/day-rollover re-decides the LAST settled value against TODAY** (via `reevaluateForForeground()`), so a new local day clears yesterday's dismissal even when the service skips a refetch (cooldown).
+- **`onEnabledChanged()` synchronously clears + invalidates** when the toggle flips off.
+
 ```swift
 import Foundation
 import HealthGraphCore
@@ -801,6 +894,10 @@ import HealthGraphCore
 @MainActor
 final class PoorAirWarningViewModel: ObservableObject {
     @Published private(set) var warning: PoorAirWarning = .none
+    /// The banner shows a Dismiss button ONLY when this is true — i.e. the warning
+    /// reflects a SETTLED forecast. False while `.pending`, so a held cross-day banner
+    /// can never write today's dismissal against yesterday's forecast.
+    @Published private(set) var isDismissible: Bool = false
 
     private let defaults: UserDefaults
     private let calendar: Calendar
@@ -809,8 +906,11 @@ final class PoorAirWarningViewModel: ObservableObject {
     /// Injectable so tests don't need a live graph. Production wires this to a
     /// relationship-store query (Task 7). Returns the RAW symptom subtype, or nil.
     private let personalizedSymptomSubtype: () async -> String?
-    /// Monotonic token so a late async lookup can't clobber a newer decision.
+    /// Bumped on EVERY state transition — invalidates any in-flight async personalization.
     private var generation = 0
+    /// The last SETTLED forecast AQI, so a foreground/day-rollover can re-decide it
+    /// against today's dismissed state even if the service skips a refetch.
+    private var lastSettledAQI: Int?
 
     init(defaults: UserDefaults = .standard,
          calendar: Calendar = .current,
@@ -827,42 +927,74 @@ final class PoorAirWarningViewModel: ObservableObject {
         defaults.object(forKey: "hg.poorAirWarningsEnabled") as? Bool ?? true   // default ON
     }
 
-    /// Re-decide for a settled forecast state. `.pending` HOLDS the current warning.
+    /// SETTLE-driven path (Home observes `forecastAQIState`).
     func evaluate(state: EnvironmentalDataService.ForecastAQIState) async {
-        // `.pending` holds the current warning: don't re-decide AND don't bump generation
-        // (an in-flight lookup for the still-shown warning is still valid).
-        if case .pending = state { return }
-        // Every DECISION-changing path bumps generation, so a late lookup from an older
-        // AQI — or from before the toggle was turned off — can never clobber this decision.
+        generation &+= 1                                   // every transition invalidates in-flight work
+        let mine = generation
+        guard enabled else { clear(); return }
+        switch state {
+        case .pending:
+            // Hold whatever is shown, but make it NON-dismissible: no stale-dismissal write,
+            // and any in-flight lookup is already invalidated by the generation bump above.
+            isDismissible = false
+        case .unavailable:
+            lastSettledAQI = nil
+            decideBase(aqi: nil)                            // → .none
+        case .value(let v):
+            lastSettledAQI = v
+            await decide(aqi: v, mine: mine)
+        }
+    }
+
+    /// FOREGROUND / DAY-ROLLOVER path (Home calls on scenePhase → .active). Re-decides the
+    /// LAST settled value against TODAY, so crossing midnight clears yesterday's dismissal
+    /// and re-shows if still warranted — even when the service's cooldown skips a refetch.
+    func reevaluateForForeground() async {
         generation &+= 1
         let mine = generation
-        guard enabled else { warning = .none; return }     // now generation-bumped: stale lookups dropped
-        let aqi: Int? = { if case .value(let v) = state { return v } else { return nil } }()
+        guard enabled else { clear(); return }
+        await decide(aqi: lastSettledAQI, mine: mine)
+    }
 
-        // Base decision first (no personalization) so a slow/failed lookup never blocks or suppresses it.
+    func dismissCurrent() {
+        // Only a SETTLED, shown banner is dismissible — never a pending/held one.
+        guard isDismissible, case .show(_, let band, _) = warning else { return }
+        generation &+= 1                                   // invalidate any in-flight personalization
+        store.recordDismissed(band, now: now(), calendar: calendar)
+        clear()
+    }
+
+    /// Call when `hg.poorAirWarningsEnabled` changes — synchronous clear + invalidate.
+    func onEnabledChanged() {
+        generation &+= 1
+        if !enabled { clear() }                            // re-enable re-decides on next settle/foreground
+    }
+
+    // MARK: - internals
+
+    private func clear() { warning = .none; isDismissible = false }
+
+    /// Base (non-personalized) decision for a SETTLED value; dismissible iff shown.
+    private func decideBase(aqi: Int?) {
         let dismissed = store.highestDismissedBandToday(now: now(), calendar: calendar)
-        let base = PoorAirWarningDecision.decide(forecastAQI: aqi, highestDismissedBandToday: dismissed,
-                                                 personalizedSymptom: nil)
-        warning = base
-        guard case .show = base else { return }     // .unavailable / suppressed → nothing to personalize
+        warning = PoorAirWarningDecision.decide(forecastAQI: aqi,
+                                                highestDismissedBandToday: dismissed,
+                                                personalizedSymptom: nil)
+        isDismissible = { if case .show = warning { true } else { false } }()
+    }
 
-        // Personalize asynchronously; drop the result if a newer evaluate() superseded us.
+    /// Settled decision + async personalization, guarded against staleness.
+    private func decide(aqi: Int?, mine: Int) async {
+        decideBase(aqi: aqi)                               // base first — dismissible if shown
+        guard case .show(let a, let band, _) = warning else { return }
         let subtype = await personalizedSymptomSubtype()
-        guard mine == generation else { return }    // async-staleness guard
+        guard mine == generation else { return }          // async-staleness / dismissal / toggle guard
         if let subtype {
             // MUST qualify: the app target has its own top-level `struct SymptomCatalog`
             // (no `displayName`) that shadows the imported one — every app call site qualifies.
             let label = HealthGraphCore.SymptomCatalog.displayName(for: subtype)
-            if case .show(let aqi, let band, _) = base {
-                warning = .show(aqi: aqi, band: band, personalizedSymptom: label)
-            }
+            warning = .show(aqi: a, band: band, personalizedSymptom: label)
         }
-    }
-
-    func dismissCurrent() {
-        guard case .show(_, let band, _) = warning else { return }
-        store.recordDismissed(band, now: now(), calendar: calendar)
-        warning = .none
     }
 
     /// Tier-specific guidance, matching the AirNow PM2.5 activity table in meaning.
@@ -887,7 +1019,7 @@ final class PoorAirWarningViewModel: ObservableObject {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/PoorAirWarningViewModelTests" -parallel-testing-enabled NO`
-Expected: PASS — 8 tests (incl. the async-staleness drop and the toggle-off-invalidates-in-flight-lookup discriminators).
+Expected: PASS — 12 tests (incl. async-staleness drop, dismiss-during-pending no-op, dismiss-during-personalization, synchronous toggle-off clear, and foreground/day-rollover re-show).
 
 - [ ] **Step 5: Commit**
 
@@ -902,15 +1034,19 @@ git commit -m "feat(warnings): Home warning VM — freshness gate, staleness gua
 
 **Files:**
 - Create: `Views/HealthOS/Home/PoorAirWarningBanner.swift`
-- Modify: `Views/HealthOS/Home/HomeView.swift` (observe the service, host the banner, drive the VM, wire the production personalization lookup)
+- Modify: `Views/HealthOS/Timeline/AQIValueLabel.swift:6` (make `aqiColor(for:)` module-internal — drop `private` — so the banner reuses the SAME tuned 6-band palette)
+- Modify: `Views/HealthOS/Home/HomeView.swift` (observe the service, host the banner, drive the VM, foreground/day-rollover + reactive-toggle wiring)
 - Modify: `Views/HealthOS/Shell/HealthOSRootView.swift:55-72` (inject `EnvironmentalDataService` into both `#Preview`s)
-- Modify: `NotificationSettingsView.swift` — add the `hg.poorAirWarningsEnabled` toggle in the existing "AI Health Assistant Alerts" `Section` (where "Environmental Alerts" already lives, so it's discoverable)
+- Modify: `Views/HealthOS/Health/HealthTabView.swift` (add the `hg.poorAirWarningsEnabled` toggle — the ALWAYS-visible Health surface, near the existing `hg.temperatureUnit`/`hg.measurementSystem` settings)
+- Test: `Food IntolerancesTests/PoorAirWarningBannerTests.swift`
 
 **Interfaces:**
-- Consumes: `PoorAirWarningViewModel`, `PoorAirWarning`, `PoorAirWarningViewModel.guidance(for:)`, `AirQualityIndex.AQICategory.name`, `EnvironmentalDataService.forecastAQIState`, `GRDBRelationshipStore(database:).relationships(status: .active)`, `PoorAirPersonalization.bestSymptomSubtype(from:)`.
-- Produces: no new API — the user-facing surface.
+- Consumes: `PoorAirWarningViewModel` (`.warning`, `.isDismissible`, `.evaluate(state:)`, `.reevaluateForForeground()`, `.dismissCurrent()`, `.onEnabledChanged()`, `.guidance(for:)`), `PoorAirWarning`, `AirQualityIndex.AQICategory.name`, `AQIValueLabel`, `aqiColor(for:)`, `EnvironmentalDataService.forecastAQIState`, `GRDBRelationshipStore(database:).relationships(status: .active)`, `PoorAirPersonalization.bestSymptomSubtype(from:)`.
+- Produces: `PoorAirWarningBanner.title(for:)` (a testable static), and the user-facing surface.
 
-- [ ] **Step 1: Build the banner view**
+- [ ] **Step 1: Build the banner view (reusing the tuned AQI palette)**
+
+First, in `Views/HealthOS/Timeline/AQIValueLabel.swift:6`, change `private func aqiColor(for category:` to `func aqiColor(for category:` so the banner can reuse the exact same 6-band AirNow palette (do NOT introduce a second orange/red mapping).
 
 Create `Views/HealthOS/Home/PoorAirWarningBanner.swift`:
 ```swift
@@ -918,37 +1054,38 @@ import SwiftUI
 import HealthGraphCore
 
 /// Dismissible, tier-scaled poor-air warning. NOT a takeover — stays outside the
-/// red-flag/crisis interstitial system.
+/// red-flag/crisis interstitial system. Reuses the tuned AirNow palette via
+/// `AQIValueLabel` (the value line) and `aqiColor(for:)` (the accent).
 struct PoorAirWarningBanner: View {
     let aqi: Int
     let band: AirQualityIndex.AQICategory
     let personalizedSymptom: String?
+    let isDismissible: Bool
     let onDismiss: () -> Void
 
-    private var title: String {
+    /// Testable — pins the forecast-oriented copy (spec Decision 2) + the hazardous variant.
+    static func title(for band: AirQualityIndex.AQICategory) -> String {
         band == .hazardous ? "Air quality is forecast to be hazardous"
                            : "Air quality is forecast to be unhealthy"
     }
-    // Salience rises with band. Uses theme tokens; keep Color-light for accessibility.
-    private var tint: Color {
-        switch band {
-        case .unhealthySensitive: .orange
-        case .unhealthy: .orange
-        case .veryUnhealthy: .red
-        case .hazardous: .red
-        case .good, .moderate: .orange
-        }
-    }
+    private var accent: Color { aqiColor(for: band) }   // SAME palette as AQIBadge — all 6 bands distinct
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(title).font(.subheadline.weight(.semibold))
+            HStack(alignment: .firstTextBaseline) {
+                Text(Self.title(for: band)).font(.subheadline.weight(.semibold))
                 Spacer()
-                Button { onDismiss() } label: { Image(systemName: "xmark").font(.caption.weight(.bold)) }
-                    .accessibilityLabel("Dismiss")
+                if isDismissible {   // never during a pending fetch (VM sets isDismissible=false)
+                    Button(action: onDismiss) {
+                        Image(systemName: "xmark").font(.footnote.weight(.bold))
+                            .frame(width: 44, height: 44)          // ≥44×44 hit target
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("Dismiss air quality warning")
+                }
             }
-            Text("AQI \(aqi) — \(band.name)").font(.caption).foregroundStyle(.secondary)
+            AQIValueLabel(value: "AQI \(aqi) · \(band.name)", aqi: aqi)   // tuned dot + VoiceOver-combined
+                .font(.caption)
             Text(PoorAirWarningViewModel.guidance(for: band)).font(.caption)
             if let personalizedSymptom {
                 Text("Poor-air days have been linked to your \(personalizedSymptom).")
@@ -957,9 +1094,25 @@ struct PoorAirWarningBanner: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(tint.opacity(band >= .veryUnhealthy ? 0.20 : 0.12),
+        .background(accent.opacity(band >= .veryUnhealthy ? 0.18 : 0.12),
                     in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(tint.opacity(0.35), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(accent.opacity(0.4), lineWidth: 1))
+    }
+}
+```
+
+Create `Food IntolerancesTests/PoorAirWarningBannerTests.swift` — pins the forecast title copy (a full SwiftUI render/accessibility test needs ViewInspector, which the project doesn't use; the value line's accessibility is already covered by `AQIValueLabel`'s `.accessibilityElement(children: .combine)`, and end-to-end render is device-gated):
+```swift
+import Testing
+import HealthGraphCore
+@testable import Food_Intolerances
+
+@Suite struct PoorAirWarningBannerTests {
+    @Test func titleIsForecastOrientedAndHazardousVariant() {
+        #expect(PoorAirWarningBanner.title(for: .unhealthySensitive) == "Air quality is forecast to be unhealthy")
+        #expect(PoorAirWarningBanner.title(for: .unhealthy) == "Air quality is forecast to be unhealthy")
+        #expect(PoorAirWarningBanner.title(for: .veryUnhealthy) == "Air quality is forecast to be unhealthy")
+        #expect(PoorAirWarningBanner.title(for: .hazardous) == "Air quality is forecast to be hazardous")
     }
 }
 ```
@@ -967,9 +1120,10 @@ struct PoorAirWarningBanner: View {
 - [ ] **Step 2: Wire into `HomeView`**
 
 In `Views/HealthOS/Home/HomeView.swift`:
-1. Add the service observation + the VM as `@StateObject`:
+1. Add the service observation, the toggle binding, and the VM:
 ```swift
     @EnvironmentObject private var environmentalService: EnvironmentalDataService
+    @AppStorage("hg.poorAirWarningsEnabled") private var poorAirEnabled = true
     @StateObject private var poorAir = PoorAirWarningViewModel(
         personalizedSymptomSubtype: {
             let rels = (try? await GRDBRelationshipStore(database: HealthGraphProvider.shared)
@@ -977,20 +1131,26 @@ In `Views/HealthOS/Home/HomeView.swift`:
             return PoorAirPersonalization.bestSymptomSubtype(from: rels)
         })
 ```
-2. Render the banner as the FIRST child of the top `VStack` (above `greeting`):
+2. Render the banner as the FIRST child of the top `VStack` (above `greeting`), passing `isDismissible`:
 ```swift
                 if case .show(let aqi, let band, let symptom) = poorAir.warning {
                     PoorAirWarningBanner(aqi: aqi, band: band, personalizedSymptom: symptom,
+                                         isDismissible: poorAir.isDismissible,
                                          onDismiss: { poorAir.dismissCurrent() })
                 }
 ```
-3. Re-evaluate when the forecast state settles, and on appear/foreground (add alongside the existing `.task`/`.onChange`):
+3. Wire the three lifecycle triggers (add alongside the existing `.task`/`.onChange`). The scenePhase handler drives the FOREGROUND/day-rollover re-eval; the forecast-state handler drives the SETTLE path; the toggle handler clears synchronously:
 ```swift
         .task { await poorAir.evaluate(state: environmentalService.forecastAQIState) }
         .onChange(of: environmentalService.forecastAQIState) { _, state in
-            Task { await poorAir.evaluate(state: state) }
+            Task { await poorAir.evaluate(state: state) }        // settle-driven (incl. pending → non-dismissible hold)
         }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await poorAir.reevaluateForForeground() } }  // day-rollover even if the fetch is cooled-down
+        }
+        .onChange(of: poorAirEnabled) { _, _ in poorAir.onEnabledChanged() }  // toggle-off clears the mounted banner NOW
 ```
+(`HomeView` already has `@Environment(\.scenePhase)`; reuse it. If it already has a `scenePhase` `.onChange` for `viewModel.refresh()`, add the `poorAir.reevaluateForForeground()` call inside that same handler rather than a second one.)
 
 - [ ] **Step 3: Inject the service into the root previews**
 
@@ -1001,39 +1161,42 @@ In `Views/HealthOS/Shell/HealthOSRootView.swift`, both `#Preview` blocks now ren
 ```
 (If `HomeView` has its own `#Preview`, inject it there too.)
 
-- [ ] **Step 4: Add the settings toggle (in an UNGATED section)**
+- [ ] **Step 4: Add the settings toggle on the ALWAYS-visible Health surface**
 
-The poor-air banner is an **in-app, notification-independent, default-ON** feature. It must NOT live in the "AI Health Assistant Alerts" `Section` — that whole section is inside `NotificationSettingsView.swift`'s `if notificationsEnabled { … }` block (opens at `:51`, `notificationsEnabled` is `settings.authorizationStatus == .authorized` at `:188`). A user who denies notifications would see the always-on banner with no way to turn it off.
+The banner is an **in-app, notification-independent, default-ON** feature, so its toggle must NOT go in `NotificationSettingsView` — its "AI Health Assistant Alerts" `Section` is inside `if notificationsEnabled { … }` (`:51`; `notificationsEnabled == settings.authorizationStatus == .authorized`, `:188`), so a user who denies notifications could never reach it while the banner still shows.
 
-Add `@AppStorage("hg.poorAirWarningsEnabled") private var poorAirWarningsEnabled = true` to the view, and a NEW `Section` placed **OUTSIDE** the `if notificationsEnabled` block (e.g. right after the "Notification Permissions" section, so it renders regardless of notification authorization):
+Put it on `Views/HealthOS/Health/HealthTabView.swift`, which is always visible and already hosts the `hg.*` `@AppStorage` settings (`hg.temperatureUnit`, `hg.measurementSystem`, the Temperature/Units pickers ~`:134-156`). Add:
 ```swift
-                Section(header: Text("In-App Alerts"),
-                        footer: Text("Shows a banner on Home when the air quality forecast is unhealthy. Works without notification permission.")) {
-                    Toggle("Poor air quality warnings", isOn: $poorAirWarningsEnabled)
-                }
+    @AppStorage("hg.poorAirWarningsEnabled") private var poorAirWarningsEnabled = true
 ```
-This is a distinct **in-app-display** preference (a different key), NOT the legacy notification-oriented `enableEnvironmentalAlerts` — leave that toggle and its `proactiveAlertService` binding untouched. `@AppStorage` writes to `.standard`, which is exactly what `PoorAirWarningViewModel` reads. Verify the toggle is visible even with notifications denied.
+and a `Toggle` in that settings area (next to the Temperature/Units controls):
+```swift
+                    Toggle("Poor air quality warnings", isOn: $poorAirWarningsEnabled)
+```
+`@AppStorage` writes to `.standard` — the same store `PoorAirWarningViewModel` reads and `HomeView` observes (Step 2's `.onChange(of: poorAirEnabled)`), so flipping it off clears the mounted banner immediately. Leave the legacy notification `enableEnvironmentalAlerts` untouched. Verify the toggle is reachable with notifications denied.
 
 - [ ] **Step 5: Build + verify the whole feature suite**
 
 Run: `xcodebuild build -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`
 Expected: BUILD SUCCEEDED.
 
-Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/PoorAirWarningViewModelTests" -only-testing:"Food IntolerancesTests/PoorAirDismissalStoreTests" -only-testing:"Food IntolerancesTests/ForecastAQIFreshnessTests" -parallel-testing-enabled NO`
+Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/PoorAirWarningViewModelTests" -only-testing:"Food IntolerancesTests/PoorAirDismissalStoreTests" -only-testing:"Food IntolerancesTests/ForecastAQIFreshnessTests" -only-testing:"Food IntolerancesTests/PoorAirWarningBannerTests" -parallel-testing-enabled NO`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add "Views/HealthOS/Home/PoorAirWarningBanner.swift" "Views/HealthOS/Home/HomeView.swift" \
-        "Views/HealthOS/Shell/HealthOSRootView.swift" "NotificationSettingsView.swift"
-git commit -m "feat(home): poor-air warning banner + Home wiring + settings toggle"
+        "Views/HealthOS/Timeline/AQIValueLabel.swift" \
+        "Views/HealthOS/Shell/HealthOSRootView.swift" "Views/HealthOS/Health/HealthTabView.swift" \
+        "Food IntolerancesTests/PoorAirWarningBannerTests.swift"
+git commit -m "feat(home): poor-air warning banner + Home lifecycle wiring + Health-tab toggle"
 ```
 
 ---
 
 ## Final Verification
 
-- [ ] **Package suite:** `swift test --package-path HealthGraphCore` → green (Tasks 1–3).
-- [ ] **App feature suites:** the five new suites (`AQICategoryOrderingTests` is package; `ForecastAQIFreshnessTests`, `PoorAirDismissalStoreTests`, `PoorAirWarningViewModelTests`) + the existing env suites → green; only the known `SwiftDataMigratorTests` teardown crash otherwise.
-- [ ] **Device gate (manual):** on a forecast-unhealthy day (or with a stubbed poor forecast), foreground the app → Home shows the tier-appropriate banner (no Dismiss elsewhere affected); dismiss → gone for the day; a higher forecast band re-shows; toggle off in settings → never shows; denied location / keyless build → never shows (fail-safe).
+- [ ] **Package suite:** `swift test --package-path HealthGraphCore` → green (Tasks 1–3: `AQICategoryOrderingTests`, `PoorAirWarningDecisionTests`, `PoorAirPersonalizationTests` + no regressions).
+- [ ] **FULL app suite:** `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -parallel-testing-enabled NO` → the new app suites (`ForecastAQIFreshnessTests`, `PoorAirDismissalStoreTests`, `PoorAirWarningViewModelTests`, `PoorAirWarningBannerTests`) and the existing env suites (`EnvironmentFailureClassificationTests`, `AirQualityHistoryTests`, `EnvironmentalDataServiceDITests`, `InsightsViewModelTests`, …) pass; the ONLY failing entry is the known-unrelated `SwiftDataMigratorTests.migratesObjectsFromAvoidedCabinetAndProtocols()` teardown crash.
+- [ ] **Device gate (manual):** on a forecast-unhealthy day (or a stubbed poor forecast), foreground → Home shows the tier-appropriate banner with the tuned AQI color; **dismiss (≥44×44 target) → gone for the local day**; a higher forecast band re-shows; **cross-midnight foreground with the fetch cooled-down → yesterday's dismissal cleared, warning reappears**; while a refresh is pending the banner holds but shows **no Dismiss button**; toggle off on the Health tab → banner clears immediately and never shows; denied location / keyless build → never shows (fail-safe); VoiceOver reads the AQI value line once (via `AQIValueLabel`).
