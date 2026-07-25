@@ -518,6 +518,43 @@ import CoreLocation
         await fetch
         if case .value = s.forecastAQIState {} else { Issue.record("should settle to .value after resume") }
     }
+
+    @Test func acceptedFullRefreshPublishesPendingBeforeFirstEndpoint() async {
+        // Step 4b: an ACCEPTED requestRefreshWithCooldown() marks AQI .pending at PASS START,
+        // before pressure/forecast/AQI. fetchAllData() is SEQUENTIAL with fetchAirQuality LAST,
+        // so blocking the FIRST endpoint (pressure) proves .pending is set before AQI even runs
+        // — the tests that call fetchAirQuality() directly would NOT catch a missing pass-start
+        // assignment.
+        actor FirstLatch {   // blocks ONLY the first call; entry handshake; open-before-wait safe
+            private var releaseCont, enteredCont: CheckedContinuation<Void, Never>?
+            private var entered = false, released = false, calls = 0
+            func enterOnFirstCall() async {
+                calls += 1; guard calls == 1 else { return }
+                entered = true; enteredCont?.resume(); enteredCont = nil
+                if !released { await withCheckedContinuation { releaseCont = $0 } }
+            }
+            func waitUntilEntered() async { if entered { return }; await withCheckedContinuation { enteredCont = $0 } }
+            func open() { released = true; releaseCont?.resume(); releaseCont = nil }
+        }
+        struct FirstCallGatedTransport: HTTPTransport {
+            let latch: FirstLatch; let payload: Data
+            func data(from url: URL) async throws -> (Data, URLResponse) {
+                await latch.enterOnFirstCall()                // block only the first endpoint (pressure)
+                return (payload, HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            }
+        }
+        setenv("OPENWEATHER_API_KEY", "freshness-test-key", 1)
+        let latch = FirstLatch()
+        let s = EnvironmentalDataService(transport: FirstCallGatedTransport(latch: latch, payload: poorAirJSON()),
+                                         now: { self.at }, location: StubLocation())
+        s.forecastAQIState = .value(150)                      // seed a STALE value
+        async let refresh: Bool = s.requestRefreshWithCooldown(bypassCooldown: true)  // ACCEPTED refresh
+        await latch.waitUntilEntered()                        // first endpoint (pressure) blocked; AQI has NOT run
+        #expect(s.forecastAQIState == .pending)               // published at PASS START, before any endpoint settled
+        await latch.open()
+        _ = await refresh
+        if case .value = s.forecastAQIState {} else { Issue.record("AQI should settle to .value after the pass") }
+    }
 }
 
 // Small test helper — add to the test file.
@@ -577,7 +614,7 @@ In `requestRefreshWithCooldown`, immediately after the cooldown check passes (af
 ```swift
         await MainActor.run { self.forecastAQIState = .pending }
 ```
-Do NOT set it on the cooldown-SKIP early-return (`:367-368` returns `false`): a skipped refresh leaves the last settled `forecastAQIState` intact, so Home's foreground handler (which awaits this pass's handle) re-decides the unchanged settled value against the new local day. `fetchAllData()` calls `fetchAirQuality()`, which settles the state — **verify** `fetchAllData` invokes `fetchAirQuality()` unconditionally (so the pass-start `.pending` is always resolved); if it can skip AQI, restore the prior state on that branch. The direct-fetch `.pending` (Step 4) stays for isolated `fetchAirQuality()` calls and tests.
+Do NOT set it on the cooldown-SKIP early-return (`:367-368` returns `false`): a skipped refresh leaves the last settled `forecastAQIState` intact, so Home's foreground handler (which awaits this pass's handle) re-decides the unchanged settled value against the new local day. `fetchAllData()` is sequential (`fetchMoonPhase → fetchAtmosphericPressure → fetchDailyForecast → fetchAirQuality`, `:177-199`), so `fetchAirQuality()` runs LAST and always settles the pass-start `.pending` — **verify** it is invoked unconditionally; if it can be skipped, restore the prior state on that branch. The direct-fetch `.pending` (Step 4) stays for isolated `fetchAirQuality()` calls and tests. This step is pinned by `acceptedFullRefreshPublishesPendingBeforeFirstEndpoint` (Step 1's suite): it blocks the first endpoint and asserts `.pending` is already published while AQI has not yet run — a test the direct-`fetchAirQuality()` tests cannot substitute for.
 
 - [ ] **Step 5: Run the tests + the existing env suites**
 
