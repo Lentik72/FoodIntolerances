@@ -1,6 +1,6 @@
 # First run, Apple Health connect, and evidence-input correctness — design
 
-**Status:** approved for implementation planning
+**Status:** in review — six reconciliation items applied 2026-07-26, awaiting sign-off
 **Date:** 2026-07-26
 **Queue position:** first round after the "harden before expanding" round closed (PR #8, merge `8b1ab8d`).
 **Supersedes:** `2026-07-04-ui-design.md` §5 promise copy (see §13).
@@ -166,16 +166,40 @@ associations (`2026-07-03-health-graph-design.md` §2.4, §17 "navigator, not ad
 Framed as import, not permission. Lists what will be imported: sleep, workouts, heart
 rate, HRV, cycle, weight. `[Connect Apple Health]` `[Not now]`.
 
+Branching is exhaustive:
+
+| Outcome | Next |
+|---|---|
+| `Not now` | **Skips Backfill entirely**, straight to symptom selection (§3.4). |
+| `requestAuthorization()` throws | Stays on Connect. `[Retry]` `[Not now]`. |
+| Authorization returns | Advances to Backfill (§3.3) — including when reads were silently denied, since that is indistinguishable from "no data". |
+
 #### 3.3 Backfill
 
 Live: `currentStep` and `eventsIngested` from `BackfillProgress`.
 
-Completion summary is **derived from the graph just filled** — `countsByCategory()` plus
-the earliest imported event date per family. `BackfillProgress` carries no per-type counts
-(`HealthKitIngestor.swift:5-10`), and the UI spec's "✓ 14 months of sleep ✓ 212 workouts"
-would require ingestion plumbing to invent. The "sleep back to …" date comes from the
-**earliest imported sleep event**, never inferred from the requested one-year window —
-export.zip can reach further back and a HealthKit grant can yield less.
+**The completion summary must be source-scoped, and it must distinguish two different
+things.** `countsByCategory()` (`EventStore.swift:109`) describes the *entire* graph — on a
+DEBUG first-run reset that includes 136k pre-existing events, manual captures, prior
+export.zip imports and any synthetic demo rows. Reporting it as what onboarding just
+achieved would be false, and "the graph we just filled" is wrong wording on any re-import.
+
+Two separate figures:
+
+| Figure | Source |
+|---|---|
+| **This attempt** | `inserted` / `updated` from the returned `IngestSummary` (`IngestPipeline.swift:5-16`). |
+| **Apple Health history now available** | Counts per category and earliest event date, **filtered to `source == .healthKit`** (`EventSource` case name confirmed, `Enums.swift:11-14`). |
+
+`EventStore` has no source-filtered or earliest-date query today — `countsByCategory()` and
+`countsBySource()` are both whole-graph and cannot be combined. This round adds a scoped
+summary API returning per-category count plus earliest timestamp for a given source.
+
+`BackfillProgress` carries no per-type counts (`HealthKitIngestor.swift:5-10`), so the UI
+spec's "✓ 14 months of sleep ✓ 212 workouts" would require ingestion plumbing to invent.
+The "sleep back to …" date comes from the **earliest HealthKit-sourced sleep event**, never
+inferred from the requested one-year window — export.zip can reach further back and a
+partial grant can yield less.
 
 Three distinct outcomes, all non-blocking, each offering `[Retry]` `[Continue]`:
 
@@ -232,8 +256,11 @@ red-flag key):
 1. Must resolve to a current `SymptomCatalog` entry; unknown keys are dropped.
 2. Excludes `Set(RedFlagCatalog.allSymptomKeys)`.
 3. Deduplicated, preserving selection order.
-4. Capped at 8. Reconcile against the existing `limit:` passed at the `ChipRanker` call
-   sites at plan time — seeds must never be able to fill every chip slot on their own.
+4. Capped at 8, matching the `limit: 8` used at all three `ChipRanker` call sites
+   (`SymptomCaptureView.swift:29-30`, `MealCaptureView.swift:16`, `DoseCaptureView.swift:22`).
+   Eight selected seeds may fill all eight chip slots — that is the correct outcome for a
+   user who has just told us exactly what they care about, and the catalog search field
+   remains available for anything else.
 
 `ChipRanker.rank` gains `seeds: [String] = []` — defaulted so no existing call site churns.
 Seeds fill **only the slots left over** after history-ranked items, deduped against them,
@@ -251,11 +278,28 @@ A `NavigationLink` destination in the Health tab, and a sheet from the Timeline 
 state, so the "connect Apple Health" instruction finally points at something real without
 cross-tab routing machinery.
 
+**A persisted `HealthImportStatus` is required.** `lastBackfillFailures` and `progress` are
+in-memory `@Published` properties on `HealthKitIngestor` (`:16-18`), so after a relaunch
+Data sources could not truthfully say "Last imported …" or "Imported with issues" — it
+would show a blank slate on a device that has imported successfully many times. Persist at
+minimum:
+
+- last attempt date
+- last completed date, if any
+- outcome: *no data* / *imported* / *imported with issues*
+- imported event and category summary (source-scoped per §3.3)
+- sanitized failure identifiers (type identifiers only, no sample payloads)
+
+**The Timeline empty state reads this same state** (§6), rather than independently
+inferring anything from `hg.hk.backfillCompleted` — one source of truth, so the two
+surfaces can never disagree.
+
 Contents:
 
 - **Apple Health** — state vocabulary is *Not imported* / *Import attempted* /
-  *Last imported …* / *Imported with issues*. No Connected/Denied (Decision 4).
-- Import / re-import action, last summary, and `lastBackfillFailures` detail.
+  *Last imported …* / *Imported with issues*, derived from `HealthImportStatus`. No
+  Connected/Denied (Decision 4).
+- Import / re-import action, last summary, and failure detail.
 - **export.zip / export.xml import**, keeping the existing long-running warning.
 - **Location & environment** status via the existing `EnvironmentStatusStore`.
 - `#if DEBUG`: the two reset actions (§2) and the relationship dump (§10).
@@ -272,15 +316,18 @@ this; the new surface must too.
 |---|---|
 | `HomeView.swift:146-156` (`whatsNext`) | Deleted. Home already carries the backfill card, mood check-in, poor-air banner and passive strip. |
 | `InsightsPlaceholderView.swift:18,36` | File and per-family coverage strip kept — both are honest and useful. Only the two claims that the engine hasn't arrived are replaced, with a description of what the engine needs to activate a pattern. |
-| `TimelineView.swift:213-215` | Two branches: not imported → "Connect Apple Health", opening the `DataSourcesView` sheet; imported but empty → "Nothing logged yet. Tap + to log your first thing." |
+| `TimelineView.swift:213-215` | Two branches, both driven by the persisted `HealthImportStatus` (§5), never by `hg.hk.backfillCompleted`: not imported → "Connect Apple Health", opening the `DataSourcesView` sheet; imported but empty → "Nothing logged yet. Tap + to log your first thing." |
 
 ### 7. Engine fix 1 — stress uses a positive semantic subtype
 
 Introduce canonical subtype **`stressRating`**, unit `score`:
 
 - `SyntheticDataGenerator` and tests emit `subtype: "stressRating"`, unit `score`.
-- `HighStressExposureSource` requires that subtype **and** `value` within `1...10`, then
-  applies `highStressThreshold`.
+- `HighStressExposureSource` requires **all three**: `subtype == "stressRating"`,
+  `unit == "score"`, and `value` within `1...10`. Only then does `highStressThreshold`
+  apply. The unit check is not redundant — it is what makes a future source that reuses the
+  subtype with different units fail closed rather than silently mis-scale, which is exactly
+  how mindfulness minutes got mined as stress.
 
 Absence (`subtype == nil`) is not a durable allowlist — the next unit-mismatched ingestion
 source would walk straight through it, exactly as mindfulness does today.
@@ -310,14 +357,28 @@ currently discarded at the adapter boundary.
 | `false` | **Definitely not** a fallback candidate. A live `false` must never be inferred as a start merely because it begins the loaded slice. |
 | `nil` | Eligible for run inference (legacy and export records only). |
 
-Authoritative starts are unioned with explicit manual `periodStart` events and deduped by
-day. Run inference is the fallback only, configured by two `EvidenceConfig` knobs:
+Two `EvidenceConfig` knobs govern inference:
 
 - `maxFlowGapDays = 2` — a gap this small keeps the same period, so one missing middle day
-  doesn't split it.
-- `minInferredStartGapDays = 10` — named for what it actually does: **suppress a second
-  *inferred* start within that many days of a previous inferred one.** It does not suppress
-  mid-cycle spotting two weeks later; only authoritative metadata does that.
+  doesn't split a run.
+- `minInferredStartGapDays = 10` — the suppression window for *inferred* candidates only.
+  It does not suppress mid-cycle spotting two weeks later; only authoritative metadata does
+  that.
+
+**Resolution algorithm, ordered — inference must yield to authority in both directions**,
+because live and legacy/export records coexist in one corpus:
+
+1. Collect **authoritative** starts: manual `periodStart` events, plus flow events with
+   `menstrualCycleStart == true`.
+2. Build **inferred** candidates by run detection over flow events with
+   `menstrualCycleStart == nil` only. Events with `false` never participate — a live
+   `false` must not become a start merely because it begins the loaded slice.
+3. Drop any inferred candidate within `minInferredStartGapDays` of **any authoritative
+   start, before or after**.
+4. Apply the same gap among the surviving inferred candidates.
+5. Union authoritative and surviving inferred starts; dedupe by day.
+
+Authoritative starts are never suppressed by steps 3 or 4.
 
 The global `guard starts.count >= 2` is **removed**. One start yields its menstrual-day
 exposure; two are required only to derive a luteal window.
@@ -378,9 +439,13 @@ the edge and recomputes confounders from the corpus (`EvidenceEngine.swift:182-2
 The reserved illness key is printed as **`illness`**, not its sentinel UUID
 (`EvidenceEngine.swift:25-26`).
 
-**Labelled as a deliberate diagnostic, never a hot path:** `evidence(for:)` performs a full
-unfiltered corpus load per call, so dumping every relationship is N full scans of a
-136k-event graph. This is the known Phase 2B N+1, out of scope for this round (§12).
+**N full corpus scans are not acceptable, even for a diagnostic.** `evidence(for:)` loads
+the whole event table and re-extracts on every call, so dumping every relationship on a
+136k-event graph would scan it once per edge. This round adds a **batch evidence-report
+API** that loads and extracts the corpus **once**, then evaluates every requested
+relationship against that shared context. It stays DEBUG-facing and does **not** rewire the
+general Insights N+1 (§12) — but the reusable batch shape is what that later fix will build
+on.
 
 ## Data flow
 
@@ -409,11 +474,19 @@ launch
 - Seed validation and ranking: history-first ordering; remaining-slot fill; duplicate
   seeds; red-flag rejection; unknown/stale keys ignored; overall limit respected.
 - `anyEventExists(includingDeleted:)`: true for a soft-deleted-only graph; false for empty.
-- Stress source: accepts `stressRating` within `1...10`; rejects mindfulness minutes;
-  rejects out-of-range values; rejects subtype-nil.
+- Source-scoped summary: counts and earliest dates filtered to `.healthKit` exclude manual,
+  export-file and synthetic rows present in the same graph.
+- Batch evidence report: loads the corpus once for N relationships; results match
+  per-relationship `evidence(for:)` output exactly; includes decayed relationships.
+- Stress source: accepts `stressRating` + `score` within `1...10`; rejects mindfulness
+  minutes; rejects right subtype with wrong unit; rejects out-of-range values; rejects
+  subtype-nil.
 - Cycle: authoritative `true` wins; `false` is never inferred as a start even when first in
-  the slice; `nil` runs fall back to inference; union with manual `periodStart` dedupes by
-  day; a single start yields menstrual days and no luteal window.
+  the slice; `nil` runs fall back to inference; an inferred candidate within
+  `minInferredStartGapDays` of an authoritative start is dropped **on both sides**;
+  surviving inferred candidates are then gapped against each other; authoritative starts
+  are never suppressed; union with manual `periodStart` dedupes by day; a single start
+  yields menstrual days and no luteal window.
 - Illness: normalization coverage over **all eight** HK identifiers; fever alone qualifies;
   two composite markers qualify; one composite marker does not; `runnyNose` alone does not;
   explicit `.illness` events still qualify.
@@ -425,9 +498,13 @@ launch
 - First-run routing through the prior-version → screens map.
 - Reconciliation invariants: runs only at version 0; never advances a nonzero version;
   never re-onboards a populated graph; no flash; fail-closed on query error.
+- Connect branching: `Not now` skips Backfill and lands on symptom selection; an
+  `requestAuthorization()` throw stays on Connect with Retry; success advances.
 - Backfill outcome branching across the three states.
+- `HealthImportStatus` survives relaunch and drives both the Data sources vocabulary and
+  the Timeline empty state from the same value.
 - `DataSourcesView` import calls `startObserving()` after backfill.
-- Timeline empty-state branching.
+- Timeline empty-state branching reads `HealthImportStatus`, not `hg.hk.backfillCompleted`.
 
 Suites run per the standing constraints: `swift test --package-path HealthGraphCore`;
 app tests on iPhone 17 Pro with `-parallel-testing-enabled NO`; the known
@@ -435,10 +512,20 @@ app tests on iPhone 17 Pro with `-parallel-testing-enabled NO`; the known
 
 ## Device gate
 
-1. **Capture the baseline on `main`, before installing the branch.** Opening Insights on
-   the new build may recompute before a "before" snapshot can be taken.
-2. Install the branch; recompute; capture the same dump.
-3. Diff as text, not screenshots.
+The obvious procedure — "capture the same dump on `main`" — is **impossible**: `main` does
+not contain the dump action. The baseline needs a build that has the diagnostic but not the
+fixes, which constrains task order:
+
+1. **Build the diagnostic first, as an isolated task** (§10), containing the batch report
+   API and the DEBUG action and *nothing else*.
+2. **Install that commit and capture the baseline report** — before any of §7–§9 lands.
+3. Build final branch HEAD, recompute, capture the post-change report.
+4. Diff as text, not screenshots.
+
+This ordering is a hard requirement on the plan, not a suggestion. If it is dropped, the
+fallback is a strictly weaker gate: a pre-change screenshot plus list of visible Insights
+cards, compared against a detailed post-change report — good enough to notice a change,
+not good enough to attribute one.
 
 A disappearing card is accepted **only** when the post-change report identifies cycle phase
 or illness as the relevant new confounder for that edge. A disappearance with no such
@@ -459,8 +546,11 @@ shows Open Settings and never blocks completion.
 
 ## Out of scope
 
-Named here so they don't drift in: Insights N+1 batching (deferred by decision unless
-profiling shows it blocks backfill); legacy SwiftData migration in Release; the clinic-QR
+Named here so they don't drift in: **rewiring `InsightsViewModel.load()`** onto the new
+batch evidence API — the batch API itself ships (§10) because the diagnostic needs it, but
+the live Insights path keeps its current per-card `evidence(for:)` calls this round,
+deferred by decision unless profiling shows it blocks backfill; legacy SwiftData migration
+in Release; the clinic-QR
 branch; UI spec §5's meds/supplement quick-add screen; mindfulness as a protective
 exposure; illness forward-extension; voice, photo, App Intents, body map; backup, export,
 paywall, rebrand; missions and Health Confidence.
@@ -483,5 +573,6 @@ paywall, rebrand; missions and Health Confidence.
   dormant by design.
 - Mindfulness as a protective exposure family ("meditated ≥10 min → fewer headaches").
 - Illness forward-extension across multi-day episodes.
-- Insights N+1 batching (`InsightsViewModel.load()` → `evidence(for:)` per card).
+- Insights N+1 fix: move `InsightsViewModel.load()` onto the batch evidence API this round
+  introduces, replacing its per-card `evidence(for:)` calls.
 - Cycle-start metadata on the export.zip parser path.
