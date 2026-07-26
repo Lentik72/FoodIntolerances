@@ -1,6 +1,6 @@
 # First run, Apple Health connect, and evidence-input correctness — design
 
-**Status:** in review — six reconciliation items applied 2026-07-26, awaiting sign-off
+**Status:** approved for implementation planning (signed off 2026-07-26 at `8bd1965`)
 **Date:** 2026-07-26
 **Queue position:** first round after the "harden before expanding" round closed (PR #8, merge `8b1ab8d`).
 **Supersedes:** `2026-07-04-ui-design.md` §5 promise copy (see §13).
@@ -610,7 +610,8 @@ writes startedVersion = currentVersion  ← BEFORE any side effect
   a prior successful summary survives an interrupted re-import.
 - Connect branching: `Not now` skips Backfill and lands on symptom selection; an
   `requestAuthorization()` throw stays on Connect with Retry; success advances.
-- Backfill outcome branching across the three states.
+- Backfill outcome branching across **all terminal and recovery states** — `completed`,
+  `completedNoData`, `completedWithIssues`, `attemptFailed`, and `interrupted`.
 - `HealthImportStatus` survives relaunch and drives both the Data sources vocabulary and
   the Timeline empty state from the same value.
 - `DataSourcesView` import calls `startObserving()` after backfill.
