@@ -327,7 +327,7 @@ extension EvidenceEngine {
 - [ ] **Step 6: Run tests to verify they pass**
 
 Run: `swift test --package-path HealthGraphCore --filter EvidenceBatchReportTests`
-Expected: PASS, 4 tests.
+Expected: PASS, 6 tests.
 
 Then the full package suite, because `evidence(for:)` was restructured:
 Run: `swift test --package-path HealthGraphCore 2>&1 | tail -5`
@@ -2036,6 +2036,16 @@ import HealthGraphCore
         #expect(s.current.outcome == .attemptFailed)
     }
 
+    @Test func aCompletedZeroEventRunWritesZeroRatherThanCarryingTheOldTotal() {
+        let (s, _) = store()
+        s.beginAttempt()
+        s.finish(summary: IngestSummary(inserted: 100), failures: [])
+        s.beginAttempt()
+        s.finish(summary: IngestSummary(), failures: ["HKQuantityTypeIdentifierHeartRate: denied"])
+        #expect(s.current.outcome == .completedWithIssues)
+        #expect(s.current.eventsImported == 0)   // NOT 100 — the copy branches on this
+    }
+
     @Test func aPriorSuccessfulSummarySurvivesAnInterruptedReimport() {
         let (s, d) = store()
         s.beginAttempt()
@@ -2152,7 +2162,14 @@ final class HealthImportStatusStore: ObservableObject {
         // reports `updated`, so an inserted-only count says "0 events" on a run
         // that in fact fixed thousands of rows.
         let imported = summary.inserted + summary.updated
-        next.eventsImported = imported > 0 ? imported : next.eventsImported
+        // ALWAYS write the real count, including zero. Carrying a previous
+        // nonzero total forward would let a genuinely empty run be presented as
+        // though it imported events — and `backfillMessage` branches on
+        // `eventsImported > 0`, so a zero-event run WITH failures would read
+        // "your history was imported, but…" instead of "couldn't be fully
+        // imported". A killed import keeps its old summary for free, because
+        // `finish()` is not called on that path at all.
+        next.eventsImported = imported
         next.lastCompletedAt = Date()
         next.failureIdentifiers = failures.map { String($0.prefix(while: { $0 != ":" })) }
         if !failures.isEmpty { next.outcome = .completedWithIssues }
@@ -2177,7 +2194,7 @@ final class HealthImportStatusStore: ObservableObject {
 - [ ] **Step 4: Run tests and commit**
 
 Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/HealthImportStatusTests" -parallel-testing-enabled NO 2>&1 | grep -E "✔|✘|Test run"`
-Expected: 9 tests pass.
+Expected: 10 tests pass.
 
 ```bash
 git add Models/HealthImportStatus.swift "Food IntolerancesTests/HealthImportStatusTests.swift"
@@ -2191,6 +2208,7 @@ git commit -m "feat(first-run): persisted Apple Health import status with interr
 **Files:**
 - Modify: `FoodIntolerancesApp.swift:1-2` (add import), `:32` (remove notification prompt), `:105-158` (root switch)
 - Modify: `Models/EnvironmentalDataService.swift:1064-1072` (stop `LocationService.init()` prompting)
+- Create: `Models/LocationPermissionStore.swift`
 - Create: `Views/HealthOS/FirstRun/FirstRunFlowView.swift` + five screen stubs (filled in Tasks 12–15)
 
 **Interfaces:**
@@ -2228,20 +2246,25 @@ status would already be `.authorized` or `.denied`.
 (`EnvironmentalDataService.swift:1064`, `LogItemViewModel.swift:1345`) and **no writer
 anywhere in the repo**.
 
-Delete the `requestWhenInUseAuthorization()` call from that `.notDetermined` branch,
-leaving the `.denied`/`.restricted` logging intact, and expose it explicitly instead:
+Delete **only** the `locationManager.requestWhenInUseAuthorization()` line from that
+`.notDetermined` branch, leaving the branch, its `hasLoggedPermissionRequest` bookkeeping,
+and the `.authorizedWhenInUse`/`default` branches exactly as they are:
 
 ```swift
-    /// Asks for location only when a screen has explained why. Previously this
-    /// fired from init(), so the system dialog landed on whatever was on screen
-    /// at cold launch with no context.
-    func requestAuthorization() {
-        guard locationManager.authorizationStatus == .notDetermined else { return }
-        locationManager.requestWhenInUseAuthorization()
-    }
+                case .notDetermined:
+                    if !hasLoggedPermissionRequest {
+                        hasLoggedPermissionRequest = true
+                    }
+                    // Asking moved to FirstRunLocationView via
+                    // LocationPermissionStore (Step 3). From here, the system
+                    // dialog landed on whatever happened to be on screen at
+                    // cold launch, with no explanation.
 ```
 
-Task 15's button is the only caller.
+Do **not** add a `requestAuthorization()` method to `LocationService`. It is a private
+`CLLocationManagerDelegate` owned by `EnvironmentalDataService`
+(`EnvironmentalDataService.swift:93,159`) — not `ObservableObject`, never injected, and
+unreachable from a first-run view. Step 3 introduces the single observable owner instead.
 
 - [ ] **Step 3: Add the state objects**
 
@@ -2251,13 +2274,54 @@ Task 15's button is the only caller.
 import HealthGraphCore
 ```
 
+Create `Models/LocationPermissionStore.swift` — the single observable owner of location
+authorization. `FirstRunLocationView` must not own a bare `CLLocationManager`: reading
+`authorizationStatus` straight after `requestWhenInUseAuthorization()` still returns
+`.notDetermined` (the dialog is asynchronous), so the screen would sit stale after the user
+answers.
+
+```swift
+import Foundation
+import CoreLocation
+
+/// The ONLY thing that asks for location authorization, and the only observable
+/// source of its current value. Status arrives via the delegate callback, not
+/// by re-reading the manager after `request()` — that read races the dialog and
+/// almost always still says `.notDetermined`.
+@MainActor
+final class LocationPermissionStore: NSObject, ObservableObject, CLLocationManagerDelegate {
+    @Published private(set) var status: CLAuthorizationStatus
+    private let manager = CLLocationManager()
+
+    override init() {
+        status = manager.authorizationStatus
+        super.init()
+        manager.delegate = self
+    }
+
+    func request() {
+        guard status == .notDetermined else { return }
+        manager.requestWhenInUseAuthorization()
+    }
+
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        let latest = manager.authorizationStatus
+        Task { @MainActor in self.status = latest }
+    }
+}
+```
+
 Then, alongside the existing `@StateObject` declarations:
 
 ```swift
     @StateObject private var firstRunState = FirstRunState(
         store: GRDBEventStore(database: HealthGraphProvider.shared))
-    @StateObject private var importStatus = HealthImportStatusStore()
+    @StateObject private var importStatus: HealthImportStatusStore
+    @StateObject private var locationPermission = LocationPermissionStore()
 ```
+
+`importStatus` has **no default** on purpose. Normalization must be applied to the *live*
+instance, so it is constructed and normalized inside `init()` and then assigned — see below.
 
 Both types are `@MainActor`, and these are property-default expressions on the `@main` App struct — that is the same shape the existing `@StateObject`s use, so it resolves on the main actor. If the compiler complains about isolation here, move construction into `init()` rather than dropping `@MainActor` from the types: `FirstRunState` mutates published state that views read directly.
 
@@ -2266,10 +2330,19 @@ Touching `HealthGraphProvider.shared` here opens the SQLite file and runs migrat
 At the end of `init()`, after the existing setup:
 
 ```swift
-        // Before any surface renders: a stranded .inProgress would otherwise
-        // draw a spinner that can never resolve.
-        HealthImportStatusStore().normalizeAtLaunch()
+        // Normalize the LIVE store, then hand that exact instance to the
+        // @StateObject. Constructing a throwaway store, normalizing it, and
+        // letting the @StateObject build its own would write .interrupted to
+        // UserDefaults while the instance the UI actually observes still holds
+        // the stale .inProgress it loaded — so the Backfill screen would render
+        // (or auto-run) instead of showing the recovery branch.
+        let status = HealthImportStatusStore()
+        status.normalizeAtLaunch()
+        _importStatus = StateObject(wrappedValue: status)
 ```
+
+Assigning `_importStatus` directly is the supported way to give a `@StateObject` a
+runtime-constructed value; the wrapped value is created once and survives re-renders.
 
 - [ ] **Step 4: Create the flow shell**
 
@@ -2301,11 +2374,19 @@ struct FirstRunFlowView: View {
         _step = State(initialValue: resumesIntoBackfill ? .backfill : .promise)
     }
 
+    @EnvironmentObject private var firstRunState: FirstRunState
+
     var body: some View {
         ZStack {
             HealthTheme.paper.ignoresSafeArea()
             content
         }
+        // Marked at FLOW ENTRY, before any branch. Doing it inside Connect
+        // instead would leave "Not now" running the rest of the flow — including
+        // the location prompt, a real side effect — with startedVersion still 0,
+        // so a kill there plus a populated graph hits the reconciliation row and
+        // skips onboarding forever. Same defect class as the original blocker.
+        .task { firstRunState.markStarted() }
     }
 
     @ViewBuilder
@@ -2370,6 +2451,7 @@ In `FoodIntolerancesApp.swift`, replace `HealthOSRootView()` at line 109 with a 
             .environmentObject(environmentalService)
             .environmentObject(firstRunState)
             .environmentObject(importStatus)
+            .environmentObject(locationPermission)
             .environment(\.emitCoordinator, emitCoordinator)
             .fullScreenCover(item: $redFlagPresenter.pending) { match in
                 switch match.category {
@@ -2443,7 +2525,8 @@ Run: `xcodebuild build -scheme "Food Intolerances" -destination 'platform=iOS Si
 Expected: `** BUILD SUCCEEDED **`
 
 ```bash
-git add FoodIntolerancesApp.swift Models/EnvironmentalDataService.swift Views/HealthOS/FirstRun/
+git add FoodIntolerancesApp.swift Models/EnvironmentalDataService.swift \
+        Models/LocationPermissionStore.swift Views/HealthOS/FirstRun/
 git commit -m "feat(first-run): structural root switch with launch side effects on the shell branch"
 ```
 
@@ -2508,7 +2591,6 @@ struct FirstRunConnectView: View {
     let onConnected: () -> Void
 
     @EnvironmentObject private var ingestor: HealthKitIngestor
-    @EnvironmentObject private var firstRunState: FirstRunState
     @EnvironmentObject private var importStatus: HealthImportStatusStore
     @State private var authorizationFailed = false
     @State private var isRequesting = false
@@ -2552,9 +2634,8 @@ struct FirstRunConnectView: View {
     private func connect() async {
         isRequesting = true
         defer { isRequesting = false }
-        // startedVersion is written BEFORE any side effect, so a kill from here
-        // on resumes rather than silently skipping the flow.
-        firstRunState.markStarted()
+        // startedVersion is NOT written here — FirstRunFlowView marks the flow
+        // started at entry, so every branch (including "Not now") is covered.
         // MUST NOT clobber a persisted .interrupted: beginAttempt() overwrites
         // the outcome unconditionally, and the Backfill screen's recovery branch
         // reads it AFTER this runs. Without this guard that branch is dead code
@@ -3032,7 +3113,7 @@ Only the symptom site takes seeds — food and dose seeding is out of scope.
 - [ ] **Step 6: Run tests, build, commit**
 
 Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/SeedCatalogTests" -parallel-testing-enabled NO 2>&1 | grep -E "✔|✘|Test run"`
-Expected: 3 tests pass.
+Expected: 4 tests pass.
 
 ```bash
 git add Views/HealthOS/FirstRun/FirstRunSeedingView.swift \
@@ -3069,8 +3150,10 @@ struct FirstRunLocationView: View {
     let seeds: [String]
     let onContinue: () -> Void
 
-    @State private var status: CLAuthorizationStatus = CLLocationManager().authorizationStatus
-    private let manager = CLLocationManager()
+    /// The one observable owner (Task 11 Step 3). A view-local CLLocationManager
+    /// would have no delegate, so the screen could never learn the user's answer.
+    @EnvironmentObject private var permission: LocationPermissionStore
+    private var status: CLAuthorizationStatus { permission.status }
 
     /// "watch", never "find": every weather exposure is `.contested` in
     /// PlausibilityCatalog, so promising discovery would oversell it.
@@ -3096,10 +3179,11 @@ struct FirstRunLocationView: View {
             switch status {
             case .notDetermined:
                 Button("Share location") {
-                    // The ONLY caller of the request, now that Task 11 Step 2
-                    // removed it from LocationService.init().
-                    manager.requestWhenInUseAuthorization()
-                    status = manager.authorizationStatus
+                    // The ONLY request site in the app, now that Task 11 Step 2
+                    // removed it from LocationService.init(). The answer arrives
+                    // via the store's delegate callback — do NOT re-read the
+                    // status here, that races the dialog.
+                    permission.request()
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(HealthTheme.accent)
@@ -3155,6 +3239,8 @@ Create `Views/HealthOS/Health/DataSourcesView.swift`:
 
 ```swift
 import SwiftUI
+import UniformTypeIdentifiers   // UTType.zip / .xml for the fileImporter
+import UIKit                    // UIApplication.isIdleTimerDisabled
 import HealthGraphCore
 
 /// One view, two presentations: a NavigationLink destination in the Health tab
@@ -3165,6 +3251,9 @@ struct DataSourcesView: View {
     @EnvironmentObject private var importStatus: HealthImportStatusStore
     @State private var isImporting = false
     @State private var summaries: [ImportedCategorySummary] = []
+    @State private var showingImporter = false
+    @State private var exportProgress: Int?
+    @State private var errorMessage: String?
 
     var body: some View {
         ScrollView {
@@ -3209,9 +3298,30 @@ struct DataSourcesView: View {
                 }
                 .hgCard()
 
-                Text("Large imports take several minutes. Keep the app open.")
-                    .font(.footnote)
-                    .foregroundStyle(HealthTheme.inkMuted)
+                // export.zip / export.xml — spec §5. The long-running warning is
+                // shown DURING the import, mirroring the debug screen's copy.
+                VStack(alignment: .leading, spacing: 0) {
+                    Button("Import Apple Health export.zip…") { showingImporter = true }
+                        .disabled(isImporting || exportProgress != nil)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .padding(16)
+                        .contentShape(Rectangle())
+                    if let exportProgress {
+                        Divider().padding(.leading, 16)
+                        Text("Importing… \(exportProgress.formatted()) records read. Large exports take many minutes — keep the app open.")
+                            .font(.footnote)
+                            .foregroundStyle(HealthTheme.inkSecondary)
+                            .padding(16)
+                    }
+                    if let errorMessage {
+                        Divider().padding(.leading, 16)
+                        Text(errorMessage)
+                            .font(.footnote)
+                            .foregroundStyle(HealthTheme.inkMuted)
+                            .padding(16)
+                    }
+                }
+                .hgCard()
 
                 // Location & environment (spec §5). Links to the shipped status
                 // screen rather than re-rendering EnvironmentStatusStore here —
@@ -3249,6 +3359,11 @@ struct DataSourcesView: View {
         }
         .background(HealthTheme.paper)
         .task { await loadSummary() }
+        .fileImporter(isPresented: $showingImporter,
+                      allowedContentTypes: [.zip, .xml],
+                      allowsMultipleSelection: false) { result in
+            Task { await importExport(result) }
+        }
     }
 
     private func loadSummary() async {
@@ -3271,6 +3386,43 @@ struct DataSourcesView: View {
             importStatus.recordCategories(summaries.count)
         } catch {
             importStatus.failAttempt()
+        }
+    }
+
+    /// Ported from HealthGraphDebugView.importExport — same security-scoped copy,
+    /// same detached parse, same idle-timer hold. The graph write is identical;
+    /// only the surface is new.
+    private func importExport(_ result: Result<[URL], Error>) async {
+        errorMessage = nil
+        exportProgress = 0
+        UIApplication.shared.isIdleTimerDisabled = true
+        defer {
+            exportProgress = nil
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
+        do {
+            guard let picked = try result.get().first else { return }
+            guard picked.startAccessingSecurityScopedResource() else {
+                errorMessage = "No permission to read the selected file"
+                return
+            }
+            defer { picked.stopAccessingSecurityScopedResource() }
+            let local = FileManager.default.temporaryDirectory
+                .appendingPathComponent(picked.lastPathComponent)
+            try? FileManager.default.removeItem(at: local)
+            try FileManager.default.copyItem(at: picked, to: local)
+            let xmlURL = picked.pathExtension.lowercased() == "zip"
+                ? try ExportArchive.extractExportXML(from: local)
+                : local
+            let db = HealthGraphProvider.shared
+            _ = try await Task.detached(priority: .userInitiated) {
+                try AppleHealthExportParser(database: db).parse(xmlAt: xmlURL) { count in
+                    Task { @MainActor in exportProgress = count }
+                }
+            }.value
+            await loadSummary()
+        } catch {
+            errorMessage = String(describing: error)
         }
     }
 
