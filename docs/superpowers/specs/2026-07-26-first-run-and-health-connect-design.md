@@ -105,21 +105,39 @@ onboarding completes; nothing mounts early. This buys three things:
 
 ### 2. First-run state, reconciliation, and DEBUG resets
 
-Three UserDefaults keys, no new table:
+Four UserDefaults keys, no new table:
 
 | Key | Meaning |
 |---|---|
-| `hg.firstRun.completedVersion` (Int) | 0 = never run. Versioned so a later round can add a step. |
+| `hg.firstRun.startedVersion` (Int) | 0 = never begun. Set **before** onboarding performs any work. |
+| `hg.firstRun.completedVersion` (Int) | 0 = never finished. Versioned so a later round can add a step. |
 | `hg.firstRun.symptomSeeds` ([String]) | Validated canonical keys from §3.4. Never written to the graph. |
 | `hg.firstRun.forceShow` (Bool, DEBUG only) | Bypasses reconciliation until the flow finishes. |
+
+**Why `startedVersion` exists — an interrupted onboarding must not skip itself forever.**
+Backfill inserts events *during* the flow, before completion. Without an in-progress
+marker, a termination after the first insert leaves `completedVersion == 0` **and** a graph
+containing events — which is exactly the legacy-reconciliation predicate. The next launch
+would mark onboarding complete and mount the shell, permanently skipping symptom selection
+and location. The user would never see them again, and nothing would look wrong.
+
+State transitions:
+
+- `startedVersion` is written before authorization or backfill begins.
+- `startedVersion > 0 && completedVersion == 0` → resume or restart the flow. Never
+  reconcile.
+- Completion writes `completedVersion`, then clears the in-progress marker.
+- DEBUG *reset first run* clears the marker along with the other keys.
 
 `completedVersion` enables version-aware **routing** only. It does not by itself confer
 step-skipping: the flow carries an explicit prior-version → required-screens map, and any
 future round that adds a screen must extend that map.
 
-**Legacy reconciliation** runs **only when `completedVersion == 0`** and `forceShow` is
-false. It marks first run complete without showing it when the install is already
-populated or backfilled:
+**Legacy reconciliation** runs only when `completedVersion == 0`, **`startedVersion == 0`**,
+and `forceShow` is false. Graph and backfill presence may be consulted *only* under that
+`startedVersion == 0` condition — otherwise onboarding's own writes satisfy the predicate
+that decides whether onboarding is needed. It marks first run complete without showing it
+when the install is already populated or backfilled:
 
 - Condition: `hg.hk.backfillCompleted` is set **or** the graph contains any event.
 - The graph check is a new synchronous package primitive,
@@ -139,9 +157,9 @@ correct outcome.
 
 **DEBUG resets are two separate, explicitly labelled actions:**
 
-- *Reset first run* — clears `completedVersion` and `symptomSeeds`, sets `forceShow = true`.
-  Without `forceShow`, reconciliation would immediately mark a populated graph complete
-  again and the flow would never appear.
+- *Reset first run* — clears `startedVersion`, `completedVersion` and `symptomSeeds`, and
+  sets `forceShow = true`. Without `forceShow`, reconciliation would immediately mark a
+  populated graph complete again and the flow would never appear.
 - *Reset HealthKit backfill* — clears `hg.hk.backfillCompleted` only. Separate because
   clearing it invites a year-long re-backfill and silently disables observers if the test
   flow is abandoned.
@@ -189,11 +207,25 @@ Two separate figures:
 | Figure | Source |
 |---|---|
 | **This attempt** | `inserted` / `updated` from the returned `IngestSummary` (`IngestPipeline.swift:5-16`). |
-| **Apple Health history now available** | Counts per category and earliest event date, **filtered to `source == .healthKit`** (`EventSource` case name confirmed, `Enums.swift:11-14`). |
+| **Apple Health history now available** | Counts per category and earliest event date, from the scoped query below. |
 
 `EventStore` has no source-filtered or earliest-date query today — `countsByCategory()` and
 `countsBySource()` are both whole-graph and cannot be combined. This round adds a scoped
-summary API returning per-category count plus earliest timestamp for a given source.
+summary API returning per-category count plus earliest timestamp.
+
+**The scoped predicate is three conditions, all required:**
+
+```
+source == .healthKit  AND  syntheticBatch IS NULL  AND  deletedAt IS NULL
+```
+
+`source == .healthKit` alone is **not** sufficient. `SyntheticDataGenerator.swift:207`
+emits demo sleep events as `source: .healthKit`, so a DEBUG graph with demo data loaded
+would report fabricated rows as imported Apple Health history — precisely the confusion the
+demo-data-hygiene round exists to prevent. `syntheticBatch` is an indexed column
+(`AppDatabase.swift:276-288`). Release purges synthetic rows at bootstrap
+(`HealthGraphProvider.swift:18-29`), so this matters in DEBUG — which is exactly where the
+first-run flow will be exercised most.
 
 `BackfillProgress` carries no per-type counts (`HealthKitIngestor.swift:5-10`), so the UI
 spec's "✓ 14 months of sleep ✓ 212 workouts" would require ingestion plumbing to invent.
@@ -281,12 +313,29 @@ cross-tab routing machinery.
 **A persisted `HealthImportStatus` is required.** `lastBackfillFailures` and `progress` are
 in-memory `@Published` properties on `HealthKitIngestor` (`:16-18`), so after a relaunch
 Data sources could not truthfully say "Last imported …" or "Imported with issues" — it
-would show a blank slate on a device that has imported successfully many times. Persist at
-minimum:
+would show a blank slate on a device that has imported successfully many times.
+
+**The outcome must be a full state machine, not three terminal results.** *No data /
+imported / imported with issues* cannot express an authorization failure, an import that
+began and was killed, or an import attempted but never finished:
+
+| State | Meaning |
+|---|---|
+| `notStarted` | No import has ever been attempted. |
+| `inProgress` | Persisted **before** authorization or backfill begins. |
+| `attemptFailed` | Authorization or backfill threw. |
+| `completedNoData` | Finished, zero events, no failures. |
+| `completed` | Finished with events, no failures. |
+| `completedWithIssues` | Finished with per-type failures. |
+
+`inProgress` surviving a relaunch is exactly how a killed import is detected, and it gives
+onboarding the signal it needs to resume intelligently rather than restart from scratch.
+Every terminal path must transition out of it.
+
+Persisted alongside the state:
 
 - last attempt date
 - last completed date, if any
-- outcome: *no data* / *imported* / *imported with issues*
 - imported event and category summary (source-scoped per §3.3)
 - sanitized failure identifiers (type identifiers only, no sample payloads)
 
@@ -452,19 +501,26 @@ on.
 ```
 launch
   └─ resolve first-run state (sync, pre-frame, fail-closed)
-       ├─ completedVersion > 0  ─────────────┐
-       ├─ version 0 && (backfilled || any    │  → HealthOSRootView branch
-       │   event exists) → mark complete ────┤     + startObserving()
-       │                                     │     + initial / scene-active /
-       └─ otherwise → FirstRunFlowView       │       location-recovery emission
-              │                              │
-              ├─ 1 promise                   │
-              ├─ 2 connect  → requestAuthorization()
+       ├─ completedVersion > 0 ───────────────┐
+       ├─ startedVersion > 0 && completed == 0 │  → HealthOSRootView branch
+       │      → resume/restart the flow        │     + startObserving()
+       ├─ started == 0 && completed == 0 &&    │     + initial / scene-active /
+       │   (backfilled || anyEventExists)      │       location-recovery emission
+       │      → mark complete ─────────────────┤
+       │                                       │
+       └─ otherwise → FirstRunFlowView         │
+              │  (writes startedVersion FIRST) │
+              ├─ 1 promise                     │
+              ├─ 2 connect  → status .inProgress → requestAuthorization()
               ├─ 3 backfill → backfill() → startObserving()
-              │      summary derived from countsByCategory() + earliest sleep event
+              │      summary = healthKit-scoped query
+              │      (source == .healthKit && syntheticBatch IS NULL
+              │       && deletedAt IS NULL) → counts + earliest per category
+              │      status → completed / completedNoData / completedWithIssues
               ├─ 4 seeding  → validated hg.firstRun.symptomSeeds → ChipRanker(seeds:)
               ├─ 5 location → request only when .notDetermined
-              └─ complete   → set completedVersion, clear forceShow ──┘
+              └─ complete   → set completedVersion, clear startedVersion
+                                and forceShow ────────────────────────┘
 ```
 
 ## Testing
@@ -474,8 +530,9 @@ launch
 - Seed validation and ranking: history-first ordering; remaining-slot fill; duplicate
   seeds; red-flag rejection; unknown/stale keys ignored; overall limit respected.
 - `anyEventExists(includingDeleted:)`: true for a soft-deleted-only graph; false for empty.
-- Source-scoped summary: counts and earliest dates filtered to `.healthKit` exclude manual,
-  export-file and synthetic rows present in the same graph.
+- Source-scoped summary: counts and earliest dates exclude manual and export-file rows,
+  soft-deleted rows, **and synthetic rows carrying `source: .healthKit`** — seed a graph
+  with a `syntheticBatch` sleep event and assert it is not counted as imported history.
 - Batch evidence report: loads the corpus once for N relationships; results match
   per-relationship `evidence(for:)` output exactly; includes decayed relationships.
 - Stress source: accepts `stressRating` + `score` within `1...10`; rejects mindfulness
@@ -496,8 +553,14 @@ launch
 **App**
 
 - First-run routing through the prior-version → screens map.
-- Reconciliation invariants: runs only at version 0; never advances a nonzero version;
-  never re-onboards a populated graph; no flash; fail-closed on query error.
+- **Interrupted onboarding (required):** begin the flow, ingest one event, simulate
+  termination before completion, relaunch — must return to the flow, **not** the shell.
+  This is the test that would have caught the self-skipping defect.
+- Reconciliation invariants: runs only when `startedVersion == 0` *and*
+  `completedVersion == 0`; never advances a nonzero version; never re-onboards a populated
+  graph; no flash; fail-closed on query error.
+- `HealthImportStatus` transitions: every terminal path leaves `inProgress`; a persisted
+  `inProgress` surviving relaunch is detected as a killed import.
 - Connect branching: `Not now` skips Backfill and lands on symptom selection; an
   `requestAuthorization()` throw stays on Connect with Retry; success advances.
 - Backfill outcome branching across the three states.
@@ -527,9 +590,14 @@ fallback is a strictly weaker gate: a pre-change screenshot plus list of visible
 cards, compared against a detailed post-change report — good enough to notice a change,
 not good enough to attribute one.
 
-A disappearing card is accepted **only** when the post-change report identifies cycle phase
-or illness as the relevant new confounder for that edge. A disappearance with no such
-explanation is a regression, not an expected outcome.
+Three outcomes, classified explicitly — the stress fix produces disappearances with **no**
+confounder explanation, and a cycle/illness-only rule would misclassify them as regressions:
+
+| Observation | Verdict |
+|---|---|
+| A `highStress` relationship decays or vanishes, with no new confounder | **Expected.** Its exposures were mindfulness minutes and no longer exist (§7). |
+| Any other relationship demotes, with cycle phase or illness listed as a new confounder | **Expected.** That is fixes §8/§9 doing their job. |
+| Any other disappearance, unexplained by either | **Regression.** Investigate before merge. |
 
 Also verified on device: fresh-install flow end to end; reset-first-run reproduces it;
 skip-then-import-later starts live ingestion within the same session; denied-location path
