@@ -20,7 +20,7 @@ public enum AirQualityIndex {
         return Int(aqi.rounded())
     }
 
-    public enum AQICategory: Sendable, Equatable {
+    public enum AQICategory: Sendable, Equatable, Comparable, Hashable {
         case good, moderate, unhealthySensitive, unhealthy, veryUnhealthy, hazardous
         public var name: String {
             switch self {
@@ -32,6 +32,45 @@ public enum AirQualityIndex {
             case .hazardous: "Hazardous"
             }
         }
+
+        /// Ordinal for comparing bands (escalation). NOT persisted — see `persistedToken`.
+        public var severityRank: Int {
+            switch self {
+            case .good: 0
+            case .moderate: 1
+            case .unhealthySensitive: 2
+            case .unhealthy: 3
+            case .veryUnhealthy: 4
+            case .hazardous: 5
+            }
+        }
+
+        /// STABLE identifier for UserDefaults persistence — frozen, independent of
+        /// `name` (localized) and `severityRank` (an ordering that could be renumbered).
+        public var persistedToken: String {
+            switch self {
+            case .good: "good"
+            case .moderate: "moderate"
+            case .unhealthySensitive: "unhealthySensitive"
+            case .unhealthy: "unhealthy"
+            case .veryUnhealthy: "veryUnhealthy"
+            case .hazardous: "hazardous"
+            }
+        }
+
+        public init?(persistedToken token: String) {
+            switch token {
+            case "good": self = .good
+            case "moderate": self = .moderate
+            case "unhealthySensitive": self = .unhealthySensitive
+            case "unhealthy": self = .unhealthy
+            case "veryUnhealthy": self = .veryUnhealthy
+            case "hazardous": self = .hazardous
+            default: return nil
+            }
+        }
+
+        public static func < (lhs: Self, rhs: Self) -> Bool { lhs.severityRank < rhs.severityRank }
     }
 
     public static func category(aqi: Int) -> AQICategory {

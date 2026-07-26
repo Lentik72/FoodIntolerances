@@ -59,6 +59,8 @@ struct HealthOSRootView: View {
         .environmentObject(RedFlagPresenter(muteStore: RedFlagMuteStore()))
         .environmentObject(RedFlagMuteStore())
         .environmentObject(EnvironmentStatusStore(defaults: UserDefaults(suiteName: "preview")!))
+        .environmentObject(EnvironmentalDataService(locationManager: nil,
+            statusStore: EnvironmentStatusStore(defaults: UserDefaults(suiteName: "preview")!)))
         .modelContainer(for: UserProfile.self, inMemory: true)
 }
 
@@ -69,6 +71,8 @@ struct HealthOSRootView: View {
         .environmentObject(RedFlagPresenter(muteStore: RedFlagMuteStore()))
         .environmentObject(RedFlagMuteStore())
         .environmentObject(EnvironmentStatusStore(defaults: UserDefaults(suiteName: "preview")!))
+        .environmentObject(EnvironmentalDataService(locationManager: nil,
+            statusStore: EnvironmentStatusStore(defaults: UserDefaults(suiteName: "preview")!)))
         .modelContainer(for: UserProfile.self, inMemory: true)
         .preferredColorScheme(.dark)
 }

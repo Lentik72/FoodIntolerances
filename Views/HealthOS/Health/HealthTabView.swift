@@ -7,6 +7,7 @@ struct HealthTabView: View {
     #endif
     @AppStorage("hg.temperatureUnit") private var rawTempUnit = ""
     @AppStorage("hg.measurementSystem") private var rawUnitSystem = ""
+    @AppStorage("hg.poorAirWarningsEnabled") private var poorAirWarningsEnabled = true
     @Query private var userProfiles: [UserProfile]
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var statusStore: EnvironmentStatusStore
@@ -159,6 +160,17 @@ struct HealthTabView: View {
                         .labelsHidden()
                         .accessibilityLabel("Measurement system")
                         .frame(width: 160)
+                    }
+                    .padding(16)
+                    Divider().padding(.leading, 16)
+                    HStack {
+                        Image(systemName: "aqi.medium")
+                            .foregroundStyle(HealthTheme.accent)
+                        Text("Poor air quality warnings")
+                            .foregroundStyle(HealthTheme.ink)
+                        Spacer()
+                        Toggle("Poor air quality warnings", isOn: $poorAirWarningsEnabled)
+                            .labelsHidden()
                     }
                     .padding(16)
                     #if DEBUG

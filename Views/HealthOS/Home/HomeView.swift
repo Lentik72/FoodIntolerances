@@ -6,10 +6,24 @@ struct HomeView: View {
         store: GRDBEventStore(database: HealthGraphProvider.shared))
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var captureCoordinator: CaptureCoordinator
+    @EnvironmentObject private var environmentalService: EnvironmentalDataService
+    @Environment(\.emitCoordinator) private var emitCoordinator          // the single-flighted env pass
+    @AppStorage("hg.poorAirWarningsEnabled") private var poorAirEnabled = true
+    @StateObject private var poorAir = PoorAirWarningViewModel(
+        personalizedSymptomSubtype: {
+            let rels = (try? await GRDBRelationshipStore(database: HealthGraphProvider.shared)
+                .relationships(status: .active)) ?? []              // failure → [] → base warning
+            return PoorAirPersonalization.bestSymptomSubtype(from: rels)
+        })
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                if case .show(let aqi, let band, let symptom) = poorAir.warning {
+                    PoorAirWarningBanner(aqi: aqi, band: band, personalizedSymptom: symptom,
+                                         isDismissible: poorAir.isDismissible,
+                                         onDismiss: { poorAir.dismissCurrent() })
+                }
                 greeting
                 MoodCheckInView()
                 passiveStrip
@@ -23,12 +37,31 @@ struct HomeView: View {
         }
         .background(HealthTheme.paper)
         .task { await viewModel.refresh() }
+        .task { await poorAir.evaluate(state: environmentalService.forecastAQIState) }
         .refreshable { await viewModel.refresh() }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await viewModel.refresh() } }
+            guard phase == .active else { return }
+            Task { await viewModel.refresh() }
+            // The foreground path must AWAIT the shared env pass before deciding —
+            // otherwise Home could re-decide a stale value while the app-root-triggered
+            // refresh is still running and re-arm a dismissible cross-day banner. `emit`
+            // is single-flighted, so awaiting it here JOINS the root's pass (no extra
+            // pass); once it completes — whether it refetched or the cooldown skipped —
+            // Home decides the FINAL settled state (handles day-rollover too).
+            Task {
+                if let emitCoordinator { await emitCoordinator.emit(forced: false).value }
+                await poorAir.evaluate(state: environmentalService.forecastAQIState)
+            }
         }
         .onChange(of: captureCoordinator.lastCaptureAt) { _, _ in
             Task { await viewModel.refresh() }
+        }
+        .onChange(of: environmentalService.forecastAQIState) { _, state in
+            Task { await poorAir.evaluate(state: state) }        // SETTLE path (incl. pending → non-dismissible hold)
+        }
+        .onChange(of: poorAirEnabled) { _, isOn in
+            if isOn { Task { await poorAir.evaluate(state: environmentalService.forecastAQIState) } }  // re-decide the LIVE value
+            else { poorAir.disable() }                                                                  // OFF → synchronous clear
         }
     }
 

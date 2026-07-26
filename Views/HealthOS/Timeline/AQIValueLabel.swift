@@ -3,7 +3,7 @@ import HealthGraphCore
 
 /// The accessibility-adjusted AirNow color for an AQI category. Keys on the core
 /// category (single source of the band thresholds); the six colors live in HealthTheme.
-private func aqiColor(for category: AirQualityIndex.AQICategory) -> Color {
+func aqiColor(for category: AirQualityIndex.AQICategory) -> Color {
     switch category {
     case .good:               HealthTheme.aqiGood
     case .moderate:           HealthTheme.aqiModerate
