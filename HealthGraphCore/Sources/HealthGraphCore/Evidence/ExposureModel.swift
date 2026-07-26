@@ -47,3 +47,19 @@ public struct OutcomeOccurrence: Sendable, Equatable {
 public protocol ExposureSource {
     func occurrences(from events: [HealthEvent]) -> [ExposureOccurrence]
 }
+
+public extension ExposureKey {
+    /// Stable, human-readable token for DEBUG diagnostics and device-gate diffs.
+    /// The reserved illness confounder sentinel prints as `illness` rather than
+    /// its UUID — it is not a real object and its id carries no meaning.
+    ///
+    /// DELEGATES to `EdgeIdentity.fromToken` rather than re-switching over
+    /// `DerivedExposureKind`. A copy would be a second exhaustive switch to
+    /// update when a case is added, and if the two ever drifted the dump's
+    /// confounder labels would stop matching the `edgeKey` column printed
+    /// beside them — silently mis-attributing the very baseline↔after diff the
+    /// device gate depends on.
+    var diagnosticLabel: String {
+        self == EvidenceEngine.illnessConfounderKey ? "illness" : EdgeIdentity.fromToken(self)
+    }
+}

@@ -180,33 +180,25 @@ public struct RelationshipEvidence: Sendable, Equatable {
 
 extension EvidenceEngine {
     public func evidence(for relationship: Relationship, asOf now: Date) async throws -> RelationshipEvidence {
-        func empty() -> RelationshipEvidence {
-            RelationshipEvidence(relationshipID: relationship.id, exposures: [],
-                                 followCount: 0, missCount: 0, confounders: [])
-        }
-        guard let (expKey, outKey) = EdgeIdentity.parse(relationship) else { return empty() }
         let events = try await eventStore.events(
             in: DateInterval(start: .distantPast, end: .distantFuture), category: nil)
-        let (exposures, outcomes) = extract(events)
-        guard let exp = exposures[expKey], let out = outcomes[outKey], !exp.isEmpty else { return empty() }
-        let times = events.map(\.timestamp)
-        guard let lo = times.min(), let hi = times.max() else { return empty() }
-        let window = config.lagWindow(for: expKey)
-        guard let stats = CooccurrenceAnalyzer(config: config)
-            .analyze(exposure: exp, outcome: out, window: window,
-                     observation: DateInterval(start: lo, end: hi)) else { return empty() }
+        return evidence(for: relationship, in: makeContext(events))
+    }
 
-        // Recompute the confounder set for this one edge (same logic as recompute()).
-        let cal = Self.utc
-        var daySets: [ExposureKey: Set<Date>] = [:]
-        for (key, occ) in exposures { daySets[key] = Set(occ.map { cal.startOfDay(for: $0.timestamp) }) }
-        var others = daySets.filter { $0.key != expKey }
-        let illness = illnessDays(events)
-        if !illness.isEmpty { others[Self.illnessConfounderKey] = illness }
-        let (_, confounders) = ConfounderAnalyzer().penalty(targetDays: daySets[expKey] ?? [], others: others)
-
-        return RelationshipEvidence(relationshipID: relationship.id, exposures: stats.pairs,
-                                    followCount: stats.followCount, missCount: stats.missCount,
-                                    confounders: confounders)
+    /// Batched evidence for many relationships against ONE corpus load and ONE
+    /// extract. Keyed by `relationship.id` — never zip against the input array,
+    /// `GRDBRelationshipStore.all()` has no ORDER BY.
+    ///
+    /// Every input relationship gets an entry, including unparseable and decayed
+    /// ones (`evidence(for:in:)` fails soft). Status is never consulted.
+    public func evidenceReports(for relationships: [Relationship],
+                                asOf now: Date) async throws -> [UUID: RelationshipEvidence] {
+        guard !relationships.isEmpty else { return [:] }
+        let events = try await eventStore.events(
+            in: DateInterval(start: .distantPast, end: .distantFuture), category: nil)
+        let ctx = makeContext(events)
+        var out: [UUID: RelationshipEvidence] = [:]
+        for r in relationships { out[r.id] = evidence(for: r, in: ctx) }
+        return out
     }
 }

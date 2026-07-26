@@ -23,6 +23,7 @@ struct HealthGraphDebugView: View {
     @State private var lastIngestSummary: String?
     @State private var showingImporter = false
     @State private var importProgress: Int?
+    @State private var relationshipReport: String?
 
     private var database: AppDatabase { HealthGraphProvider.shared }
 
@@ -145,6 +146,15 @@ struct HealthGraphDebugView: View {
                 }
                 if let lastIngestSummary {
                     Text(lastIngestSummary).font(.caption.monospaced())
+                }
+            }
+            Section("Diagnostics") {
+                Button("Dump relationship report") { Task { await dumpRelationshipReport() } }
+                    .disabled(isWorking)
+                if let relationshipReport {
+                    Text(relationshipReport)
+                        .font(.caption2.monospaced())
+                        .textSelection(.enabled)
                 }
             }
             Section("Counts by source") {
@@ -643,6 +653,40 @@ struct HealthGraphDebugView: View {
             lastIngestSummary = summ(parseResult.summary)
                 + " · read \(parseResult.recordsRead) · unmapped \(parseResult.recordsSkipped)"
             await refresh()
+        } catch {
+            errorMessage = String(describing: error)
+        }
+    }
+
+    /// Device-gate baseline/after report (spec §10). Deliberate one-shot
+    /// diagnostic — it is intentionally NOT wired into any live surface.
+    /// Prints as well as displays so the Xcode console copy can be diffed.
+    private func dumpRelationshipReport() async {
+        errorMessage = nil
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            let db = HealthGraphProvider.shared
+            let all = try await GRDBRelationshipStore(database: db).all()
+            let interesting = all.filter { $0.status == .active || $0.status == .decayed }
+                .sorted { ($0.edgeKey ?? "") < ($1.edgeKey ?? "") }
+            let reports = try await EvidenceEngine(database: db)
+                .evidenceReports(for: interesting, asOf: Date())
+            var lines: [String] = ["edgeKey | status | confidence | evidence | contradictions | confounders"]
+            for r in interesting {
+                let conf = reports[r.id]?.confounders.map(\.diagnosticLabel).sorted().joined(separator: ",") ?? ""
+                lines.append([
+                    r.edgeKey ?? "(nil)",
+                    r.status.rawValue,
+                    String(format: "%.3f", r.confidence),
+                    String(r.evidenceCount),
+                    String(r.contradictionCount),
+                    conf.isEmpty ? "-" : conf,
+                ].joined(separator: " | "))
+            }
+            let text = lines.joined(separator: "\n")
+            relationshipReport = text
+            print("=== RELATIONSHIP REPORT (\(interesting.count) rows) ===\n\(text)")
         } catch {
             errorMessage = String(describing: error)
         }
