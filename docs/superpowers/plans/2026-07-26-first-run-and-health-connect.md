@@ -156,6 +156,36 @@ import Foundation
         #expect(ExposureKey.derived(.highStress).diagnosticLabel == "derived:highStress")
         #expect(ExposureKey.derived(.cyclePhase(.luteal)).diagnosticLabel == "derived:cyclePhase.luteal")
     }
+
+    @Test func everyOtherKeyLabelsExactlyAsItsEdgeToken() {
+        // Pins the delegation. If the label ever forks from EdgeIdentity, the
+        // dump's confounder column stops matching its own edgeKey column.
+        let keys: [ExposureKey] = [
+            .derived(.shortSleep), .derived(.pressureDrop), .derived(.fullMoon),
+            .derived(.mercuryRetrograde), .derived(.hotDay), .derived(.coldDay),
+            .derived(.humidDay), .derived(.swingDay), .derived(.poorAirDay),
+            .derived(.cyclePhase(.menstrual)), .object(UUID(), .food),
+        ]
+        for key in keys {
+            #expect(key.diagnosticLabel == EdgeIdentity.fromToken(key))
+        }
+    }
+
+    @Test func anEdgeIsNeverItsOwnConfounder() async throws {
+        // Pins the per-target `others` filter. Dropping it makes every edge
+        // overlap itself at 1.0 and take the maximum confidence penalty.
+        let db = try AppDatabase.inMemory()
+        try await seed(into: db)
+        let engine = EvidenceEngine(database: db)
+        _ = try await engine.recompute(asOf: now)
+        let rels = try await GRDBRelationshipStore(database: db).all()
+        #expect(!rels.isEmpty)
+        let batch = try await engine.evidenceReports(for: rels, asOf: now)
+        for r in rels {
+            guard let (expKey, _) = EdgeIdentity.parse(r) else { continue }
+            #expect(batch[r.id]?.confounders.contains(expKey) == false)
+        }
+    }
 }
 ```
 
@@ -173,28 +203,21 @@ public extension ExposureKey {
     /// Stable, human-readable token for DEBUG diagnostics and device-gate diffs.
     /// The reserved illness confounder sentinel prints as `illness` rather than
     /// its UUID — it is not a real object and its id carries no meaning.
+    ///
+    /// DELEGATES to `EdgeIdentity.fromToken` rather than re-switching over
+    /// `DerivedExposureKind`. A copy would be a second exhaustive switch to
+    /// update when a case is added, and if the two ever drifted the dump's
+    /// confounder labels would stop matching the `edgeKey` column printed
+    /// beside them — silently mis-attributing the very baseline↔after diff the
+    /// device gate depends on.
     var diagnosticLabel: String {
-        if self == EvidenceEngine.illnessConfounderKey { return "illness" }
-        switch self {
-        case let .object(id, category): return "obj:\(id.uuidString):\(category.rawValue)"
-        case let .derived(kind):
-            switch kind {
-            case .shortSleep: return "derived:shortSleep"
-            case .highStress: return "derived:highStress"
-            case .pressureDrop: return "derived:pressureDrop"
-            case let .cyclePhase(phase): return "derived:cyclePhase.\(phase.rawValue)"
-            case .fullMoon: return "derived:fullMoon"
-            case .mercuryRetrograde: return "derived:mercuryRetrograde"
-            case .hotDay: return "derived:hotDay"
-            case .coldDay: return "derived:coldDay"
-            case .humidDay: return "derived:humidDay"
-            case .swingDay: return "derived:swingDay"
-            case .poorAirDay: return "derived:poorAirDay"
-            }
-        }
+        self == EvidenceEngine.illnessConfounderKey ? "illness" : EdgeIdentity.fromToken(self)
     }
 }
 ```
+
+`EdgeIdentity.fromToken` is internal to the package (`EdgeIdentity.swift:8`) and
+`ExposureModel.swift` is in the same module, so this compiles.
 
 - [ ] **Step 4: Create the shared context**
 
@@ -408,7 +431,19 @@ This is the only build that has the diagnostic without the engine fixes. Once Ta
 
 - [ ] **Step 1: Write the failing test**
 
-Replace the existing `HighStressExposureSourceTests` struct in `HealthGraphCore/Tests/HealthGraphCoreTests/ExposureSourceTests.swift` with:
+There is **no** `HighStressExposureSourceTests` struct. The existing coverage is
+`@Test func highStressAboveThreshold()` at `ExposureSourceTests.swift:107-114`, inside
+`struct DerivedEventExposureSourceTests` (`:106-125`) — which also holds
+`pressureDropReadsPreEventizedSubtype` (`:115-124`), **the repo's only test of
+`PressureDropExposureSource`**.
+
+Delete **only** `highStressAboveThreshold` (`:107-114`). Leave
+`pressureDropReadsPreEventizedSubtype` and the enclosing struct intact. That deleted
+assertion builds `.stress` events with no subtype and no unit and asserts they yield a
+high-stress exposure — it encodes the exact defect §7 outlaws, so removing it is the
+point of this task, not a regression.
+
+Then add below it, in the same file:
 
 ```swift
 struct HighStressExposureSourceTests {
@@ -500,7 +535,7 @@ In `HealthGraphCore/Sources/HealthGraphCore/Synthetic/SyntheticDataGenerator.swi
 ```swift
                 events.append(HealthEvent(timestamp: t, timezoneID: tz, category: .stress,
                                           subtype: HighStressExposureSource.ratingSubtype,
-                                          value: Double.random(in: 7...10, using: &rng),
+                                          value: Double(Int.random(in: 7...10, using: &rng)),
                                           unit: HighStressExposureSource.ratingUnit,
                                           source: .manual, createdAt: t))
 ```
@@ -513,7 +548,7 @@ Run: `swift test --package-path HealthGraphCore --filter HighStressExposureSourc
 Expected: PASS, 5 tests.
 
 Run: `swift test --package-path HealthGraphCore 2>&1 | tail -5`
-Expected: all pass. If a planted-signal acceptance test regressed, the generator edit in Step 4 is wrong — fix the generator, never the assertion.
+Expected: all pass. The only assertion removed anywhere is `highStressAboveThreshold`; nothing else in `ExposureSourceTests.swift` changes. If a *planted-signal acceptance* test regressed, the generator edit in Step 4 is wrong — fix the generator, never the assertion. (That guidance applies only to the synthetic acceptance suites; `highStressAboveThreshold` is a hand-written unit test and is unaffected by the generator.)
 
 - [ ] **Step 6: Commit**
 
@@ -708,11 +743,27 @@ In `Models/HealthKitIngestor.swift`, inside `static func mapSample(_ sample: HKS
 
 - [ ] **Step 7: Label the new metadata key in the UI**
 
-`EventDetailView.metadataRows` filters only `"provenance"` and renders every other key with `labels[$0.key] ?? $0.key`, so an unlabelled key ships as a raw camelCase row reading `menstrualCycleStart / true`. In `Views/HealthOS/Timeline/EventDetailView.swift`, add to the existing `labels` dictionary:
+`EventDetailView.metadataRows` filters only `"provenance"` and renders every other key with `labels[$0.key] ?? $0.key`, **and renders the raw value verbatim**. So an unlabelled key ships as `menstrualCycleStart / true` — and worse, every *non-start* flow day would gain a row reading `Cycle start / false`, which is noise on the majority of cycle events in a UI that elsewhere reads "Moon phase / Waxing Gibbous".
+
+Two edits in `Views/HealthOS/Timeline/EventDetailView.swift`. Add the label:
 
 ```swift
-        "menstrualCycleStart": "Cycle start",
+        "menstrualCycleStart": "Cycle",
 ```
+
+And extend the existing key filter so the `"false"` case is suppressed rather than shown — only an affirmative start is worth a row:
+
+```swift
+            .filter { $0.key != "provenance" && !($0.key == "menstrualCycleStart" && $0.value == "false") }
+```
+
+Map the surviving value to human copy where the row is built, so it reads `Cycle / Period start` rather than `Cycle / true`:
+
+```swift
+            let display = (row.key == "menstrualCycleStart" && row.value == "true") ? "Period start" : row.value
+```
+
+Match the exact shape of the existing filter and row builder at `EventDetailView.swift:189-201` — the snippets above show the transformation, not the surrounding code.
 
 - [ ] **Step 8: Run tests and build**
 
@@ -745,6 +796,7 @@ git commit -m "feat(ingestion): retain HealthKit menstrual cycle-start marker as
 **Files:**
 - Modify: `HealthGraphCore/Sources/HealthGraphCore/Evidence/EvidenceConfig.swift` (two new knobs)
 - Modify: `HealthGraphCore/Sources/HealthGraphCore/Evidence/CyclePhaseExposureSource.swift` (whole file)
+- Modify: `HealthGraphCore/Tests/HealthGraphCoreTests/ExposureSourceTests.swift:183-190` (rewrite one test — see Step 5)
 - Test: `HealthGraphCore/Tests/HealthGraphCoreTests/CyclePhaseResolutionTests.swift`
 
 **Interfaces:**
@@ -976,7 +1028,30 @@ public struct CyclePhaseExposureSource: ExposureSource {
 }
 ```
 
-- [ ] **Step 5: Run the tests**
+- [ ] **Step 5: Rewrite the existing test that pins the removed guard**
+
+`ExposureSourceTests.swift:183-190` holds `@Test func singleDistinctStartYieldsNothing()`,
+which feeds two same-day `periodStart` events and asserts `#expect(occ.isEmpty)`. It passes
+today **only** because of the `guard starts.count >= 2 else { return [] }` that Step 4
+deletes. After Step 4 it returns one menstrual occurrence and the assertion fails.
+
+That old assertion encodes the behaviour §8 deliberately changes. **Rewrite it — do not
+"repair" it by restoring the guard**, which would silently revert this task:
+
+```swift
+    @Test func singleDistinctStartYieldsMenstrualButNoLuteal() {
+        // Two period-start events on the same day = one distinct start.
+        // One start is enough for its own menstrual day; a luteal window needs
+        // a NEXT start to be defined relative to, so there is none here.
+        let events = [periodStart(dayOffset: 0, hourOffset: 0), periodStart(dayOffset: 0, hourOffset: 1)]
+        let src = CyclePhaseExposureSource(config: .default, timeZone: TimeZone(identifier: "UTC")!)
+        let occ = src.occurrences(from: events)
+        #expect(occ.count == 1)
+        #expect(occ.allSatisfy { $0.key == .derived(.cyclePhase(.menstrual)) })
+    }
+```
+
+- [ ] **Step 6: Run the tests**
 
 Run: `swift test --package-path HealthGraphCore --filter CyclePhaseResolutionTests`
 Expected: PASS, 9 tests.
@@ -984,12 +1059,13 @@ Expected: PASS, 9 tests.
 Run: `swift test --package-path HealthGraphCore 2>&1 | tail -5`
 Expected: all pass. The synthetic generator writes `subtype: "periodStart"`, which is still treated as authoritative, so planted cycle signals are unaffected.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add HealthGraphCore/Sources/HealthGraphCore/Evidence/CyclePhaseExposureSource.swift \
         HealthGraphCore/Sources/HealthGraphCore/Evidence/EvidenceConfig.swift \
-        HealthGraphCore/Tests/HealthGraphCoreTests/CyclePhaseResolutionTests.swift
+        HealthGraphCore/Tests/HealthGraphCoreTests/CyclePhaseResolutionTests.swift \
+        HealthGraphCore/Tests/HealthGraphCoreTests/ExposureSourceTests.swift
 git commit -m "fix(evidence): resolve cycle starts from HealthKit metadata, inference only as fallback"
 ```
 
@@ -1841,7 +1917,10 @@ final class FirstRunState: ObservableObject {
         self.resolution = resolved
     }
 
-    var needsFlow: Bool { if case .flow = resolution { return true }; return false }
+    /// The resolved entry, or nil when the shell should mount. Deliberately NOT
+    /// a Bool: `.resume` has to reach the flow so an interrupted import can be
+    /// recovered rather than silently restarted, and `.upgrade` will need it too.
+    var flowEntry: FirstRunEntry? { if case let .flow(entry) = resolution { return entry }; return nil }
 
     /// Written BEFORE any side effect, so a termination mid-flow resumes.
     func markStarted() {
@@ -2110,8 +2189,9 @@ git commit -m "feat(first-run): persisted Apple Health import status with interr
 ## Task 11: Root switch and launch ordering
 
 **Files:**
-- Modify: `FoodIntolerancesApp.swift:32` (remove notification prompt), `:105-158` (root switch)
-- Create: `Views/HealthOS/FirstRun/FirstRunFlowView.swift` (shell only; screens land in Tasks 12–15)
+- Modify: `FoodIntolerancesApp.swift:1-2` (add import), `:32` (remove notification prompt), `:105-158` (root switch)
+- Modify: `Models/EnvironmentalDataService.swift:1064-1072` (stop `LocationService.init()` prompting)
+- Create: `Views/HealthOS/FirstRun/FirstRunFlowView.swift` + five screen stubs (filled in Tasks 12–15)
 
 **Interfaces:**
 - Consumes: `FirstRunState` (Task 9), `HealthImportStatusStore` (Task 10).
@@ -2133,9 +2213,45 @@ In `FoodIntolerancesApp.swift`, delete line 32:
 
 `Views/HealthOS/` and `HealthGraphCore/` schedule zero notifications — this asks for a permission the app never uses, on top of whatever the first screen is.
 
-- [ ] **Step 2: Add the state objects**
+- [ ] **Step 2: Stop `LocationService` prompting at launch**
 
-In `FoodIntolerancesApp.swift`, alongside the existing `@StateObject` declarations:
+Removing the notification prompt is not enough — **location is also requested from
+`init()`**, which would make Task 15's explaining screen pointless: the system dialog would
+appear over the promise screen, and by the time the user reached the location step the
+status would already be `.authorized` or `.denied`.
+
+`FoodIntolerancesApp.swift:45` eagerly constructs `LocationService()`, and
+`LocationService.init()` (`Models/EnvironmentalDataService.swift:1064-1072`) calls
+`requestWhenInUseAuthorization()` in its `.notDetermined` branch behind
+`if !UserDefaults.standard.bool(forKey: "hasShownLocationAlert")`. That guard is
+**permanently true** — `hasShownLocationAlert` has two readers
+(`EnvironmentalDataService.swift:1064`, `LogItemViewModel.swift:1345`) and **no writer
+anywhere in the repo**.
+
+Delete the `requestWhenInUseAuthorization()` call from that `.notDetermined` branch,
+leaving the `.denied`/`.restricted` logging intact, and expose it explicitly instead:
+
+```swift
+    /// Asks for location only when a screen has explained why. Previously this
+    /// fired from init(), so the system dialog landed on whatever was on screen
+    /// at cold launch with no context.
+    func requestAuthorization() {
+        guard locationManager.authorizationStatus == .notDetermined else { return }
+        locationManager.requestWhenInUseAuthorization()
+    }
+```
+
+Task 15's button is the only caller.
+
+- [ ] **Step 3: Add the state objects**
+
+`FoodIntolerancesApp.swift` imports only `SwiftUI` and `SwiftData` (lines 1-2), so add:
+
+```swift
+import HealthGraphCore
+```
+
+Then, alongside the existing `@StateObject` declarations:
 
 ```swift
     @StateObject private var firstRunState = FirstRunState(
@@ -2146,7 +2262,6 @@ In `FoodIntolerancesApp.swift`, alongside the existing `@StateObject` declaratio
 Both types are `@MainActor`, and these are property-default expressions on the `@main` App struct — that is the same shape the existing `@StateObject`s use, so it resolves on the main actor. If the compiler complains about isolation here, move construction into `init()` rather than dropping `@MainActor` from the types: `FirstRunState` mutates published state that views read directly.
 
 Touching `HealthGraphProvider.shared` here opens the SQLite file and runs migrations synchronously (and `fatalError`s on failure, by design). That cost is paid at launch either way — the resolver needs the graph-existence answer before the first frame.
-```
 
 At the end of `init()`, after the existing setup:
 
@@ -2156,7 +2271,7 @@ At the end of `init()`, after the existing setup:
         HealthImportStatusStore().normalizeAtLaunch()
 ```
 
-- [ ] **Step 3: Create the flow shell**
+- [ ] **Step 4: Create the flow shell**
 
 Create `Views/HealthOS/FirstRun/FirstRunFlowView.swift`:
 
@@ -2169,10 +2284,22 @@ import HealthGraphCore
 struct FirstRunFlowView: View {
     enum Step: Int, CaseIterable { case promise, connect, backfill, seeding, location, done }
 
+    let entry: FirstRunEntry
     let onComplete: ([String]) -> Void
 
-    @State private var step: Step = .promise
+    @State private var step: Step
     @State private var selectedSeeds: [String] = []
+
+    /// A resumed flow whose import was killed lands straight on Backfill, so
+    /// the user meets the recovery screen instead of being walked back through
+    /// Promise and Connect and silently restarting a multi-minute import.
+    init(entry: FirstRunEntry, importOutcome: HealthImportOutcome, onComplete: @escaping ([String]) -> Void) {
+        self.entry = entry
+        self.onComplete = onComplete
+        let resumesIntoBackfill = entry == .resume
+            && (importOutcome == .interrupted || importOutcome == .inProgress)
+        _step = State(initialValue: resumesIntoBackfill ? .backfill : .promise)
+    }
 
     var body: some View {
         ZStack {
@@ -2189,7 +2316,7 @@ struct FirstRunFlowView: View {
                                             onConnected: { advance(to: .backfill) })
         case .backfill: FirstRunBackfillView { advance(to: .seeding) }
         case .seeding:  FirstRunSeedingView(selection: $selectedSeeds) { advance(to: .location) }
-        case .location: FirstRunLocationView { advance(to: .done) }
+        case .location: FirstRunLocationView(seeds: selectedSeeds) { advance(to: .done) }
         case .done:     Color.clear.onAppear { onComplete(selectedSeeds) }
         }
     }
@@ -2200,14 +2327,14 @@ struct FirstRunFlowView: View {
 }
 ```
 
-- [ ] **Step 4: Switch the root**
+- [ ] **Step 5: Switch the root**
 
 In `FoodIntolerancesApp.swift`, replace `HealthOSRootView()` at line 109 with a switch, keeping **every** existing modifier below it unchanged and moving the four launch modifiers onto the shell branch:
 
 ```swift
             Group {
-                if firstRunState.needsFlow {
-                    FirstRunFlowView { seeds in
+                if let entry = firstRunState.flowEntry {
+                    FirstRunFlowView(entry: entry, importOutcome: importStatus.current.outcome) { seeds in
                         firstRunState.markCompleted(seeds: seeds)
                     }
                 } else {
@@ -2266,9 +2393,11 @@ In `FoodIntolerancesApp.swift`, replace `HealthOSRootView()` at line 109 with a 
 
 Delete the four launch modifiers from their old position at the end of the chain — they now live on the shell branch.
 
-- [ ] **Step 5: Build and commit**
+- [ ] **Step 6: Build and commit**
 
-The flow screens don't exist yet, so this step will not compile on its own. Create the five screen files as empty stubs now and fill them in Tasks 12–15:
+The flow screens don't exist yet, so this step will not compile on its own. Create all five
+as stubs now and fill them in Tasks 12–15. **The signatures must match what
+`FirstRunFlowView` passes** — a stub with the wrong shape breaks this step's own build gate:
 
 ```swift
 // Views/HealthOS/FirstRun/FirstRunPromiseView.swift
@@ -2277,15 +2406,44 @@ struct FirstRunPromiseView: View {
     let onContinue: () -> Void
     var body: some View { Button("Continue", action: onContinue) }
 }
-```
 
-Repeat the same one-button stub shape for `FirstRunConnectView(onSkip:onConnected:)`, `FirstRunBackfillView(onContinue:)`, `FirstRunSeedingView(selection:onContinue:)`, `FirstRunLocationView(onContinue:)`.
+// Views/HealthOS/FirstRun/FirstRunConnectView.swift
+import SwiftUI
+struct FirstRunConnectView: View {
+    let onSkip: () -> Void
+    let onConnected: () -> Void
+    var body: some View { Button("Continue", action: onConnected) }
+}
+
+// Views/HealthOS/FirstRun/FirstRunBackfillView.swift
+import SwiftUI
+struct FirstRunBackfillView: View {
+    let onContinue: () -> Void
+    var body: some View { Button("Continue", action: onContinue) }
+}
+
+// Views/HealthOS/FirstRun/FirstRunSeedingView.swift
+import SwiftUI
+struct FirstRunSeedingView: View {
+    @Binding var selection: [String]          // NOT `let` — the flow passes $selectedSeeds
+    let onContinue: () -> Void
+    var body: some View { Button("Continue", action: onContinue) }
+}
+
+// Views/HealthOS/FirstRun/FirstRunLocationView.swift
+import SwiftUI
+struct FirstRunLocationView: View {
+    let seeds: [String]
+    let onContinue: () -> Void
+    var body: some View { Button("Continue", action: onContinue) }
+}
+```
 
 Run: `xcodebuild build -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' 2>&1 | tail -3`
 Expected: `** BUILD SUCCEEDED **`
 
 ```bash
-git add FoodIntolerancesApp.swift Views/HealthOS/FirstRun/
+git add FoodIntolerancesApp.swift Models/EnvironmentalDataService.swift Views/HealthOS/FirstRun/
 git commit -m "feat(first-run): structural root switch with launch side effects on the shell branch"
 ```
 
@@ -2394,15 +2552,19 @@ struct FirstRunConnectView: View {
     private func connect() async {
         isRequesting = true
         defer { isRequesting = false }
-        // startedVersion and .inProgress are both written BEFORE any side effect,
-        // so a kill from here on resumes rather than silently skipping the flow.
+        // startedVersion is written BEFORE any side effect, so a kill from here
+        // on resumes rather than silently skipping the flow.
         firstRunState.markStarted()
-        importStatus.beginAttempt()
+        // MUST NOT clobber a persisted .interrupted: beginAttempt() overwrites
+        // the outcome unconditionally, and the Backfill screen's recovery branch
+        // reads it AFTER this runs. Without this guard that branch is dead code
+        // on every onboarding path and a killed import silently restarts.
+        if importStatus.current.outcome != .interrupted { importStatus.beginAttempt() }
         do {
             try await ingestor.requestAuthorization()
             authorizationFailed = false
             onConnected()
-        } catch {
+        } catch {   // see the beginAttempt() guard above
             // Stay on Connect. Denied READS are not an error — Apple reports
             // them as "not determined" — so only a genuine throw lands here.
             importStatus.failAttempt()
@@ -2490,13 +2652,18 @@ import HealthGraphCore
         }
     }
 
-    @Test func summaryLineNamesTheEarliestImportedEventNotTheRequestedWindow() {
+    @Test func summaryLineNamesTheEarliestImportedEventNotTheRequestedWindow() throws {
+        // 1_700_000_000 == 2023-11-14 UTC. Deliberately older than one year, so
+        // a line derived from the requested 1-year backfill window would fail.
         let earliest = Date(timeIntervalSince1970: 1_700_000_000)
         let summaries = [ImportedCategorySummary(category: "sleep", count: 400, earliest: earliest),
-                         ImportedCategorySummary(category: "symptom", count: 12, earliest: Date())]
-        let line = DataSourcesPresentation.summaryLine(from: summaries)
-        #expect(line?.contains("412") == true)      // total across categories
-        #expect(line?.contains("2 categories") == true)
+                         ImportedCategorySummary(category: "symptom", count: 12,
+                                                 earliest: Date(timeIntervalSince1970: 1_750_000_000))]
+        let line = try #require(DataSourcesPresentation.summaryLine(from: summaries))
+        #expect(line.contains("412"))              // total across categories
+        #expect(line.contains("2 categories"))
+        #expect(line.contains("2023"))             // the EARLIEST of the two, not the latest
+        #expect(!line.contains("2025"))
     }
 
     @Test func summaryLineIsNilForAnEmptyImport() {
@@ -2556,12 +2723,19 @@ enum DataSourcesPresentation {
 
     /// Derived from the HealthKit-scoped summary, never from the requested
     /// one-year window: export.zip reaches further back, a partial grant less.
+    /// The earliest date is the whole point of Task 7 computing `earliest` —
+    /// "back to March 2025" is what makes the number feel like the user's own
+    /// history rather than a counter.
     static func summaryLine(from summaries: [ImportedCategorySummary]) -> String? {
         guard !summaries.isEmpty else { return nil }
         let total = summaries.reduce(0) { $0 + $1.count }
         guard total > 0 else { return nil }
         let categories = summaries.count
-        return "\(total.formatted()) events across \(categories) categor\(categories == 1 ? "y" : "ies")"
+        var line = "\(total.formatted()) events across \(categories) categor\(categories == 1 ? "y" : "ies")"
+        if let earliest = summaries.map(\.earliest).min() {
+            line += ", back to \(earliest.formatted(.dateTime.month(.wide).year()))"
+        }
+        return line
     }
 }
 ```
@@ -2691,12 +2865,19 @@ import HealthGraphCore
 @testable import Food_Intolerances
 
 @Suite struct SeedCatalogTests {
-    @Test func everyOfferedKeyResolvesToARealCatalogEntry() {
+    /// Iterates the NAMES, not the mapped keys. Asserting over the keys would
+    /// only re-check whatever `offered` was built from and could not fail.
+    @Test func everyOfferedNameIsARealCatalogEntry() {
         let known = Set(HealthGraphCore.SymptomCatalog.all.map(\.canonicalKey))
-        #expect(!SeedSymptomGrid.offered.isEmpty)   // non-vacuous
-        for key in SeedSymptomGrid.offered {
-            #expect(known.contains(key))
+        #expect(!SeedSymptomGrid.offeredNames.isEmpty)   // non-vacuous
+        for name in SeedSymptomGrid.offeredNames {
+            let key = HealthGraphCore.SymptomCatalog.canonicalKey(for: name)
+            #expect(known.contains(key), "\(name) does not exist in SymptomCatalog")
         }
+    }
+
+    @Test func nothingIsDroppedBetweenNamesAndKeys() {
+        #expect(SeedSymptomGrid.offered.count == SeedSymptomGrid.offeredNames.count)
     }
 
     @Test func noRedFlagKeyIsOffered() {
@@ -2733,20 +2914,29 @@ import HealthGraphCore
 /// `SymptomChip` is already an app-target-global name.
 struct SeedSymptomGrid: View {
     /// Curated and ORDERED — deliberately not derived from
-    /// `SymptomCatalog.all`, which is alphabetical. Every entry is asserted to
-    /// resolve to a real catalog key, and every RedFlagCatalog key is excluded:
-    /// capture evaluates red flags after each write, so a seeded chip here
-    /// would be a one-tap path to a full-screen emergency takeover.
-    static let offered: [String] = [
-        "Headache", "Migraine", "Bloating", "Abdominal Cramps", "Nausea",
-        "Diarrhea", "Constipation", "Heartburn", "Fatigue", "Brain Fog",
-        "Joint Pain", "Muscle Pain", "Skin Rash", "Itching", "Congestion",
-        "Insomnia", "Anxiety", "Dizziness",
-    ].map { HealthGraphCore.SymptomCatalog.canonicalKey(for: $0) }
-        .filter { key in
-            let known = Set(HealthGraphCore.SymptomCatalog.all.map(\.canonicalKey))
-            return known.contains(key) && !Set(RedFlagCatalog.allSymptomKeys).contains(key)
-        }
+    /// `SymptomCatalog.all`, which is alphabetical.
+    ///
+    /// These are CATALOG DISPLAY NAMES, verified to exist. The catalog was
+    /// ported from a body-map app and is region-oriented, so the everyday word
+    /// is often not the entry: it has "Loose Stool" not "Diarrhea",
+    /// "Indigestion" not "Heartburn", "Cognitive Fog" not "Brain Fog".
+    /// `canonicalKey(for:)` is TOTAL — it derives a key for any string — so a
+    /// wrong name here produces a plausible key that silently matches nothing.
+    /// The test below guards against exactly that, which is why it iterates
+    /// THESE NAMES and not the mapped keys.
+    static let offeredNames: [String] = [
+        "Headache", "Migraine", "Bloating", "Upper Abdominal Cramps", "Nausea",
+        "Loose Stool", "Hard Stool", "Indigestion", "Fatigue", "Cognitive Fog",
+        "Joint Pain", "Muscle Soreness", "Skin Rash", "Congestion",
+        "Anxiety", "Dizziness",
+    ]
+
+    /// No filtering here. A filter would silently swallow a bad name and leave
+    /// the guard test asserting a predicate the array was already filtered on —
+    /// a tautology that cannot fail. Red-flag exclusion is asserted separately.
+    static let offered: [String] = offeredNames.map {
+        HealthGraphCore.SymptomCatalog.canonicalKey(for: $0)
+    }
 
     @Binding var selection: [String]
 
@@ -2811,26 +3001,33 @@ struct FirstRunSeedingView: View {
 
 - [ ] **Step 5: Wire seeds into symptom chips**
 
-`@StateObject` property defaults cannot read `@EnvironmentObject`, so seeds are passed into the model at `.task` time rather than through its init. In `Views/HealthOS/Capture/SymptomCaptureView.swift`, change the chip-loading call:
+`@StateObject` property defaults cannot read `@EnvironmentObject` (`SymptomCaptureView.swift:50` is such a default), so seeds are passed **as a parameter at call time**, not stored as mutable state on the model. A mutable `model.seeds` property would work only if every caller remembered to set it before `loadChips()` — a parameter makes that ordering unrepresentable.
+
+In `Views/HealthOS/Capture/SymptomCaptureView.swift`, change `loadChips()` (line 27) to take seeds:
 
 ```swift
+    func loadChips(seeds: [String] = []) async {
+        guard let recent = try? await store.eventsPage(before: nil, limit: 300, categories: [.symptom], sources: [.manual]) else { return }
         chipKeys = ChipRanker.rank(history: recent, category: .symptom, now: now(),
                                    timeZone: .current, limit: 8, seeds: seeds)
+    }
 ```
 
-Give the model a `seeds` property defaulting to `[]`, and set it from the view before loading:
+Add the environment object to `SymptomCaptureView`:
 
 ```swift
     @EnvironmentObject private var firstRunState: FirstRunState
 ```
 
-and in the view's existing `.task`, before the chip load:
+And change the `.task` at line 66:
 
 ```swift
-            model.seeds = firstRunState.seeds   // re-validated on read
+        .task { await model.loadChips(seeds: firstRunState.seeds) }   // re-validated on read
 ```
 
 Only the symptom site takes seeds — food and dose seeding is out of scope.
+
+> `CaptureSheet` presents `SymptomCaptureView` from inside `HealthOSRootView`, which is below the `environmentObject` injections in `FoodIntolerancesApp` — so `firstRunState` resolves. Verify this at build time: a missing `@EnvironmentObject` is a **runtime crash on first access**, not a compile error. `SymptomCaptureView`'s `#Preview`, if it has one, must also inject a `FirstRunState`.
 
 - [ ] **Step 6: Run tests, build, commit**
 
@@ -2866,16 +3063,20 @@ import CoreLocation
 import HealthGraphCore
 
 struct FirstRunLocationView: View {
+    /// Passed in from the flow's in-memory selection. Reading
+    /// `firstRunState.seeds` here would ALWAYS be empty: that key is written by
+    /// `markCompleted(seeds:)`, which runs after this screen.
+    let seeds: [String]
     let onContinue: () -> Void
 
-    @EnvironmentObject private var firstRunState: FirstRunState
     @State private var status: CLAuthorizationStatus = CLLocationManager().authorizationStatus
     private let manager = CLLocationManager()
 
     /// "watch", never "find": every weather exposure is `.contested` in
     /// PlausibilityCatalog, so promising discovery would oversell it.
-    private var explanation: String {
-        let picked = firstRunState.seeds.prefix(2)
+    /// Testable — pins the "you picked X and Y" phrasing spec §3.5 requires.
+    static func explanation(for seeds: [String]) -> String {
+        let picked = SymptomSeeds.validate(seeds, limit: 8).prefix(2)
             .map { HealthGraphCore.SymptomCatalog.displayName(for: $0) }
         guard !picked.isEmpty else {
             return "If you share location, we'll watch pressure drops, temperature swings and air quality against your symptoms."
@@ -2888,13 +3089,15 @@ struct FirstRunLocationView: View {
             Text("Your environment")
                 .font(HealthTheme.screenTitle())
                 .foregroundStyle(HealthTheme.ink)
-            Text(explanation)
+            Text(Self.explanation(for: seeds))
                 .font(.subheadline)
                 .foregroundStyle(HealthTheme.inkSecondary)
             Spacer()
             switch status {
             case .notDetermined:
                 Button("Share location") {
+                    // The ONLY caller of the request, now that Task 11 Step 2
+                    // removed it from LocationService.init().
                     manager.requestWhenInUseAuthorization()
                     status = manager.authorizationStatus
                 }
@@ -2940,7 +3143,7 @@ git commit -m "feat(first-run): state-aware location screen that never blocks co
 
 **Files:**
 - Create: `Views/HealthOS/Health/DataSourcesView.swift`
-- Modify: `Views/HealthOS/Health/HealthTabView.swift`, `Views/HealthGraphDebugView.swift`
+- Modify: `Views/HealthOS/Health/HealthTabView.swift`
 
 **The import action must call `startObserving()` after backfill.** The root `.task` has already run and will not retry until relaunch, so a user who skips onboarding and imports later gets no live ingestion for the rest of the session.
 
