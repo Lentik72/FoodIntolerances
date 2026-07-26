@@ -110,7 +110,7 @@ Four UserDefaults keys, no new table:
 | Key | Meaning |
 |---|---|
 | `hg.firstRun.startedVersion` (Int) | 0 = never begun. Set **before** onboarding performs any work. |
-| `hg.firstRun.completedVersion` (Int) | 0 = never finished. Versioned so a later round can add a step. |
+| `hg.firstRun.completedVersion` (Int) | Highest flow version fully finished. Compared against `currentVersion`, never against zero. |
 | `hg.firstRun.symptomSeeds` ([String]) | Validated canonical keys from §3.4. Never written to the graph. |
 | `hg.firstRun.forceShow` (Bool, DEBUG only) | Bypasses reconciliation until the flow finishes. |
 
@@ -121,23 +121,36 @@ containing events — which is exactly the legacy-reconciliation predicate. The 
 would mark onboarding complete and mount the shell, permanently skipping symptom selection
 and location. The user would never see them again, and nothing would look wrong.
 
+**Resolver truth table — every comparison is against `currentVersion`, never against zero.**
+`completedVersion > 0 → shell` would make the versioning decorative: when a later round
+raises `currentVersion` to 2, a user sitting at `completedVersion == 1` would go straight to
+the shell and never see the added screen, and an interrupted v2 upgrade
+(`completedVersion == 1`, `startedVersion == 2`) would be skipped the same way.
+
+| # | Condition | Resolution |
+|---|---|---|
+| 1 | `completedVersion >= currentVersion` | Shell. |
+| 2 | `startedVersion == currentVersion && completedVersion < currentVersion` | Resume or restart the required flow. |
+| 3 | `0 < completedVersion < currentVersion` | Run the explicit `completedVersion → currentVersion` screen map. |
+| 4 | `startedVersion == 0 && completedVersion == 0` | Legacy reconciliation (below) applies **only here**. |
+
 State transitions:
 
-- `startedVersion` is written before authorization or backfill begins.
-- `startedVersion > 0 && completedVersion == 0` → resume or restart the flow. Never
-  reconcile.
-- Completion writes `completedVersion`, then clears the in-progress marker.
-- DEBUG *reset first run* clears the marker along with the other keys.
+- The fresh-or-upgrade flow writes `startedVersion = currentVersion` **before** any side
+  effect.
+- Completion writes `completedVersion = currentVersion`, then clears `startedVersion`.
+- DEBUG *reset first run* clears both markers along with the other keys.
 
 `completedVersion` enables version-aware **routing** only. It does not by itself confer
 step-skipping: the flow carries an explicit prior-version → required-screens map, and any
 future round that adds a screen must extend that map.
 
-**Legacy reconciliation** runs only when `completedVersion == 0`, **`startedVersion == 0`**,
-and `forceShow` is false. Graph and backfill presence may be consulted *only* under that
-`startedVersion == 0` condition — otherwise onboarding's own writes satisfy the predicate
-that decides whether onboarding is needed. It marks first run complete without showing it
-when the install is already populated or backfilled:
+**Legacy reconciliation** applies to row 4 only — `startedVersion == 0 &&
+completedVersion == 0` — and only when `forceShow` is false. Graph and backfill presence
+may be consulted *only* there; otherwise onboarding's own writes satisfy the predicate
+that decides whether onboarding is needed. It marks first run complete
+(`completedVersion = currentVersion`) without showing it when the install is already
+populated or backfilled:
 
 - Condition: `hg.hk.backfillCompleted` is set **or** the graph contains any event.
 - The graph check is a new synchronous package primitive,
@@ -323,6 +336,7 @@ began and was killed, or an import attempted but never finished:
 |---|---|
 | `notStarted` | No import has ever been attempted. |
 | `inProgress` | Persisted **before** authorization or backfill begins. |
+| `interrupted` | An `inProgress` import whose process died. Terminal. |
 | `attemptFailed` | Authorization or backfill threw. |
 | `completedNoData` | Finished, zero events, no failures. |
 | `completed` | Finished with events, no failures. |
@@ -331,6 +345,22 @@ began and was killed, or an import attempted but never finished:
 `inProgress` surviving a relaunch is exactly how a killed import is detected, and it gives
 onboarding the signal it needs to resume intelligently rather than restart from scratch.
 Every terminal path must transition out of it.
+
+**`inProgress` must never be rendered literally.** After process death no task exists to
+finish it, so a surface that draws the state verbatim shows a spinner that never resolves.
+**At launch, before either surface renders**, a persisted `inProgress` with no live task is
+normalized to `interrupted`:
+
+- Onboarding entering Backfill in this state shows a **recovery screen** — "The previous
+  import was interrupted." `[Retry]` `[Continue]` — rather than restarting silently.
+- Data sources shows "The previous import was interrupted."
+- **Previously completed summary data stays available.** The summary fields persist
+  independently of the state, so an interruption during a *re-import* must not blank out
+  what a prior successful import already established.
+
+`interrupted` is its own state rather than `attemptFailed(reason:)` because the two need
+different copy and different affordances: nothing errored, the process simply died, and the
+correct offer is to resume rather than to report a failure.
 
 Persisted alongside the state:
 
@@ -498,29 +528,40 @@ on.
 
 ## Data flow
 
+**Launch resolution** (sync, pre-frame, fail-closed). Evaluated in order; first match wins.
+Only rule 1 and the reconciliation arm of rule 4 reach the shell — rules 2 and 3 always
+enter the flow:
+
+| # | Condition | → |
+|---|---|---|
+| 1 | `completedVersion >= currentVersion` | **shell** |
+| 2 | `startedVersion == currentVersion && completedVersion < currentVersion` | **flow** (resume/restart) |
+| 3 | `0 < completedVersion < currentVersion` | **flow** (`completedVersion → currentVersion` screen map) |
+| 4 | both zero, and backfilled-or-`anyEventExists` | reconcile → `completedVersion = currentVersion` → **shell** |
+| 5 | otherwise | **flow** (fresh) |
+
+Before either surface renders, a persisted `.inProgress` import status with no live task is
+normalized to `.interrupted` (§5).
+
+**Shell branch** mounts `HealthOSRootView` and attaches, on that branch only:
+`startObserving()`, initial emission, scene-active emission, location-recovery emission.
+
+**Flow branch** mounts `FirstRunFlowView`:
+
 ```
-launch
-  └─ resolve first-run state (sync, pre-frame, fail-closed)
-       ├─ completedVersion > 0 ───────────────┐
-       ├─ startedVersion > 0 && completed == 0 │  → HealthOSRootView branch
-       │      → resume/restart the flow        │     + startObserving()
-       ├─ started == 0 && completed == 0 &&    │     + initial / scene-active /
-       │   (backfilled || anyEventExists)      │       location-recovery emission
-       │      → mark complete ─────────────────┤
-       │                                       │
-       └─ otherwise → FirstRunFlowView         │
-              │  (writes startedVersion FIRST) │
-              ├─ 1 promise                     │
-              ├─ 2 connect  → status .inProgress → requestAuthorization()
-              ├─ 3 backfill → backfill() → startObserving()
-              │      summary = healthKit-scoped query
-              │      (source == .healthKit && syntheticBatch IS NULL
-              │       && deletedAt IS NULL) → counts + earliest per category
-              │      status → completed / completedNoData / completedWithIssues
-              ├─ 4 seeding  → validated hg.firstRun.symptomSeeds → ChipRanker(seeds:)
-              ├─ 5 location → request only when .notDetermined
-              └─ complete   → set completedVersion, clear startedVersion
-                                and forceShow ────────────────────────┘
+writes startedVersion = currentVersion  ← BEFORE any side effect
+  ├─ 1 promise
+  ├─ 2 connect   → status .inProgress → requestAuthorization()
+  ├─ 3 backfill  → backfill() → startObserving()
+  │       summary = healthKit-scoped query
+  │         (source == .healthKit && syntheticBatch IS NULL && deletedAt IS NULL)
+  │         → counts + earliest per category
+  │       status → completed / completedNoData / completedWithIssues / attemptFailed
+  │       entered as .interrupted → recovery screen [Retry] [Continue]
+  ├─ 4 seeding   → validated hg.firstRun.symptomSeeds → ChipRanker(seeds:)
+  ├─ 5 location  → request only when .notDetermined
+  └─ complete    → completedVersion = currentVersion, clear startedVersion + forceShow
+                   → shell
 ```
 
 ## Testing
@@ -552,15 +593,21 @@ launch
 
 **App**
 
-- First-run routing through the prior-version → screens map.
+- **Resolver truth table**, one case per row, all against `currentVersion`: equal-or-greater
+  → shell; `startedVersion == currentVersion` with lower completed → flow; `0 < completed <
+  current` → the version screen map; both zero + populated → reconcile → shell; otherwise
+  → flow. Explicitly assert that `completedVersion == 1, currentVersion == 2` routes to the
+  **flow**, and that `completedVersion == 1, startedVersion == 2` does too — a Boolean
+  resolver passes every other case and fails exactly these.
 - **Interrupted onboarding (required):** begin the flow, ingest one event, simulate
   termination before completion, relaunch — must return to the flow, **not** the shell.
   This is the test that would have caught the self-skipping defect.
-- Reconciliation invariants: runs only when `startedVersion == 0` *and*
-  `completedVersion == 0`; never advances a nonzero version; never re-onboards a populated
-  graph; no flash; fail-closed on query error.
+- Reconciliation invariants: applies only when both versions are zero; never advances a
+  nonzero version; never re-onboards a populated graph; no flash; fail-closed on query
+  error.
 - `HealthImportStatus` transitions: every terminal path leaves `inProgress`; a persisted
-  `inProgress` surviving relaunch is detected as a killed import.
+  `inProgress` is normalized to `interrupted` at launch **before** any surface renders;
+  a prior successful summary survives an interrupted re-import.
 - Connect branching: `Not now` skips Backfill and lands on symptom selection; an
   `requestAuthorization()` throw stays on Connect with Retry; success advances.
 - Backfill outcome branching across the three states.
