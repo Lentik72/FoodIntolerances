@@ -3601,6 +3601,20 @@ git commit -m "fix(ui): retire copy claiming capture, insights and connect don't
 
 Per spec §Device gate. **The baseline must already have been captured at Task 1 Step 9.**
 
+> **AMENDED 2026-07-26 after the baseline came back EMPTY.** The device's graph was rebuilt
+> from a fresh container: 35,453 healthKit events but only 15 manual ones. Mining needs
+> exposure→**outcome** pairs, outcomes are only symptom and mood events, and those come
+> almost entirely from manual capture — so the recompute correctly produced **zero
+> relationships**. The graph is exposure-rich and outcome-empty.
+>
+> Consequence, stated plainly so a passing gate is never mistaken for coverage: **the
+> relationship-diff gate is vacuous for Tasks 2 and 4.** Their effects are visible only
+> through mined relationships, and there are none. Their correctness rests entirely on the
+> package tests. Take the after-dump anyway, but its only honest verdict is "still zero,
+> consistent with an outcome-empty graph".
+>
+> The tasks whose device checks remain real are below under "Per-task device checks".
+
 - [ ] Build final branch HEAD, install, **run a recompute**, then run the relationship dump, saving as `.superpowers/sdd/relationship-after.txt`. The recompute is mandatory and must come first — `confidence`/`evidence`/`contradictions` are stored columns, so dumping without it compares two stale snapshots and a real change reads as "no change".
 - [ ] Diff against `relationship-baseline.txt` as text.
 - [ ] Classify every difference:
@@ -3610,6 +3624,22 @@ Per spec §Device gate. **The baseline must already have been captured at Task 1
 | A `highStress` relationship decays or vanishes, no new confounder | **Expected** — its exposures were mindfulness minutes and no longer exist (Task 2). |
 | Any other relationship demotes, with `derived:cyclePhase.*` or `illness` in its new confounder list | **Expected** — Tasks 4 and 5 doing their job. |
 | Any other disappearance, unexplained by either | **Regression.** Investigate before merge. |
+
+*(With a zero baseline, none of the three rows can fire. Keep the table for when the graph
+has outcome data; do not report "gate passed" from it in the meantime.)*
+
+### Per-task device checks (these replace the vacuous relationship diff)
+
+- [ ] **Task 3 — cycle-start metadata is real.** After a **full backfill** (anchors mean
+      live observation never re-delivers already-ingested flow samples), open a
+      `menstrualFlow` event in Timeline detail. The **Cycle** row must read
+      **"Period start"** on a start day and be **absent** — not "false" — on other flow
+      days. Needs no relationships.
+- [ ] **Task 5 — illness markers are loggable.** Fever, Chills, Night Sweats, Sore Throat,
+      Congestion, Runny Nose and Generalized Body Ache must all appear in symptom capture
+      search. Needs no relationships.
+- [ ] **Tasks 9–17** — fully device-verifiable as originally planned; the first-run flow,
+      Data sources and copy retirement never depend on mined relationships.
 
 - [ ] Fresh-install flow end to end: promise → connect → backfill → seeding → location → Home.
 - [ ] Reset first run (DEBUG) reproduces the flow on the already-populated device.
