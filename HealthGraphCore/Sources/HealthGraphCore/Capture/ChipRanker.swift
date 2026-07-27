@@ -35,8 +35,12 @@ public enum ChipRanker {
             .prefix(limit).map(\.0)
         guard ranked.count < limit, !seeds.isEmpty else { return ranked }
         var out = ranked
-        let existing = Set(ranked)
-        for seed in seeds where !existing.contains(seed) {
+        // `existing` must grow as seeds are appended: `seeds` is a public
+        // parameter, so an internally-duplicated array (e.g. ["bloating",
+        // "bloating"]) would otherwise yield a duplicate chip — dedup can't
+        // depend on every caller having run SymptomSeeds.validate first.
+        var existing = Set(ranked)
+        for seed in seeds where existing.insert(seed).inserted {
             out.append(seed)
             if out.count == limit { break }
         }

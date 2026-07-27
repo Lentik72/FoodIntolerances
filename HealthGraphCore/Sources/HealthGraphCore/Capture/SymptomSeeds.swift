@@ -18,6 +18,10 @@ public enum SymptomSeeds {
     /// chip is a one-tap path to a full-screen emergency takeover on the first
     /// screen a new user sees.
     public static func validate(_ keys: [String], limit: Int) -> [String] {
+        // The cap below is `out.count == limit`, which a non-positive limit can
+        // never hit (count starts at 0 and only grows) — so limit: 0 would
+        // silently return EVERY valid key instead of none. Fail closed here.
+        guard limit > 0 else { return [] }
         let known = Set(SymptomCatalog.all.map(\.canonicalKey))
         let redFlags = Set(RedFlagCatalog.allSymptomKeys)
         var seen = Set<String>()

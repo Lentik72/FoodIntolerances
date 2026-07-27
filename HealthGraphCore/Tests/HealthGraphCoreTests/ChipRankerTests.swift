@@ -57,6 +57,15 @@ struct ChipRankerTests {
             .filter { !Set(RedFlagCatalog.allSymptomKeys).contains($0) }
         #expect(SymptomSeeds.validate(keys, limit: 8).count == 8)
     }
+
+    @Test func nonPositiveLimitReturnsNothing() {
+        // The cap inside validate is `out.count == limit`, which limit <= 0
+        // can never hit (count starts at 0 and only grows) — without the
+        // `limit > 0` guard, limit: 0 silently returned EVERY valid key.
+        let real = SymptomCatalog.canonicalKey(for: "Headache")
+        let cleaned = SymptomSeeds.validate([real], limit: 0)
+        #expect(cleaned.isEmpty)
+    }
 }
 
 @Suite struct ChipRankerSeedsTests {
@@ -103,5 +112,28 @@ struct ChipRankerTests {
         let history = [ev("headache", now)]
         #expect(ChipRanker.rank(history: history, category: .symptom, now: now,
                                 timeZone: tz, limit: 8) == ["headache"])
+    }
+
+    @Test func seedsNeverAddedWhenHistoryAlreadyFillsTheLimit() {
+        // The ONLY fixture where ranked.count == limit — i.e. where the
+        // guard's `ranked.count < limit` conjunct takes its false branch.
+        // Without that conjunct the append loop is entered with out.count
+        // already AT the limit, so the `out.count == limit` break can never
+        // fire again (every append moves further past it) and EVERY
+        // non-overlapping seed gets appended without bound.
+        let history = [ev("headache", now), ev("nausea", now), ev("bloating", now), ev("fatigue", now)]
+        let ranked = ChipRanker.rank(history: history, category: .symptom, now: now,
+                                     timeZone: tz, limit: 4, seeds: ["cough"])
+        #expect(ranked.count == 4)
+        #expect(!ranked.contains("cough"))
+    }
+
+    @Test func internallyDuplicatedSeedsAppendOnlyOnce() {
+        // `seeds` is a public parameter: deduping against the ranked list
+        // alone would let ["bloating", "bloating"] produce a duplicate chip
+        // whenever a caller skips SymptomSeeds.validate.
+        let ranked = ChipRanker.rank(history: [], category: .symptom, now: now,
+                                     timeZone: tz, limit: 4, seeds: ["bloating", "bloating", "fatigue"])
+        #expect(ranked == ["bloating", "fatigue"])
     }
 }
