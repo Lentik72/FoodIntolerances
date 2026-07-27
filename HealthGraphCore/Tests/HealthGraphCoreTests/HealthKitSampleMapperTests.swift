@@ -147,3 +147,49 @@ struct HealthKitSampleMapperTests {
             for: "HKQuantityTypeIdentifierHeartRate") == .average)
     }
 }
+
+@Suite struct MenstrualCycleStartTests {
+    let t0 = Date(timeIntervalSince1970: 1_750_000_000)
+
+    private func flow(_ raw: Int, cycleStart: Bool?) -> HealthEvent? {
+        HealthKitSampleMapper.map(
+            CategorySampleData(identifier: "HKCategoryTypeIdentifierMenstrualFlow",
+                               start: t0, end: t0, value: raw, timezoneID: nil,
+                               menstrualCycleStart: cycleStart),
+            source: .healthKit)
+    }
+
+    @Test func trueIsPreservedAsTrue() throws {
+        let e = try #require(flow(2, cycleStart: true))
+        #expect(e.menstrualCycleStart == true)
+        #expect(e.subtype == "menstrualFlow")   // subtype is NOT rewritten to periodStart
+        #expect(e.value == 1)                   // flow measurement survives (light -> 1)
+    }
+
+    @Test func falseIsPreservedAsFalseNotNil() throws {
+        let e = try #require(flow(3, cycleStart: false))
+        #expect(e.menstrualCycleStart == false)
+    }
+
+    @Test func nilOmitsTheKeyEntirelyAndReadsBackAsNil() throws {
+        let e = try #require(flow(3, cycleStart: nil))
+        #expect(e.menstrualCycleStart == nil)
+        // The key must be ABSENT, not "false" — Task 4 treats nil and false differently.
+        if let data = e.metadata {
+            let dict = try #require(try? JSONDecoder().decode([String: String].self, from: data))
+            #expect(dict["menstrualCycleStart"] == nil)
+        }
+    }
+
+    @Test func defaultedParameterKeepsExistingCallSitesAtNil() throws {
+        let e = try #require(HealthKitSampleMapper.map(
+            CategorySampleData(identifier: "HKCategoryTypeIdentifierMenstrualFlow",
+                               start: t0, end: t0, value: 4, timezoneID: nil),
+            source: .healthExportFile))
+        #expect(e.menstrualCycleStart == nil)   // export records are inference-eligible
+    }
+
+    @Test func noneFlowIsStillDroppedRegardlessOfMarker() {
+        #expect(flow(5, cycleStart: true) == nil)   // case 5 returns before metadata is considered
+    }
+}

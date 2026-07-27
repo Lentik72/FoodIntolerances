@@ -126,7 +126,9 @@ struct EventDetailView: View {
     private var detailsCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(metadataRows, id: \.key) { entry in
-                row(entry.label, entry.value,
+                let display = (entry.key == "menstrualCycleStart" && entry.value == "true")
+                    ? "Period start" : entry.value
+                row(entry.label, display,
                     moonPhase: entry.key == "phase" ? moonPhaseName(for: displayEvent) : nil)
             }
         }
@@ -191,11 +193,14 @@ struct EventDetailView: View {
         guard let data = displayEvent.metadata,
               let dict = try? JSONDecoder().decode([String: String].self, from: data) else { return [] }
         let labels = ["kcal": "Calories", "distanceKm": "Distance (km)",
-                      "phase": "Moon phase", "season": "Season"]
+                      "phase": "Moon phase", "season": "Season",
+                      "menstrualCycleStart": "Cycle"]
         // "provenance" is the engine's TemporalProvenance flag, not health information —
         // presentation-only filter (the stored metadata keeps it; mining depends on it).
         // ONLY this key: other unknown keys stay visible, they may carry imported data.
-        return dict.filter { $0.key != "provenance" }
+        // "menstrualCycleStart" == "false" is also suppressed: it's the majority case on
+        // flow days (not-a-start) and would be noise — only an affirmative start is a row.
+        return dict.filter { $0.key != "provenance" && !($0.key == "menstrualCycleStart" && $0.value == "false") }
             .sorted { $0.key < $1.key }
             .map { (key: $0.key, label: labels[$0.key] ?? $0.key, value: $0.value) }
     }

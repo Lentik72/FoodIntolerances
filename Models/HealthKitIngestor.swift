@@ -324,10 +324,14 @@ final class HealthKitIngestor: ObservableObject {
                 source: .healthKit)
         }
         if let category = sample as? HKCategorySample {
+            // HKMetadataKeyMenstrualCycleStart is stored as an NSNumber boolean.
+            // Absent -> nil (unknown), which keeps the sample inference-eligible.
+            let cycleStart = (category.metadata?[HKMetadataKeyMenstrualCycleStart] as? NSNumber)?.boolValue
             return HealthKitSampleMapper.map(
                 CategorySampleData(identifier: category.categoryType.identifier,
                                    start: category.startDate, end: category.endDate,
-                                   value: category.value, timezoneID: timezoneID),
+                                   value: category.value, timezoneID: timezoneID,
+                                   menstrualCycleStart: cycleStart),
                 source: .healthKit)
         }
         return nil

@@ -23,9 +23,17 @@ public struct CategorySampleData: Sendable {
     public let end: Date
     public let value: Int
     public let timezoneID: String?
-    public init(identifier: String, start: Date, end: Date, value: Int, timezoneID: String?) {
+    /// HealthKit's `HKMetadataKeyMenstrualCycleStart`, tri-state on purpose:
+    /// true = authoritative period start, false = definitely not one,
+    /// nil = unknown (export/legacy records) and therefore eligible for run
+    /// inference. Defaulted so the export parser and all existing fixtures
+    /// keep compiling and keep meaning "unknown".
+    public let menstrualCycleStart: Bool?
+    public init(identifier: String, start: Date, end: Date, value: Int, timezoneID: String?,
+                menstrualCycleStart: Bool? = nil) {
         self.identifier = identifier; self.start = start; self.end = end
         self.value = value; self.timezoneID = timezoneID
+        self.menstrualCycleStart = menstrualCycleStart
     }
 }
 
@@ -293,6 +301,13 @@ public enum HealthKitSampleMapper {
             default: return nil
             }
 
+            // Tri-state: OMIT the key when nil. Writing "false" for nil would
+            // make export/legacy records ineligible for run inference.
+            var meta: Data?
+            if let start = sample.menstrualCycleStart {
+                meta = try? JSONEncoder().encode(["menstrualCycleStart": start ? "true" : "false"])
+            }
+
             return HealthEvent(
                 timestamp: sample.start,
                 timezoneID: timezoneID,
@@ -303,7 +318,7 @@ public enum HealthKitSampleMapper {
                 unit: "level",
                 source: source,
                 confidence: 1.0,
-                metadata: nil,
+                metadata: meta,
                 dedupKey: DedupKey.point(.cycle, "menstrualFlow", sample.start)
             )
         }
