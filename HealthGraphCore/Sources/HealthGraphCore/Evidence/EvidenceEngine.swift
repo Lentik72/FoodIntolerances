@@ -52,10 +52,25 @@ public struct EvidenceEngine {
         return (exposures, outcomes)
     }
 
-    // Illness windows as day-sets (always a confounder). Each illness event's day.
+    // Illness windows as day-sets (always a confounder — spec §7.3).
+    // Two producers: explicit `.illness` events (none exist today, but a future
+    // capture surface would land here unchanged), and symptom events that meet
+    // the IllnessMarkers bar. Day-of only; multi-day forward extension is a
+    // deliberate follow-up, not part of this fix.
     func illnessDays(_ events: [HealthEvent]) -> Set<Date> {
         let cal = Self.utc
-        return Set(events.filter { $0.category == .illness }.map { cal.startOfDay(for: $0.timestamp) })
+        var days = Set(events.filter { $0.category == .illness }.map { cal.startOfDay(for: $0.timestamp) })
+
+        var markersByDay: [Date: Set<String>] = [:]
+        for e in events where e.category == .symptom {
+            guard let subtype = e.subtype else { continue }
+            let day = cal.startOfDay(for: e.timestamp)
+            markersByDay[day, default: []].insert(IllnessMarkers.normalize(healthKitSubtype: subtype))
+        }
+        for (day, subtypes) in markersByDay where IllnessMarkers.isIllnessDay(subtypes: subtypes) {
+            days.insert(day)
+        }
+        return days
     }
 
     public func recompute(asOf now: Date) async throws -> RecomputeReport {

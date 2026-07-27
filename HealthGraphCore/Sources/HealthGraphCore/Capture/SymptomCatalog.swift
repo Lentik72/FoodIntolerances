@@ -185,6 +185,17 @@ public enum SymptomCatalog {
         // Other
         ("Other", "torso"),
         ("Severe Allergic Reaction", "torso"),
+
+        // Illness markers (appended 2026-07-26 — see IllnessMarkers).
+        // APPEND ONLY: canonicalKey is derived from displayName, so renaming any
+        // of these orphans every stored event that used the old key.
+        ("Fever", "chest"),
+        ("Chills", "chest"),
+        ("Night Sweats", "chest"),
+        ("Sore Throat", "neck"),
+        ("Congestion", "head"),
+        ("Runny Nose", "head"),
+        ("Generalized Body Ache", "chest"),
     ]
 
     public static let all: [SymptomDefinition] = {
