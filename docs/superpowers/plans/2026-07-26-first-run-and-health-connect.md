@@ -1944,7 +1944,15 @@ final class FirstRunState: ObservableObject {
     @Published private(set) var resolution: FirstRunResolution
     private let defaults: UserDefaults
 
-    init(defaults: UserDefaults = .standard, store: GRDBEventStore) {
+    /// `backfillAttempted` is an EXPLICIT parameter with NO default derived from
+    /// `defaults`. It is a separate dependency from first-run persistence:
+    /// `HealthKitIngestor` writes that flag to `.standard`, while `defaults`
+    /// here is whatever suite the caller injected. Reading it off `defaults`
+    /// works only by accident, because production happens to use `.standard`
+    /// for both — and it would break silently the day an App Group suite is
+    /// adopted for a widget or extension. Defaulting the parameter to a
+    /// `defaults`-derived value would preserve exactly that hidden coupling.
+    init(defaults: UserDefaults = .standard, store: GRDBEventStore, backfillAttempted: Bool) {
         self.defaults = defaults
         // FAIL CLOSED: a read error is a bootstrap failure, not "show
         // onboarding". Onboarding over a populated graph is unrecoverable.
@@ -1956,7 +1964,7 @@ final class FirstRunState: ObservableObject {
             defaults: defaults,
             currentVersion: Self.currentVersion,
             anyEventExists: exists,
-            backfillAttempted: defaults.bool(forKey: HealthKitIngestor.backfillCompletedKey))
+            backfillAttempted: backfillAttempted)
         if resolved == .reconcileThenShell {
             defaults.set(Self.currentVersion, forKey: FirstRunKeys.completedVersion)
         }
@@ -2340,6 +2348,44 @@ git commit -m "feat(first-run): persisted Apple Health import status with interr
 
 ---
 
+## Testability hardening (applies to Tasks 11, 12, 16, 17)
+
+Tasks 11–17 were originally specced with **no tests at all**, resting entirely on the
+device gate. That gate turned out to be thin: the device's graph is exposure-rich and
+outcome-empty, so the relationship diff proves nothing (see the amended Device gate).
+More importantly, device testing must **complement** structural tests, never substitute
+for testable lifecycle logic.
+
+So each of these four tasks extracts its lifecycle logic behind a seam and pins it. The
+rule for every seam below: **name the critical mutant before implementing, and demonstrate
+the final test fails against it** (mutate, run, restore, report both directions).
+
+**The device gate is retained ONLY for:** real HealthKit and location system dialogs, root
+mounting order, and navigation wiring. Nothing that can be expressed as a testable state
+transition belongs there.
+
+| Task | Seam | What must be pinned |
+|---|---|---|
+| 11 | explicit `backfillAttempted`; injectable location adapter | launch normalization applies to the **exact injected store instance**; permission-state transitions without a system dialog |
+| 12 | an injected Connect **workflow/controller**, not just a pure function | **call ORDER and counts**: that `.interrupted` is inspected *before* anything calls `beginAttempt()` |
+| 16 | an injected import **workflow** | begin, success, partial failure, thrown failure, `startObserving()` invocation, cleanup after an export-import failure |
+| 17 | pure presentation helpers | every empty-state and copy branch |
+
+**Why Task 12 needs a controller and not merely a pure decision function:** a pure function
+can prove *which* outcome routing produces, but it cannot prove *ordering* — and ordering
+is the actual defect that already occurred here. Connect called `beginAttempt()`
+unconditionally, which overwrote a persisted `.interrupted` before the Backfill screen ever
+read it, making the recovery branch dead code on every onboarding path. No output-only
+assertion catches that; only observing that `beginAttempt` was *not* called, or was called
+after the inspection, does. Use a spy/recording double and assert the recorded sequence for
+all four paths: skip, authorization success, authorization throw, and interrupted recovery.
+
+For Task 17, note that **deletion and List-modifier placement remain structural review** —
+a pure helper can pin which string is chosen, but not that `whatsNext` was removed from the
+body or that the three `listRow*` modifiers survived on the empty-state row.
+
+---
+
 ## Task 11: Root switch and launch ordering
 
 **Files:**
@@ -2367,6 +2413,51 @@ In `FoodIntolerancesApp.swift`, delete line 32:
 ```
 
 `Views/HealthOS/` and `HealthGraphCore/` schedule zero notifications — this asks for a permission the app never uses, on top of whatever the first screen is.
+
+- [ ] **Step 0: Refactor `backfillAttempted` into an explicit dependency**
+
+Carried into this task from Task 9's review. `FirstRunState.init` currently reads
+`HealthKitIngestor.backfillCompletedKey` off its **injected** `defaults`, while the
+ingestor writes that flag to `.standard`. Those line up only because production happens to
+use `.standard` for both — the coupling is accidental and would break silently the day an
+App Group suite is adopted for a widget or extension.
+
+Change the initializer to `init(defaults:store:backfillAttempted:)` with **no default** for
+the new parameter (a `defaults`-derived default would preserve the very coupling being
+removed), and delete the internal read.
+
+At the production root (Step 5), pass it explicitly:
+
+```swift
+    @StateObject private var firstRunState = FirstRunState(
+        store: GRDBEventStore(database: HealthGraphProvider.shared),
+        backfillAttempted: UserDefaults.standard.bool(forKey: HealthKitIngestor.backfillCompletedKey))
+```
+
+**This breaks Task 9's `FirstRunStateTests`, deliberately.** Its reconcile-branch fixture
+currently reaches row 4 by writing the backfill key into the injected suite; that no longer
+works, and it must pass `backfillAttempted: true` directly instead. Update the suite's
+`makeState()` helper to take the Boolean.
+
+Then add the test that proves the coupling is gone — inject a **conflicting** value:
+
+```swift
+    @Test func routingIgnoresABackfillFlagInTheInjectedDefaults() throws {
+        // The injected suite says "backfill happened"; the parameter says it did not.
+        // The parameter must win. Under the old defaults-read this resolved
+        // .reconcileThenShell and the user was silently never onboarded.
+        let d = UserDefaults(suiteName: "first-run-conflict-\(UUID().uuidString)")!
+        d.set(true, forKey: HealthKitIngestor.backfillCompletedKey)
+        let db = try AppDatabase.inMemory()
+        let state = FirstRunState(defaults: d, store: GRDBEventStore(database: db),
+                                  backfillAttempted: false)
+        #expect(state.resolution == .flow(.fresh))
+        #expect(state.flowEntry == .fresh)
+    }
+```
+
+**Mutant to kill:** restore the `defaults`-derived read. That test must fail; the rest of
+the suite must stay green.
 
 - [ ] **Step 2: Stop `LocationService` prompting at launch**
 
@@ -2412,7 +2503,20 @@ import HealthGraphCore
 ```
 
 Create `Models/LocationPermissionStore.swift` — the single observable owner of location
-authorization. `FirstRunLocationView` must not own a bare `CLLocationManager`: reading
+authorization, **behind an injectable adapter** so permission transitions are testable
+without a system dialog.
+
+Define a small protocol the store depends on rather than touching `CLLocationManager`
+directly — something like `LocationAuthorizing` exposing the current status, a `request()`,
+and a way to deliver a status change. Production conforms a `CLLocationManager`-backed
+adapter; tests conform a fake that reports a scripted status and fires the change callback
+on demand. Without that seam the only way to exercise `.notDetermined → .authorized` is a
+real dialog, which is precisely what the device gate is *not* supposed to be carrying.
+
+**Mutants to kill:** `request()` called when status is already `.denied` (it must be a
+no-op — re-requesting cannot re-prompt and would mask the Open Settings path); the delegate
+callback updating a *copy* rather than the observed store; the status read once at init and
+never refreshed. `FirstRunLocationView` must not own a bare `CLLocationManager`: reading
 `authorizationStatus` straight after `requestWhenInUseAuthorization()` still returns
 `.notDetermined` (the dialog is asynchronous), so the screen would sit stale after the user
 answers.
@@ -2477,6 +2581,17 @@ At the end of `init()`, after the existing setup:
         status.normalizeAtLaunch()
         _importStatus = StateObject(wrappedValue: status)
 ```
+
+**This must be pinned, not just commented.** The exact-instance property is the whole point
+and it is invisible to any assertion that only reads UserDefaults — a throwaway-normalize
+implementation writes the same bytes to disk. Extract the pairing into a testable factory
+(e.g. a `static func makeNormalizedStore(defaults:) -> HealthImportStatusStore`) and assert
+that the **returned instance's** `current.outcome` is `.interrupted` after being handed a
+suite holding `.inProgress`.
+
+**Mutant to kill:** normalize a throwaway and return a freshly-constructed store. Disk
+state is identical; only the returned instance's in-memory `current` differs. This is the
+same persistence-vs-memory axis that hid four mutants in Task 10 — inverted.
 
 Assigning `_importStatus` directly is the supported way to give a `@StateObject` a
 runtime-constructed value; the wrapped value is created once and survives re-renders.
@@ -2716,7 +2831,36 @@ struct FirstRunPromiseView: View {
 }
 ```
 
-- [ ] **Step 2: Write the connect screen with exhaustive branching**
+- [ ] **Step 2: Extract Connect's transitions into an injected workflow**
+
+Do **not** put the transition logic inline in the view, and do not settle for a pure
+decision function. A pure function proves *which* outcome routing produces; it cannot prove
+**ordering** — and ordering is the defect that already occurred here. Connect called
+`beginAttempt()` unconditionally, which overwrote a persisted `.interrupted` before the
+Backfill screen ever read it, making the recovery branch dead code on every onboarding
+path. No output-only assertion catches that.
+
+Extract a small `ConnectWorkflow` (or similar) taking its collaborators as injected
+dependencies — something that can request authorization, and something that can read and
+mutate import status — and have the view call it. Tests inject **recording doubles** and
+assert the recorded call sequence, not just the final state.
+
+Pin all four paths, asserting **order and counts**:
+
+| Path | Must be true |
+|---|---|
+| Skip ("Not now") | `requestAuthorization` **never** called; import status **untouched** |
+| Authorization success | status inspected **before** `beginAttempt()`; `beginAttempt` called exactly once; advance to backfill |
+| Authorization throws | `beginAttempt` then `failAttempt`, in that order, once each; stays on Connect |
+| Interrupted recovery | status is `.interrupted` → `beginAttempt` **not called at all**; the persisted `.interrupted` survives |
+
+**Mutants to kill:** move the status inspection *after* `beginAttempt()` (the original
+defect — the interrupted path must fail); call `beginAttempt()` on the skip path; call
+`failAttempt()` without a preceding `beginAttempt()`; invoke `requestAuthorization` twice.
+A test that only asserts the final `outcome` will pass several of these — assert the
+sequence.
+
+- [ ] **Step 3: Write the connect screen with exhaustive branching**
 
 Replace `Views/HealthOS/FirstRun/FirstRunConnectView.swift`:
 
@@ -3655,6 +3799,30 @@ struct DataSourcesView: View {
 }
 ```
 
+- [ ] **Step 1b: Extract the import workflow behind a seam**
+
+`runImport()` and `importExport()` both carry real lifecycle obligations that must not rest
+on the device gate. Extract them into an injected workflow with recording doubles in tests.
+
+Pin, asserting order and counts:
+
+| Path | Must be true |
+|---|---|
+| Begin | `beginAttempt()` called **before** `backfill()` |
+| Success | `finish(summary:failures:)` once; **`startObserving()` called after it** |
+| Partial failure | `finish` receives the **snapshotted** `lastBackfillFailures`, not a post-`defer` read |
+| Thrown failure | `failAttempt()` once; `startObserving()` **not** called |
+| export-import failure | idle-timer released and progress cleared even on the throw path |
+
+`startObserving()` is the one with a live consequence: the root `.task` has already run and
+will not retry this session, so a user who skips onboarding and imports later gets **no live
+ingestion at all** unless this call happens. That is a behavioural requirement, not
+plumbing, and it is invisible to a screenshot.
+
+**Mutants to kill:** drop `startObserving()` after a successful import; read
+`lastBackfillFailures` after the `defer` has cleared it (it must be snapshotted); call
+`finish()` on the throw path; skip the idle-timer release when the export parse throws.
+
 - [ ] **Step 2: Add the Health tab entry**
 
 In `Views/HealthOS/Health/HealthTabView.swift`, add a navigation row above the "Soon" card, following the existing row idiom exactly (note the 16pt divider inset for icon-less rows):
@@ -3697,6 +3865,33 @@ git commit -m "feat(health): Data sources screen with import, status and DEBUG r
 **The existing strings are not ASCII.** `"The engine isn't watching yet — but your data is ready."` contains U+2019 and U+2014; `"What's next"` contains U+2019. Retyping them with ASCII `'` and `-` makes the exact-match edit silently fail.
 
 **`InsightsPlaceholderView` is not a placeholder** despite the name — it is the live Insights empty state, rendered whenever `vm.feed.sections.isEmpty`, including the error path. Keep the coverage strip; replace only the two false claims.
+
+- [ ] **Step 0: Move copy selection into pure presentation helpers**
+
+The three sites currently choose their strings inline inside view bodies, which makes every
+branch device-only. Extract the *selection* (not the rendering) into pure helpers and pin
+every branch — the Timeline empty state alone has four, and one of them (filtered-empty)
+was wrong in the shipped code before this round.
+
+Extract at least:
+- `emptyStateMessage` — searching / filtered-empty / not-imported / imported-but-empty
+- `showsConnectAction` — true only when not searching, not filtered, and not yet imported
+- the Insights empty-state copy
+
+Each becomes a `static func` on the view type (the `PoorAirWarningBanner.title(for:)`
+pattern already established in this codebase) taking its inputs explicitly, so a test can
+drive all branches without a simulator.
+
+**Mutants to kill:** collapse filtered-empty into the not-imported branch (the pre-existing
+bug — a user with active filters gets told to connect Apple Health); drive
+`showsConnectAction` from `hg.hk.backfillCompleted` instead of `HealthImportStatus` (that
+flag is set even after a total failure, so it means "we tried once", not "we have data");
+return the search message when not searching.
+
+**Structural review still covers what a helper cannot:** that `whatsNext` was actually
+deleted from `HomeView`'s body rather than merely orphaned, and that the empty-state row
+keeps its three `listRowInsets` / `listRowSeparator` / `listRowBackground` modifiers —
+without them it renders on a white system row against the cream background.
 
 - [ ] **Step 1: Delete the Home block**
 
