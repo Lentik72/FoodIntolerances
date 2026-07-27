@@ -9,6 +9,21 @@ struct FirstRunConnectView: View {
     @State private var authorizationFailed = false
     @State private var isRequesting = false
 
+    /// Test seam ONLY. `nil` in production (every call site passes two
+    /// closures), so the real path always builds the workflow over the
+    /// root-injected environment objects below — never a second
+    /// HealthImportStatusStore. Tests inject a factory over recording doubles
+    /// to pin the view's result mapping, which no workflow-level test can see.
+    private let workflowOverride: (@MainActor () -> ConnectWorkflow)?
+
+    init(onSkip: @escaping () -> Void,
+         onConnected: @escaping () -> Void,
+         workflowOverride: (@MainActor () -> ConnectWorkflow)? = nil) {
+        self.onSkip = onSkip
+        self.onConnected = onConnected
+        self.workflowOverride = workflowOverride
+    }
+
     private let imported = ["sleep", "workouts", "heart rate", "HRV", "cycle", "weight"]
 
     var body: some View {
@@ -33,7 +48,7 @@ struct FirstRunConnectView: View {
                     .foregroundStyle(HealthTheme.inkMuted)
             }
             Spacer()
-            Button(authorizationFailed ? "Retry" : "Connect Apple Health") { Task { await connect() } }
+            Button(authorizationFailed ? "Retry" : "Connect Apple Health") { connectTapped() }
                 .buttonStyle(.borderedProminent)
                 .tint(HealthTheme.accent)
                 .foregroundStyle(HealthTheme.onAccent)
@@ -55,11 +70,19 @@ struct FirstRunConnectView: View {
     /// HealthImportStatusStore instance, which would leave Backfill observing
     /// a store nothing writes to.
     private var workflow: ConnectWorkflow {
-        ConnectWorkflow(authorizer: ingestor, importStatus: importStatus)
+        workflowOverride?() ?? ConnectWorkflow(authorizer: ingestor, importStatus: importStatus)
+    }
+
+    /// `isRequesting` is guarded and set HERE, synchronously in the button
+    /// action, not inside the dispatched Task — otherwise two fast taps can
+    /// enqueue two connect() calls before `.disabled(isRequesting)` applies.
+    private func connectTapped() {
+        guard !isRequesting else { return }
+        isRequesting = true
+        Task { await connect() }
     }
 
     private func connect() async {
-        isRequesting = true
         defer { isRequesting = false }
         switch await workflow.connect() {
         case .advanceToBackfill:
