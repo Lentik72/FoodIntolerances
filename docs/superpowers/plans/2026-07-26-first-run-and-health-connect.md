@@ -1404,7 +1404,7 @@ Add to `GRDBEventStore` in `HealthGraphCore/Sources/HealthGraphCore/Database/Eve
 - [ ] **Step 4: Run tests and commit**
 
 Run: `swift test --package-path HealthGraphCore --filter AnyEventExistsTests`
-Expected: PASS, 2 tests.
+Expected: PASS, 3 tests.
 
 ```bash
 git add HealthGraphCore/Sources/HealthGraphCore/Database/EventStore.swift \
