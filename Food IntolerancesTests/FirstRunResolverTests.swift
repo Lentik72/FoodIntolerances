@@ -93,4 +93,25 @@ import Testing
                                          anyEventExists: { true }, backfillAttempted: true)
         #expect(r == .flow(.fresh))
     }
+
+    @Test func aCompletedInstallGoesToShellEvenWithAStartedMarkerStillSet() {
+        // Row 1 / row 2 precedence. No other fixture has BOTH markers at
+        // currentVersion, so swapping the shell and resume rows survived —
+        // and that swap re-onboards every user whose completion write raced a
+        // crash into leaving startedVersion behind. Completion must win.
+        let r = FirstRunResolver.resolve(defaults: defaults(started: 1, completed: 1), currentVersion: 1,
+                                         anyEventExists: { false }, backfillAttempted: false)
+        #expect(r == .shell)
+    }
+
+    @Test func forceShowBypassesEvenACompletedInstall() {
+        // The existing forceShow fixture has completed: 0 — the one state
+        // where the bypass isn't needed to reach the flow — so moving the
+        // DEBUG block below the shell row survived. The whole point of the
+        // debug switch is re-showing onboarding on an install that already
+        // completed it; pin the bypass ABOVE the shell row.
+        let r = FirstRunResolver.resolve(defaults: defaults(completed: 1, forceShow: true), currentVersion: 1,
+                                         anyEventExists: { false }, backfillAttempted: false)
+        #expect(r == .flow(.fresh))
+    }
 }
