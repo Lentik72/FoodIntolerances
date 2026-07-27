@@ -1357,6 +1357,20 @@ Add to `HealthGraphCore/Tests/HealthGraphCoreTests/EventStoreTests.swift`:
         #expect(including == true)    // not a fresh install
         #expect(excluding == false)
     }
+
+    @Test func aLiveEventIsVisibleToBothVariants() async throws {
+        // Without this, `includingDeleted: false` is only ever asserted FALSE,
+        // so hard-coding that branch to false passes.
+        let db = try AppDatabase.inMemory()
+        let store = GRDBEventStore(database: db)
+        let e = HealthEvent(timestamp: t0, timezoneID: "UTC", category: .symptom,
+                            subtype: "headache", source: .manual, createdAt: t0)
+        try await store.save(e)
+        let including = try store.anyEventExistsSync(includingDeleted: true)
+        let excluding = try store.anyEventExistsSync(includingDeleted: false)
+        #expect(including == true)
+        #expect(excluding == true)
+    }
 }
 ```
 
@@ -1746,6 +1760,7 @@ git commit -m "feat(capture): seed quick-log chips from first-run symptom select
 **Files:**
 - Create: `Models/FirstRunState.swift`
 - Test: `Food IntolerancesTests/FirstRunResolverTests.swift`
+- Test: `Food IntolerancesTests/FirstRunStateTests.swift` (persistence — see Step 5)
 
 **Interfaces:**
 - Produces: `FirstRunKeys` (key names), `FirstRunResolution` (enum), `FirstRunResolver.resolve(defaults:currentVersion:anyEventExists:backfillAttempted:) -> FirstRunResolution`, `FirstRunState` (`@MainActor final class`, `ObservableObject`).
@@ -1829,6 +1844,26 @@ import Testing
                                          backfillAttempted: true)
         #expect(r == .flow(.resume))
         #expect(graphConsulted == false)
+    }
+
+    @Test func aStaleStartedVersionNeverReconciles() {
+        // THE test this suite exists for. Every other fixture with started > 0
+        // has started == currentVersion, so it returns at row 2 before row 4 is
+        // ever reached — meaning the `started == 0` guard on the reconciliation
+        // row is otherwise never exercised, and DELETING IT PASSES ALL OF THEM.
+        // That guard is the whole mechanism preventing the self-skipping bug:
+        // an interrupted older-version flow, plus the events onboarding itself
+        // inserted, would satisfy the reconciliation predicate and mark
+        // onboarding permanently complete.
+        //
+        // Also kills a second mutant: `started == currentVersion` -> `started > 0`
+        // in row 2, which would misroute this to .resume.
+        //
+        // Expected entry is .fresh, deliberately: this user began v1 and never
+        // finished anything, so there is no partial state worth resuming.
+        let r = FirstRunResolver.resolve(defaults: defaults(started: 1, completed: 0), currentVersion: 2,
+                                         anyEventExists: { true }, backfillAttempted: true)
+        #expect(r == .flow(.fresh))
     }
 
     @Test func forceShowBypassesReconciliation() {
@@ -1953,13 +1988,81 @@ final class FirstRunState: ObservableObject {
 }
 ```
 
-- [ ] **Step 4: Run tests and commit**
+- [ ] **Step 4: Test the persistence layer, not just the resolver**
+
+The resolver is pure and now well covered, but `markStarted()`, `markCompleted(seeds:)`
+and the `seeds` getter have **no test at all** — and the getter carries a safety property:
+seeds are re-validated on READ because the stored list outlives catalog changes and future
+`RedFlagCatalog` additions. Mutating the getter to a bare
+`defaults.stringArray(forKey:) ?? []` currently passes the entire plan, and a seeded
+red-flag chip is a one-tap path to a full-screen emergency takeover.
+
+Create `Food IntolerancesTests/FirstRunStateTests.swift`:
+
+```swift
+import Foundation
+import Testing
+import HealthGraphCore
+@testable import Food_Intolerances
+
+@MainActor
+@Suite struct FirstRunStateTests {
+    private func makeState() throws -> (FirstRunState, UserDefaults) {
+        let d = UserDefaults(suiteName: "first-run-state-\(UUID().uuidString)")!
+        let db = try AppDatabase.inMemory()
+        return (FirstRunState(defaults: d, store: GRDBEventStore(database: db)), d)
+    }
+
+    @Test func seedsAreRevalidatedOnRead() throws {
+        let (state, d) = try makeState()
+        // Written directly, bypassing markCompleted's write-time validation —
+        // this is the stale-store case the read-time guard exists for.
+        let redFlag = try #require(RedFlagCatalog.allSymptomKeys.first)
+        let good = HealthGraphCore.SymptomCatalog.canonicalKey(for: "Headache")
+        d.set([redFlag, "notARealCatalogKey", good], forKey: FirstRunKeys.symptomSeeds)
+        #expect(state.seeds == [good])
+    }
+
+    @Test func completionValidatesAndClearsTheInProgressMarker() throws {
+        let (state, d) = try makeState()
+        state.markStarted()
+        #expect(d.integer(forKey: FirstRunKeys.startedVersion) == FirstRunState.currentVersion)
+
+        let redFlag = try #require(RedFlagCatalog.allSymptomKeys.first)
+        let good = HealthGraphCore.SymptomCatalog.canonicalKey(for: "Bloating")
+        state.markCompleted(seeds: [good, redFlag])
+
+        #expect(d.integer(forKey: FirstRunKeys.completedVersion) == FirstRunState.currentVersion)
+        #expect(d.object(forKey: FirstRunKeys.startedVersion) == nil)   // marker cleared
+        #expect(state.seeds == [good])                                  // red flag stripped at write
+    }
+
+    @Test func theSeedCapIsEnforcedAtCompletionNotJustInTheGrid() throws {
+        // The cap of 8 lives in THREE unlinked places: the grid's selection
+        // guard, markCompleted's limit, and the getter's limit. Only
+        // SymptomSeeds.validate was tested, so widening the grid alone would
+        // let a user pick 20 and silently drop 12 here.
+        let (state, _) = try makeState()
+        let keys = HealthGraphCore.SymptomCatalog.all.map(\.canonicalKey)
+            .filter { !Set(RedFlagCatalog.allSymptomKeys).contains($0) }
+        state.markCompleted(seeds: Array(keys.prefix(20)))
+        #expect(state.seeds.count == 8)
+    }
+}
+```
+
+- [ ] **Step 5: Run tests and commit**
 
 Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/FirstRunResolverTests" -parallel-testing-enabled NO 2>&1 | grep -E "✔|✘|Test run"`
-Expected: 9 tests pass.
+Expected: 10 tests pass.
+
+Run the same command with `-only-testing:"Food IntolerancesTests/FirstRunStateTests"`.
+Expected: 3 tests pass.
 
 ```bash
-git add Models/FirstRunState.swift "Food IntolerancesTests/FirstRunResolverTests.swift"
+git add Models/FirstRunState.swift \
+        "Food IntolerancesTests/FirstRunResolverTests.swift" \
+        "Food IntolerancesTests/FirstRunStateTests.swift"
 git commit -m "feat(first-run): versioned launch resolver with interrupted-flow protection"
 ```
 
@@ -2017,6 +2120,20 @@ import HealthGraphCore
         #expect(afterRelaunch.current.outcome == .interrupted)
     }
 
+    @Test func launchNormalizationLeavesTerminalOutcomesAlone() {
+        // Without this, dropping the `guard current.outcome == .inProgress`
+        // passes every other test — because they only ever normalize a store
+        // that IS .inProgress. The mutant rewrites .completed -> .interrupted on
+        // EVERY launch, so Data sources reads "Import interrupted" forever and
+        // the flow's resumesIntoBackfill misfires for good.
+        let (s, d) = store()
+        s.beginAttempt()
+        s.finish(summary: IngestSummary(inserted: 5), failures: [])
+        let afterRelaunch = HealthImportStatusStore(defaults: d)
+        afterRelaunch.normalizeAtLaunch()
+        #expect(afterRelaunch.current.outcome == .completed)
+    }
+
     @Test func finishWithEventsAndNoFailuresIsCompleted() {
         let (s, _) = store()
         s.beginAttempt()
@@ -2038,6 +2155,15 @@ import HealthGraphCore
         s.finish(summary: IngestSummary(inserted: 5), failures: ["HKQuantityTypeIdentifierHeartRate: denied"])
         #expect(s.current.outcome == .completedWithIssues)
         #expect(s.current.failureIdentifiers == ["HKQuantityTypeIdentifierHeartRate"])  // sanitised
+
+        // A later CLEAN run must CLEAR them. Assigning only when non-empty
+        // passes every other test (none runs clean-after-failing), and Data
+        // sources renders "Couldn't read: …" whenever the array is non-empty —
+        // so a user who fixes their permissions would see the old failures
+        // forever.
+        s.beginAttempt()
+        s.finish(summary: IngestSummary(inserted: 5), failures: [])
+        #expect(s.current.failureIdentifiers.isEmpty)
     }
 
     @Test func failAttemptIsAttemptFailed() {
@@ -2742,6 +2868,26 @@ import HealthGraphCore
             #expect(!label.localizedCaseInsensitiveContains("connected"))
             #expect(!label.localizedCaseInsensitiveContains("denied"))
         }
+        // The loop above only pins an ABSENCE, which `return "Not imported"` for
+        // every case satisfies. These pin the branches themselves, so a constant
+        // — or two labels swapped — fails.
+        #expect(Set(all.map { DataSourcesPresentation.statusLabel(for: status($0)) }).count == all.count)
+        #expect(DataSourcesPresentation.statusLabel(for: status(.completed)) == "Last imported")
+        #expect(DataSourcesPresentation.statusLabel(for: status(.interrupted)) == "Import interrupted")
+    }
+
+    @Test func aSuccessfulImportGetsTheAffirmingCopy() {
+        // The happy-path headline of the whole first-run flow, and the ONLY
+        // branch of backfillMessage the original suite left unasserted. Folding
+        // .completed into the catch-all leaves a successful import reading
+        // "Importing your history…" forever, with Continue enabled beneath it.
+        #expect(DataSourcesPresentation.backfillMessage(for: status(.completed, events: 1200))
+                == "You're not starting from zero.")
+    }
+
+    @Test func anAuthorizationFailureSaysCouldNotBeReached() {
+        #expect(DataSourcesPresentation.backfillMessage(for: status(.attemptFailed))
+                == "Apple Health couldn't be reached.")
     }
 
     @Test func summaryLineNamesTheEarliestImportedEventNotTheRequestedWindow() throws {
@@ -3222,13 +3368,65 @@ struct FirstRunLocationView: View {
 }
 ```
 
-- [ ] **Step 2: Build and commit**
+- [ ] **Step 2: Test the copy builder**
+
+`explanation(for:)` is a static pure function precisely so it can be pinned — spec §3.5
+requires it to name what the user just chose. Create
+`Food IntolerancesTests/FirstRunLocationCopyTests.swift`:
+
+```swift
+import Foundation
+import Testing
+import HealthGraphCore
+@testable import Food_Intolerances
+
+@Suite struct FirstRunLocationCopyTests {
+    @Test func namesTheFirstTwoPickedSymptoms() {
+        let seeds = ["Migraine", "Bloating", "Nausea"]
+            .map { HealthGraphCore.SymptomCatalog.canonicalKey(for: $0) }
+        let copy = FirstRunLocationView.explanation(for: seeds)
+        #expect(copy.contains("Migraine and Bloating"))
+        #expect(!copy.contains("Nausea"))          // only the first two
+    }
+
+    @Test func fallsBackWhenNothingWasPicked() {
+        let copy = FirstRunLocationView.explanation(for: [])
+        #expect(!copy.contains("You picked"))
+        #expect(copy.contains("your symptoms"))
+    }
+
+    @Test func neverPromisesDiscovery() {
+        // Every weather exposure is .contested in PlausibilityCatalog, so the
+        // copy must say "watch", never "find".
+        for seeds in [[], ["headache"]] {
+            let copy = FirstRunLocationView.explanation(for: seeds)
+            #expect(copy.contains("watch"))
+            #expect(!copy.localizedCaseInsensitiveContains("we'll find"))
+        }
+    }
+
+    @Test func stripsInvalidSeedsBeforeNamingThem() {
+        // The screen receives the flow's in-memory selection, which has not been
+        // through markCompleted's validation yet.
+        let redFlag = RedFlagCatalog.allSymptomKeys.first!
+        let copy = FirstRunLocationView.explanation(for: [redFlag, "notAKey",
+                                                          HealthGraphCore.SymptomCatalog.canonicalKey(for: "Migraine")])
+        #expect(copy.contains("Migraine"))
+    }
+}
+```
+
+Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/FirstRunLocationCopyTests" -parallel-testing-enabled NO 2>&1 | grep -E "✔|✘|Test run"`
+Expected: 4 tests pass.
+
+- [ ] **Step 3: Build and commit**
 
 Run: `xcodebuild build -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' 2>&1 | tail -3`
 Expected: `** BUILD SUCCEEDED **`
 
 ```bash
-git add Views/HealthOS/FirstRun/FirstRunLocationView.swift
+git add Views/HealthOS/FirstRun/FirstRunLocationView.swift \
+        "Food IntolerancesTests/FirstRunLocationCopyTests.swift"
 git commit -m "feat(first-run): state-aware location screen that never blocks completion"
 ```
 
