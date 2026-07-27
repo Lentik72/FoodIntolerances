@@ -29,22 +29,41 @@ public struct CyclePhaseExposureSource: ExposureSource {
         authoritative.formUnion(flow.filter { $0.menstrualCycleStart == true }
             .map { cal.startOfDay(for: $0.timestamp) })
 
-        // 2. Inferred candidates: run detection over UNMARKED flow days only.
-        //    marker == false is excluded outright — it is a positive statement
-        //    that the day is not a start.
-        let unmarkedDays = Set(flow.filter { $0.menstrualCycleStart == nil }
+        // 2. Inferred candidates: run detection walks every NON-authoritative
+        //    flow day — nil AND false — so a block of `false` days continues
+        //    a run instead of splitting it into two (a `false` block inside
+        //    one bleeding episode must not fabricate a second period start).
+        //    Candidacy is still nil-only: `false` is a positive "not a start"
+        //    statement and must never itself be appended to `inferred`. Within
+        //    a run we track the FIRST `nil` day seen and only add it once the
+        //    run ends (or the sequence does) — a run that begins with `false`
+        //    days must not make the first following `nil` day look like the
+        //    start of a NEW run when it is really mid-run.
+        let nilDays = Set(flow.filter { $0.menstrualCycleStart == nil }
+            .map { cal.startOfDay(for: $0.timestamp) })
+        let runDays = Set(flow.filter { $0.menstrualCycleStart != true }
             .map { cal.startOfDay(for: $0.timestamp) }).sorted()
         var inferred: [Date] = []
         var previous: Date?
-        for d in unmarkedDays {
+        var runCandidate: Date?   // first `nil` day seen in the current run, if any
+        for d in runDays {
+            var sameRun = false
             if let p = previous, let gap = cal.dateComponents([.day], from: p, to: d).day,
                gap <= config.maxFlowGapDays {
-                previous = d          // same run
-            } else {
-                inferred.append(d)    // first day of a new run
-                previous = d
+                sameRun = true
             }
+            if !sameRun {
+                // Run boundary: flush the previous run's candidate (if it had
+                // one — a run made entirely of `false` days contributes none).
+                if let candidate = runCandidate { inferred.append(candidate) }
+                runCandidate = nil
+            }
+            if runCandidate == nil, nilDays.contains(d) {
+                runCandidate = d
+            }
+            previous = d
         }
+        if let candidate = runCandidate { inferred.append(candidate) }
 
         // 3. Drop inferred candidates near ANY authoritative start, either side.
         let sortedAuthoritative = authoritative.sorted()

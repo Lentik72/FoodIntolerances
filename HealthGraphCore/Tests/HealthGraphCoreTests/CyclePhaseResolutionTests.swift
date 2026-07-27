@@ -54,6 +54,44 @@ import Foundation
         #expect(menstrualDays(events) == [day(0)])
     }
 
+    @Test func twelveDayRunSpacedAtTheMaxGapCollapsesToOneStartDespiteExceedingTheSuppressionWindow() {
+        // Flow every maxFlowGapDays (2) apart, spanning 12 days (0...12): one
+        // continuous bleeding episode under the run-detection rule (every
+        // internal gap == maxFlowGapDays, so `<=` keeps it one run).
+        //
+        // This length is load-bearing: minInferredStartGapDays == 10, so ANY
+        // run shorter than 10 days is masked — step 4's own gap-suppression
+        // among candidates would collapse a broken run-detection's extra
+        // candidates back down to one, hiding a regressed step 2. Only a run
+        // that OUTLASTS the 10-day suppression window can expose a broken
+        // step 2: if run-grouping stops merging (e.g. `<=` regresses to `<`,
+        // which is a no-op here at gap==1 but flips this exact gap==2 case),
+        // every spaced day becomes its own candidate, and step 4 then keeps
+        // day 0 AND day 10 (a gap of exactly 10 is not `< 10`) — two starts
+        // instead of one.
+        let events = [0, 2, 4, 6, 8, 10, 12].map { flow($0, cycleStart: nil) }
+        #expect(menstrualDays(events) == [day(0)])
+    }
+
+    @Test func aFalseBlockInsideARunDoesNotFabricateAPhantomSecondStart() {
+        // day 0 nil, days 1-11 false (11 days), day 12 nil. `false` days must
+        // be excluded from candidacy (a positive "not a start") but must NOT
+        // be excluded from the run-detection SEQUENCE: if they were dropped
+        // from the walk entirely, the sequence collapses to [0, 12], a 12-day
+        // gap that exceeds maxFlowGapDays, so both 0 and 12 become candidates
+        // with no authoritative start to suppress them and step 4 keeps both
+        // (12 >= 10) — a phantom period start (day 12) in the middle of one
+        // single bleeding episode. Correct handling walks the `false` days as
+        // part of the run (each is 1 day from its neighbor, well within
+        // maxFlowGapDays) so day 12 is recognized as a continuation, not a
+        // new run's first day, and only day 0 survives as the run's one
+        // `nil` candidate.
+        let events = [flow(0, cycleStart: nil)]
+            + (1...11).map { flow($0, cycleStart: false) }
+            + [flow(12, cycleStart: nil)]
+        #expect(menstrualDays(events) == [day(0)])
+    }
+
     @Test func inferredCandidateNearAnAuthoritativeStartIsDroppedOnBothSides() {
         // Authoritative start at day 10. Inferred runs at day 5 (before) and
         // day 14 (after) are both inside minInferredStartGapDays == 10.
