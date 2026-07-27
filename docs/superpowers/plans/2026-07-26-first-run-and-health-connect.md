@@ -409,7 +409,18 @@ git commit -m "feat(evidence): batch evidence report over a shared corpus contex
 
 - [ ] **Step 9: CAPTURE THE DEVICE BASELINE — do not skip, do not defer**
 
-Install **this commit** on the device and run Health tab → debug screen → "Dump relationship report". Save the console output to `.superpowers/sdd/relationship-baseline.txt` (gitignored scratch).
+Install **this commit** on the device, then:
+
+1. **Run a recompute first** (debug screen → the recompute/refresh action), immediately
+   before dumping. `confidence`, `evidence` and `contradictions` are read from the STORED
+   relationship rows — i.e. from whenever `recompute()` last ran — while `confounders` is
+   computed live. Dumping without a fresh recompute compares stale stored columns against
+   stale stored columns, so a real change reads as "no change" and the device gate passes
+   for the wrong reason.
+2. Run Health tab → debug screen → **"Dump relationship report"**.
+3. Save the console output to `.superpowers/sdd/relationship-baseline.txt` (gitignored scratch).
+
+The same recompute-then-dump order is mandatory for the "after" capture.
 
 This is the only build that has the diagnostic without the engine fixes. Once Task 2 lands, the baseline is unobtainable and the device gate degrades to the weaker screenshot fallback (spec §Device gate).
 
@@ -3590,7 +3601,7 @@ git commit -m "fix(ui): retire copy claiming capture, insights and connect don't
 
 Per spec §Device gate. **The baseline must already have been captured at Task 1 Step 9.**
 
-- [ ] Build final branch HEAD, install, run the relationship dump, save as `.superpowers/sdd/relationship-after.txt`.
+- [ ] Build final branch HEAD, install, **run a recompute**, then run the relationship dump, saving as `.superpowers/sdd/relationship-after.txt`. The recompute is mandatory and must come first — `confidence`/`evidence`/`contradictions` are stored columns, so dumping without it compares two stale snapshots and a real change reads as "no change".
 - [ ] Diff against `relationship-baseline.txt` as text.
 - [ ] Classify every difference:
 
