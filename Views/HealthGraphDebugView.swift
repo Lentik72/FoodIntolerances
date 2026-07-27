@@ -667,26 +667,39 @@ struct HealthGraphDebugView: View {
         defer { isWorking = false }
         do {
             let db = HealthGraphProvider.shared
-            let all = try await GRDBRelationshipStore(database: db).all()
-            let interesting = all.filter { $0.status == .active || $0.status == .decayed }
+            // No status filter: a later task can move an edge to a status this
+            // list used to exclude (e.g. confirmedNoEffect), which would make it
+            // vanish from the table entirely — a status TRANSITION would then show
+            // up in the baseline↔after diff as a deleted row instead of a changed
+            // one. `status` is already a printed column, so keep every relationship.
+            let relationships = try await GRDBRelationshipStore(database: db).all()
                 .sorted { ($0.edgeKey ?? "") < ($1.edgeKey ?? "") }
             let reports = try await EvidenceEngine(database: db)
-                .evidenceReports(for: interesting, asOf: Date())
+                .evidenceReports(for: relationships, asOf: Date())
             var lines: [String] = ["edgeKey | status | confidence | evidence | contradictions | confounders"]
-            for r in interesting {
-                let conf = reports[r.id]?.confounders.map(\.diagnosticLabel).sorted().joined(separator: ",") ?? ""
+            for r in relationships {
+                // Distinguish "report came back with zero confounders" from "no report
+                // entry at all" — both would otherwise render as the same "-", which
+                // defeats a diagnostic whose whole purpose is trustworthiness.
+                let confounders: String
+                if let report = reports[r.id] {
+                    let labels = report.confounders.map(\.diagnosticLabel).sorted().joined(separator: ",")
+                    confounders = labels.isEmpty ? "-" : labels
+                } else {
+                    confounders = "(missing)"
+                }
                 lines.append([
                     r.edgeKey ?? "(nil)",
                     r.status.rawValue,
                     String(format: "%.3f", r.confidence),
                     String(r.evidenceCount),
                     String(r.contradictionCount),
-                    conf.isEmpty ? "-" : conf,
+                    confounders,
                 ].joined(separator: " | "))
             }
             let text = lines.joined(separator: "\n")
             relationshipReport = text
-            print("=== RELATIONSHIP REPORT (\(interesting.count) rows) ===\n\(text)")
+            print("=== RELATIONSHIP REPORT (\(relationships.count) rows) ===\n\(text)")
         } catch {
             errorMessage = String(describing: error)
         }

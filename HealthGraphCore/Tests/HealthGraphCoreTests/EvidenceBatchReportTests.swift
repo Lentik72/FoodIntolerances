@@ -63,6 +63,24 @@ import Foundation
         #expect(entry?.relationshipID == bogus.id)
     }
 
+    @Test func unparseableRelationshipToEvidenceForAsOfReturnsZeroedValueWithoutThrowing() async throws {
+        // Pins the hoisted guard in evidence(for:asOf:): pre-refactor, an
+        // unparseable edgeKey short-circuited BEFORE any corpus read, so a
+        // store failure could never surface here. If the guard slips back
+        // inside evidence(for:in:) (after the read), this either throws or
+        // the equality below fails — either way the regression is caught.
+        let db = try AppDatabase.inMemory()
+        try await seed(into: db)
+        let engine = EvidenceEngine(database: db)
+        let bogus = Relationship(type: .possibleTrigger, firstSeen: now, lastSeen: now,
+                                 lastRecomputed: now, edgeKey: "not-a-valid-edge-key")
+
+        let result = try await engine.evidence(for: bogus, asOf: now)
+        let expected = RelationshipEvidence(relationshipID: bogus.id, exposures: [],
+                                            followCount: 0, missCount: 0, confounders: [])
+        #expect(result == expected)
+    }
+
     @Test func decayedRelationshipsAreReportedToo() async throws {
         let db = try AppDatabase.inMemory()
         try await seed(into: db)

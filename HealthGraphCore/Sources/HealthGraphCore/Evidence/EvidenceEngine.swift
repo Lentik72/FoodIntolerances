@@ -180,6 +180,17 @@ public struct RelationshipEvidence: Sendable, Equatable {
 
 extension EvidenceEngine {
     public func evidence(for relationship: Relationship, asOf now: Date) async throws -> RelationshipEvidence {
+        // Hoisted ahead of the corpus read: pre-refactor, an unparseable edgeKey
+        // returned the zeroed value with ZERO I/O. `evidence(for:in:)` now runs
+        // its own parse guard AFTER the shared read (needed for the batch path,
+        // which must fail soft per-edge without aborting the whole report), so
+        // without this early return a bad edgeKey here would both perform a full
+        // corpus read for nothing AND let a store throw propagate where it used
+        // to be unreachable — a behavior change Task 1 must not introduce.
+        guard EdgeIdentity.parse(relationship) != nil else {
+            return RelationshipEvidence(relationshipID: relationship.id, exposures: [],
+                                        followCount: 0, missCount: 0, confounders: [])
+        }
         let events = try await eventStore.events(
             in: DateInterval(start: .distantPast, end: .distantFuture), category: nil)
         return evidence(for: relationship, in: makeContext(events))
