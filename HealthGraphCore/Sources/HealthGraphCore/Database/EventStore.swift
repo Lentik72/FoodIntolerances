@@ -106,6 +106,22 @@ public struct GRDBEventStore: EventStore {
         try await dbWriter.read { db in try HealthEvent.fetchCount(db) }
     }
 
+    /// Synchronous existence check for bootstrap, where no `await` is available
+    /// (mirrors `purgeSyntheticDataSync`). `SELECT EXISTS` — never a COUNT over
+    /// a six-figure table.
+    ///
+    /// `includingDeleted: true` is the first-run reconciliation's question: a
+    /// user who soft-deleted everything is NOT a fresh install and must not be
+    /// onboarded again.
+    public func anyEventExistsSync(includingDeleted: Bool) throws -> Bool {
+        try dbWriter.read { db in
+            let sql = includingDeleted
+                ? "SELECT EXISTS(SELECT 1 FROM health_events)"
+                : "SELECT EXISTS(SELECT 1 FROM health_events WHERE deletedAt IS NULL)"
+            return try Bool.fetchOne(db, sql: sql) ?? false
+        }
+    }
+
     public func countsByCategory() async throws -> [String: Int] {
         try await groupedCounts(column: "category")
     }

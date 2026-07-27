@@ -250,3 +250,41 @@ struct EventStoreTests {
         #expect(try await store.searchEvents(matching: "d3", limit: 10).map(\.id) == [dose.id])
     }
 }
+
+@Suite struct AnyEventExistsTests {
+    let t0 = Date(timeIntervalSince1970: 1_750_000_000)
+
+    @Test func emptyGraphHasNoEvents() throws {
+        let db = try AppDatabase.inMemory()
+        let store = GRDBEventStore(database: db)
+        #expect(try store.anyEventExistsSync(includingDeleted: true) == false)
+    }
+
+    @Test func softDeletedOnlyGraphStillCountsAsPopulated() async throws {
+        let db = try AppDatabase.inMemory()
+        let store = GRDBEventStore(database: db)
+        let e = HealthEvent(timestamp: t0, timezoneID: "UTC", category: .symptom,
+                            subtype: "headache", source: .manual, createdAt: t0)
+        try await store.save(e)
+        try await store.softDelete(id: e.id)
+
+        let including = try store.anyEventExistsSync(includingDeleted: true)
+        let excluding = try store.anyEventExistsSync(includingDeleted: false)
+        #expect(including == true)    // not a fresh install
+        #expect(excluding == false)
+    }
+
+    @Test func aLiveEventIsVisibleToBothVariants() async throws {
+        // Without this, `includingDeleted: false` is only ever asserted FALSE,
+        // so hard-coding that branch to false passes.
+        let db = try AppDatabase.inMemory()
+        let store = GRDBEventStore(database: db)
+        let e = HealthEvent(timestamp: t0, timezoneID: "UTC", category: .symptom,
+                            subtype: "headache", source: .manual, createdAt: t0)
+        try await store.save(e)
+        let including = try store.anyEventExistsSync(includingDeleted: true)
+        let excluding = try store.anyEventExistsSync(includingDeleted: false)
+        #expect(including == true)
+        #expect(excluding == true)
+    }
+}
