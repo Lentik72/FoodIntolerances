@@ -1069,7 +1069,10 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
                     if !hasLoggedPermissionRequest {
                         hasLoggedPermissionRequest = true
                     }
-                    locationManager.requestWhenInUseAuthorization()
+                    // Asking moved to FirstRunLocationView via
+                    // LocationPermissionStore (Step 3). From here, the system
+                    // dialog landed on whatever happened to be on screen at
+                    // cold launch, with no explanation.
                 default:
                     startLocationUpdatesWhenAppIsActive()
             }
@@ -1305,11 +1308,10 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
                 Logger.debug("Location permission not determined.", category: .location)
                 hasLoggedPermissionRequest = true
             }
-            // Only request once
-            if !UserDefaults.standard.bool(forKey: "hasRequestedLocation") {
-                locationManager.requestWhenInUseAuthorization()
-                UserDefaults.standard.set(true, forKey: "hasRequestedLocation")
-            }
+            // Asking moved to FirstRunLocationView via
+            // LocationPermissionStore. This ran from appDidBecomeActive, so
+            // its one-shot "hasRequestedLocation" prompt landed at first
+            // activation — during onboarding, before the explaining screen.
         @unknown default:
             break
         }

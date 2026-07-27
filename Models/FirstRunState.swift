@@ -58,7 +58,13 @@ final class FirstRunState: ObservableObject {
     @Published private(set) var resolution: FirstRunResolution
     private let defaults: UserDefaults
 
-    init(defaults: UserDefaults = .standard, store: GRDBEventStore) {
+    /// `backfillAttempted` is an explicit dependency with NO default — the
+    /// ingestor writes its flag to `.standard`, not to whatever suite this
+    /// state was injected with. Reading it off `defaults` here lined up only
+    /// because production happens to use `.standard` for both, and would break
+    /// silently the day an App Group suite is adopted. The caller decides where
+    /// the flag lives.
+    init(defaults: UserDefaults = .standard, store: GRDBEventStore, backfillAttempted: Bool) {
         self.defaults = defaults
         // FAIL CLOSED: a read error is a bootstrap failure, not "show
         // onboarding". Onboarding over a populated graph is unrecoverable.
@@ -70,7 +76,7 @@ final class FirstRunState: ObservableObject {
             defaults: defaults,
             currentVersion: Self.currentVersion,
             anyEventExists: exists,
-            backfillAttempted: defaults.bool(forKey: HealthKitIngestor.backfillCompletedKey))
+            backfillAttempted: backfillAttempted)
         if resolved == .reconcileThenShell {
             defaults.set(Self.currentVersion, forKey: FirstRunKeys.completedVersion)
         }

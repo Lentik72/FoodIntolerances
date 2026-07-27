@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import HealthGraphCore
 
 @main
 struct FoodIntolerancesApp: App {
@@ -20,6 +21,19 @@ struct FoodIntolerancesApp: App {
     @StateObject private var redFlagMuteStore: RedFlagMuteStore
     @StateObject private var redFlagPresenter: RedFlagPresenter
     @State private var emitCoordinator: EnvironmentEmitCoordinator
+    // Touching HealthGraphProvider.shared here opens the SQLite file and runs
+    // migrations synchronously (and fatalErrors on failure, by design). That
+    // cost is paid at launch either way — the resolver needs the graph-existence
+    // answer before the first frame.
+    //
+    // backfillAttempted is read off .standard HERE because that is where
+    // HealthKitIngestor writes it — FirstRunState no longer assumes its own
+    // defaults suite holds the ingestor's flag.
+    @StateObject private var firstRunState = FirstRunState(
+        store: GRDBEventStore(database: HealthGraphProvider.shared),
+        backfillAttempted: UserDefaults.standard.bool(forKey: HealthKitIngestor.backfillCompletedKey))
+    @StateObject private var importStatus: HealthImportStatusStore
+    @StateObject private var locationPermission = LocationPermissionStore()
     @AppStorage("enableDiagnostics") private var enableDiagnostics = false
     @AppStorage("debugMode") private var debugMode = false
     @Environment(\.scenePhase) private var scenePhase
@@ -28,8 +42,6 @@ struct FoodIntolerancesApp: App {
         // Ensure transformers are registered before any other code runs
         _ = FoodIntolerancesApp.registerTransformers
         Logger.info("StringArrayTransformer registered", category: .app)
-
-        NotificationManager.shared.requestNotificationPermission()
 
         // Initialize proactive alert settings
         ProactiveAlertService.shared.initializeDefaultSettings()
@@ -50,6 +62,17 @@ struct FoodIntolerancesApp: App {
             await EnvironmentalEventEmitter.emitIfNeeded(
                 service: service, statusStore: statusStore, bypassThrottles: forced)
         })
+
+        // Normalize the LIVE store, then hand that exact instance to the
+        // @StateObject. Constructing a throwaway store, normalizing it, and
+        // letting the @StateObject build its own would write .interrupted to
+        // UserDefaults while the instance the UI actually observes still holds
+        // the stale .inProgress it loaded — so the Backfill screen would render
+        // (or auto-run) instead of showing the recovery branch. The pairing is
+        // pinned by makeNormalizedStore + its exact-instance test. Assigned
+        // before setupGlobalErrorHandling(), which captures self and therefore
+        // needs every stored property initialized.
+        _importStatus = StateObject(wrappedValue: HealthImportStatusStore.makeNormalizedStore())
 
         setupGlobalErrorHandling()
 
@@ -106,53 +129,76 @@ struct FoodIntolerancesApp: App {
         WindowGroup {
             let _ = StringArrayTransformer.register() // Ensure registration happens first
             
-            HealthOSRootView()
-                .environmentObject(healthKitManager)
-                .environmentObject(healthKitIngestor)
-                .environmentObject(logItemViewModel)
-                .environmentObject(tabManager)
-                .environmentObject(captureCoordinator)
-                .environmentObject(graphMutationCoordinator)
-                .environmentObject(redFlagMuteStore)
-                .environmentObject(redFlagPresenter)
-                .environmentObject(environmentStatusStore)
-                .environmentObject(environmentalService)
-                .environment(\.emitCoordinator, emitCoordinator)
-                .fullScreenCover(item: $redFlagPresenter.pending) { match in
-                    switch match.category {
-                    case .medicalEmergency:
-                        RedFlagInterstitialView(match: match)
-                            .environmentObject(redFlagPresenter)   // insurance vs env-inheritance edge cases
-                    case .mentalHealthCrisis:
-                        CrisisSupportView()
-                            .environmentObject(redFlagPresenter)
+            // A structural switch, not a fullScreenCover: covering would mount
+            // the whole four-tab shell underneath onboarding — HomeView would
+            // subscribe to EnvironmentalDataService and load against an empty
+            // graph, and emitCoordinator.emit would start fetching weather
+            // while the user is still on the promise screen. The Group sits
+            // INSIDE the modifier chain so both branches see every injection —
+            // a first-run view presented from above them crashes at runtime on
+            // first @EnvironmentObject access.
+            Group {
+                if let entry = firstRunState.flowEntry {
+                    FirstRunFlowView(entry: entry, importOutcome: importStatus.current.outcome) { seeds in
+                        firstRunState.markCompleted(seeds: seeds)
                     }
+                } else {
+                    HealthOSRootView()
+                        // Launch side effects live HERE, on the shell branch only.
+                        // As common modifiers on the Group they would run during
+                        // onboarding — fetching weather and prompting for location
+                        // before the user has been told why.
+                        .task { healthKitIngestor.startObserving() }
+                        .task { emitCoordinator.emit(forced: false) }
+                        .onChange(of: scenePhase) { _, phase in
+                            guard phase == .active else { return }
+                            emitCoordinator.emit(forced: false)
+                        }
+                        .onChange(of: environmentalService.locationRecoveryTick) { _, _ in
+                            // A trusted coordinate (re)appeared. Only force a bypass emit when a
+                            // live location failure actually exists — this bounds the throttle/
+                            // cooldown bypass to real recovery and prevents a fetch storm on every
+                            // routine device fix.
+                            let hasLiveLocationFailure = environmentStatusStore.statuses.values.contains {
+                                $0.liveFailure?.reason == .locationDenied || $0.liveFailure?.reason == .locationUnavailable
+                            }
+                            guard hasLiveLocationFailure else { return }
+                            emitCoordinator.emit(forced: true)
+                        }
                 }
-                .modelContainer(sharedModelContainer)
-                .resetSwiftDataCache()
-                .onAppear {
-                    Logger.debug("App started in DEBUG mode", category: .app)
-                    if enableDiagnostics {
-                        Logger.debug("Diagnostics mode enabled", category: .app)
-                    }
+            }
+            .environmentObject(healthKitManager)
+            .environmentObject(healthKitIngestor)
+            .environmentObject(logItemViewModel)
+            .environmentObject(tabManager)
+            .environmentObject(captureCoordinator)
+            .environmentObject(graphMutationCoordinator)
+            .environmentObject(redFlagMuteStore)
+            .environmentObject(redFlagPresenter)
+            .environmentObject(environmentStatusStore)
+            .environmentObject(environmentalService)
+            .environmentObject(firstRunState)
+            .environmentObject(importStatus)
+            .environmentObject(locationPermission)
+            .environment(\.emitCoordinator, emitCoordinator)
+            .fullScreenCover(item: $redFlagPresenter.pending) { match in
+                switch match.category {
+                case .medicalEmergency:
+                    RedFlagInterstitialView(match: match)
+                        .environmentObject(redFlagPresenter)   // insurance vs env-inheritance edge cases
+                case .mentalHealthCrisis:
+                    CrisisSupportView()
+                        .environmentObject(redFlagPresenter)
                 }
-                .task { healthKitIngestor.startObserving() }
-                .task { emitCoordinator.emit(forced: false) }
-                .onChange(of: scenePhase) { _, phase in
-                    guard phase == .active else { return }
-                    emitCoordinator.emit(forced: false)
+            }
+            .modelContainer(sharedModelContainer)
+            .resetSwiftDataCache()
+            .onAppear {
+                Logger.debug("App started in DEBUG mode", category: .app)
+                if enableDiagnostics {
+                    Logger.debug("Diagnostics mode enabled", category: .app)
                 }
-                .onChange(of: environmentalService.locationRecoveryTick) { _, _ in
-                    // A trusted coordinate (re)appeared. Only force a bypass emit when a
-                    // live location failure actually exists — this bounds the throttle/
-                    // cooldown bypass to real recovery and prevents a fetch storm on every
-                    // routine device fix.
-                    let hasLiveLocationFailure = environmentStatusStore.statuses.values.contains {
-                        $0.liveFailure?.reason == .locationDenied || $0.liveFailure?.reason == .locationUnavailable
-                    }
-                    guard hasLiveLocationFailure else { return }
-                    emitCoordinator.emit(forced: true)
-                }
+            }
         }
     }
 

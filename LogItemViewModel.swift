@@ -1350,7 +1350,11 @@ class LogItemViewModel: ObservableObject {
                         if !hasLoggedPermissionRequest {
                             hasLoggedPermissionRequest = true
                         }
-                        locationManager.requestWhenInUseAuthorization()
+                        // Asking moved to FirstRunLocationView via
+                        // LocationPermissionStore. LogItemViewModel is a launch
+                        // @StateObject, so a request here fired the system
+                        // dialog over whatever was on screen at cold launch —
+                        // same defect as the LocationService.init prompt.
                     default:
                         startLocationUpdatesWhenAppIsActive()
                 }
@@ -1595,11 +1599,10 @@ class LogItemViewModel: ObservableObject {
                     Logger.debug("Location permission not determined.", category: .location)
                     hasLoggedPermissionRequest = true
                 }
-                // Only request once
-                if !UserDefaults.standard.bool(forKey: "hasRequestedLocation") {
-                    locationManager.requestWhenInUseAuthorization()
-                    UserDefaults.standard.set(true, forKey: "hasRequestedLocation")
-                }
+                // Asking moved to FirstRunLocationView via
+                // LocationPermissionStore. This ran from appDidBecomeActive, so
+                // its one-shot "hasRequestedLocation" prompt landed at first
+                // activation — during onboarding, before the explaining screen.
             @unknown default:
                 break
             }

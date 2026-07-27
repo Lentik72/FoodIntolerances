@@ -7,11 +7,16 @@ import HealthGraphCore
 @Suite struct FirstRunStateTests {
     /// `preparing` runs against the fresh suite BEFORE the state is constructed,
     /// so init-time resolution can be steered without touching the database.
-    private func makeState(preparing prepare: (UserDefaults) -> Void = { _ in }) throws -> (FirstRunState, UserDefaults) {
+    /// `backfillAttempted` is injected directly — FirstRunState no longer reads
+    /// the backfill flag off its defaults, so writing the key into the suite
+    /// cannot steer routing anymore.
+    private func makeState(backfillAttempted: Bool = false,
+                           preparing prepare: (UserDefaults) -> Void = { _ in }) throws -> (FirstRunState, UserDefaults) {
         let d = UserDefaults(suiteName: "first-run-state-\(UUID().uuidString)")!
         prepare(d)
         let db = try AppDatabase.inMemory()
-        return (FirstRunState(defaults: d, store: GRDBEventStore(database: db)), d)
+        return (FirstRunState(defaults: d, store: GRDBEventStore(database: db),
+                              backfillAttempted: backfillAttempted), d)
     }
 
     @Test func seedsAreRevalidatedOnRead() throws {
@@ -80,12 +85,25 @@ import HealthGraphCore
         // startedVersion instead of completedVersion, which makes the NEXT
         // launch match the resume row and drop an existing user into
         // onboarding over their own populated graph.
-        let (state, d) = try makeState { $0.set(true, forKey: HealthKitIngestor.backfillCompletedKey) }
+        let (state, d) = try makeState(backfillAttempted: true)
         #expect(state.resolution == .reconcileThenShell)
         #expect(d.integer(forKey: FirstRunKeys.completedVersion) == FirstRunState.currentVersion)
         // This nil check is what kills the wrong-key variant — the two
         // assertions above stay green when the stamp lands on startedVersion.
         #expect(d.object(forKey: FirstRunKeys.startedVersion) == nil)
+    }
+
+    @Test func routingIgnoresABackfillFlagInTheInjectedDefaults() throws {
+        // The injected suite says "backfill happened"; the parameter says it did not.
+        // The parameter must win. Under the old defaults-read this resolved
+        // .reconcileThenShell and the user was silently never onboarded.
+        let d = UserDefaults(suiteName: "first-run-conflict-\(UUID().uuidString)")!
+        d.set(true, forKey: HealthKitIngestor.backfillCompletedKey)
+        let db = try AppDatabase.inMemory()
+        let state = FirstRunState(defaults: d, store: GRDBEventStore(database: db),
+                                  backfillAttempted: false)
+        #expect(state.resolution == .flow(.fresh))
+        #expect(state.flowEntry == .fresh)
     }
 
     @Test func aFreshInstallRoutesIntoTheFreshFlow() throws {

@@ -42,6 +42,19 @@ final class HealthImportStatusStore: ObservableObject {
         }
     }
 
+    /// The production launch path: construct AND normalize, returning the EXACT
+    /// instance that was normalized. The pairing is a factory (not two calls at
+    /// the app root) because the exact-instance property is invisible to any
+    /// disk assertion — normalizing a throwaway store writes the same
+    /// .interrupted bytes to UserDefaults while the instance the UI observes
+    /// still holds the stale .inProgress it loaded, rendering a spinner that
+    /// never resolves.
+    static func makeNormalizedStore(defaults: UserDefaults = .standard) -> HealthImportStatusStore {
+        let store = HealthImportStatusStore(defaults: defaults)
+        store.normalizeAtLaunch()
+        return store
+    }
+
     /// Call at launch BEFORE any surface renders. A persisted `inProgress` has
     /// no live task after process death, so rendering it verbatim shows a
     /// spinner that never resolves.

@@ -15,6 +15,33 @@ import HealthGraphCore
         #expect(s.current.outcome == .notStarted)
     }
 
+    @Test func launchFactoryNormalizesTheExactInstanceItReturns() {
+        // Seed a persisted .inProgress — a backfill was running when the
+        // process died.
+        let (s, d) = store()
+        s.beginAttempt()
+        // Relaunch through the production factory. A disk-only assertion can't
+        // pin this: a mutant that constructs the returned store FIRST and then
+        // normalizes a throwaway writes the same .interrupted bytes to
+        // UserDefaults while the instance the UI observes still holds the stale
+        // .inProgress it loaded — the Backfill screen renders a spinner that
+        // never resolves. The RETURNED instance's in-memory current is the
+        // contract.
+        let launched = HealthImportStatusStore.makeNormalizedStore(defaults: d)
+        #expect(launched.current.outcome == .interrupted)
+        // And the normalization must also have reached disk for the next launch.
+        let reloaded = HealthImportStatusStore(defaults: d)
+        #expect(reloaded.current.outcome == .interrupted)
+    }
+
+    @Test func launchFactoryLeavesATerminalOutcomeAlone() {
+        let (s, d) = store()
+        s.beginAttempt()
+        s.finish(summary: IngestSummary(inserted: 3), failures: [])
+        let launched = HealthImportStatusStore.makeNormalizedStore(defaults: d)
+        #expect(launched.current.outcome == .completed)
+    }
+
     @Test func beginAttemptPersistsInProgressBeforeAnyWork() {
         let (s, d) = store()
         s.beginAttempt()
