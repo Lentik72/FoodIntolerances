@@ -172,6 +172,70 @@ import HealthGraphCore
         #expect(s.current.failureIdentifiers == ["HKQuantityTypeIdentifierHeartRate"])
     }
 
+    // ---- Mutation wave 1: kills that require reloading from the same suite ----
+    // Asserting on the in-memory `current` alone cannot catch a method that
+    // updates memory but skips `persist` — and surviving a relaunch is this
+    // type's entire purpose. Each test below constructs a SECOND store from
+    // the same UserDefaults (a simulated relaunch) and asserts on THAT.
+
+    @Test func aFailedAttemptSurvivesARelaunchAsAttemptFailedNotInterrupted() {
+        // If failAttempt() updates memory but never persists, the next launch
+        // still reads the persisted .inProgress and normalizeAtLaunch rewrites
+        // it to .interrupted — the user is told their import was *interrupted*
+        // (wrong copy, wrong recovery affordance) when it actually failed
+        // authorization. failAttemptIsAttemptFailed can't see this: it only
+        // reads the store that made the call.
+        let (s, d) = store()
+        s.beginAttempt()
+        s.failAttempt()
+        let reloaded = HealthImportStatusStore(defaults: d)
+        #expect(reloaded.current.outcome == .attemptFailed)
+    }
+
+    @Test func launchNormalizationWritesInterruptedBackToDisk() {
+        // If normalizeAtLaunch() updates memory only, .interrupted is lost and
+        // re-derived from a stale persisted .inProgress on EVERY launch — and
+        // any surface constructing a fresh store meanwhile sees .inProgress,
+        // the spinner-that-never-resolves state normalization exists to
+        // prevent. The existing normalization tests assert on the normalizing
+        // store itself, so they cannot tell memory-only apart from persisted.
+        let (s, d) = store()
+        s.beginAttempt()
+        let afterRelaunch = HealthImportStatusStore(defaults: d)
+        afterRelaunch.normalizeAtLaunch()
+        let secondReader = HealthImportStatusStore(defaults: d)
+        #expect(secondReader.current.outcome == .interrupted)
+    }
+
+    @Test func recordCategoriesPersistsWithoutRelyingOnALaterCallToWrite() {
+        // The clobbering test above reloads only AFTER a subsequent finish(),
+        // which persists `current` wholesale — so a recordCategories() that
+        // skips its own persist is masked by that later write. Reload
+        // immediately, with no other persisting call in between.
+        let (s, d) = store()
+        s.recordCategories(3)
+        let reloaded = HealthImportStatusStore(defaults: d)
+        #expect(reloaded.current.categoriesImported == 3)
+    }
+
+    @Test func aRetryThatFailsAuthorizationKeepsThePriorRunsFailureIdentifiers() {
+        // If beginAttempt() blanks failureIdentifiers, the previous run's
+        // failure list is destroyed the moment a retry starts — so a retry
+        // that then fails authorization shows NO failure detail at all in
+        // Data sources. finishWithFailuresIsCompletedWithIssues can't catch
+        // this: its clean re-run ends in finish(), which rewrites the list
+        // anyway.
+        let (s, d) = store()
+        s.beginAttempt()
+        s.finish(summary: IngestSummary(inserted: 5),
+                 failures: ["HKQuantityTypeIdentifierHeartRate: denied"])
+        s.beginAttempt()
+        s.failAttempt()
+        #expect(s.current.failureIdentifiers == ["HKQuantityTypeIdentifierHeartRate"])
+        let reloaded = HealthImportStatusStore(defaults: d)
+        #expect(reloaded.current.failureIdentifiers == ["HKQuantityTypeIdentifierHeartRate"])
+    }
+
     @Test func everyTerminalPathLeavesInProgress() {
         for makeTerminal in [
             { (s: HealthImportStatusStore) in s.finish(summary: IngestSummary(inserted: 1), failures: []) },
