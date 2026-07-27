@@ -4,9 +4,20 @@ import Foundation
 
 @Suite struct IllnessMarkersTests {
     @Test func everyHealthKitIllnessIdentifierResolvesToARealCatalogKey() {
+        // These eight subtypes are derived from HealthKit identifiers by stripping
+        // HKCategoryTypeIdentifier and lowercasing the first character. This literal
+        // is the independent source of truth and is NOT derived from the production
+        // constant; if production substitutes an entry (e.g., misspelling "runnyNose"),
+        // this assertion will catch it rather than following the production value.
+        let expectedSubtypes: Set<String> = [
+            "coughing", "fever", "chills", "soreThroat",
+            "runnyNose", "sinusCongestion", "nightSweats", "generalizedBodyAche",
+        ]
+
         let catalog = Set(SymptomCatalog.all.map(\.canonicalKey))
         #expect(!IllnessMarkers.healthKitIdentifierSubtypes.isEmpty)   // non-vacuous
-        #expect(IllnessMarkers.healthKitIdentifierSubtypes.count == 8)
+        #expect(IllnessMarkers.healthKitIdentifierSubtypes == expectedSubtypes)   // matches independent literal
+
         for hk in IllnessMarkers.healthKitIdentifierSubtypes {
             let normalized = IllnessMarkers.normalize(healthKitSubtype: hk)
             #expect(catalog.contains(normalized))   // no HK identifier is left unmapped
