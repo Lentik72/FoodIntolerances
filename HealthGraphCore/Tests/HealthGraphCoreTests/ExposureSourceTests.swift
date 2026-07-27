@@ -157,6 +157,17 @@ struct HighStressExposureSourceTests {
         let src = HighStressExposureSource(config: .default)
         #expect(src.occurrences(from: [stress(8, subtype: nil, unit: nil)]).isEmpty)
     }
+
+    @Test func rejectsWrongSubtypeWithRightUnit() {
+        // This test isolates the subtype guard: without it, wrong/nil subtypes
+        // paired with the correct unit "score" and an in-range value pass through,
+        // proving the guard is load-bearing. rejectsMindfulSessionMinutes and
+        // rejectsSubtypeNil both pair wrong subtypes with wrong units, so the unit
+        // guard alone rejects them; this test forces the subtype guard to fire.
+        let src = HighStressExposureSource(config: .default)
+        #expect(src.occurrences(from: [stress(8, subtype: "otherRating", unit: "score")]).isEmpty)
+        #expect(src.occurrences(from: [stress(8, subtype: nil, unit: "score")]).isEmpty)
+    }
 }
 
 struct OutsideFactorExposureSourceTests {
