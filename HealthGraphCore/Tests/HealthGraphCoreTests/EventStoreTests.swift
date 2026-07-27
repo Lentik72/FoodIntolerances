@@ -288,3 +288,67 @@ struct EventStoreTests {
         #expect(excluding == true)
     }
 }
+
+@Suite struct ImportedSummaryTests {
+    let t0 = Date(timeIntervalSince1970: 1_750_000_000)
+
+    private func event(_ category: EventCategory, _ source: EventSource,
+                       dayOffset: Int, synthetic: String? = nil) -> HealthEvent {
+        let t = t0.addingTimeInterval(Double(dayOffset) * 86_400)
+        return HealthEvent(timestamp: t, timezoneID: "UTC", category: category,
+                           subtype: "x", source: source, createdAt: t, syntheticBatch: synthetic)
+    }
+
+    @Test func scopesToSourceAndReportsCountsAndEarliestDates() async throws {
+        let db = try AppDatabase.inMemory()
+        let store = GRDBEventStore(database: db)
+        try await store.save([
+            event(.sleep, .healthKit, dayOffset: -30),
+            event(.sleep, .healthKit, dayOffset: -10),
+            event(.symptom, .healthKit, dayOffset: -5),
+            event(.symptom, .manual, dayOffset: -1),            // wrong source
+            event(.food, .healthExportFile, dayOffset: -2),     // wrong source
+        ])
+
+        let summary = try await store.importedSummary(source: .healthKit)
+        let byCategory = Dictionary(uniqueKeysWithValues: summary.map { ($0.category, $0) })
+        #expect(byCategory.count == 2)                              // sleep + symptom only
+        #expect(byCategory["sleep"]?.count == 2)
+        #expect(byCategory["sleep"]?.earliest == t0.addingTimeInterval(-30 * 86_400))
+        #expect(byCategory["symptom"]?.count == 1)
+    }
+
+    @Test func excludesSyntheticRowsCarryingTheHealthKitSource() async throws {
+        // SyntheticDataGenerator emits demo sleep as source .healthKit, so a
+        // source-only predicate would report fabricated rows as real history.
+        let db = try AppDatabase.inMemory()
+        let store = GRDBEventStore(database: db)
+        try await store.save([
+            event(.sleep, .healthKit, dayOffset: -10),
+            event(.sleep, .healthKit, dayOffset: -40, synthetic: "demo-v7"),
+        ])
+
+        let summary = try await store.importedSummary(source: .healthKit)
+        #expect(summary.count == 1)
+        #expect(summary[0].count == 1)
+        #expect(summary[0].earliest == t0.addingTimeInterval(-10 * 86_400))  // NOT the synthetic -40
+    }
+
+    @Test func excludesSoftDeletedRows() async throws {
+        let db = try AppDatabase.inMemory()
+        let store = GRDBEventStore(database: db)
+        let keep = event(.sleep, .healthKit, dayOffset: -10)
+        let drop = event(.sleep, .healthKit, dayOffset: -40)
+        try await store.save([keep, drop])
+        try await store.softDelete(id: drop.id)
+
+        let summary = try await store.importedSummary(source: .healthKit)
+        #expect(summary.count == 1)
+        #expect(summary[0].count == 1)
+    }
+
+    @Test func emptyGraphReturnsNoRows() async throws {
+        let db = try AppDatabase.inMemory()
+        #expect(try await GRDBEventStore(database: db).importedSummary(source: .healthKit).isEmpty)
+    }
+}

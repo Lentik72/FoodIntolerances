@@ -38,6 +38,18 @@ public protocol EventStore {
     func environmentEvents(subtypes: Set<String>, from: Date, through: Date) async throws -> [HealthEvent]
 }
 
+/// Per-category count + earliest event for ONE ingestion source.
+/// `category` is the raw stored value, so the app can map it to its own
+/// CategoryFamily without the package importing any UI type.
+public struct ImportedCategorySummary: Sendable, Equatable {
+    public let category: String
+    public let count: Int
+    public let earliest: Date
+    public init(category: String, count: Int, earliest: Date) {
+        self.category = category; self.count = count; self.earliest = earliest
+    }
+}
+
 public struct GRDBEventStore: EventStore {
     let dbWriter: any DatabaseWriter
 
@@ -137,6 +149,31 @@ public struct GRDBEventStore: EventStore {
                 WHERE deletedAt IS NULL GROUP BY \(column)
                 """)
             return Dictionary(uniqueKeysWithValues: rows.map { ($0["k"] as String, $0["c"] as Int) })
+        }
+    }
+
+    /// What a given ingestion source has actually contributed: per-category
+    /// counts and the earliest surviving event.
+    ///
+    /// The predicate is deliberately three conditions. `source` alone is NOT
+    /// enough — SyntheticDataGenerator emits demo sleep with `source: .healthKit`,
+    /// so a DEBUG graph with demo data would report fabricated rows as imported
+    /// Apple Health history. Release purges synthetic rows at bootstrap, which
+    /// does not make the clause optional: DEBUG is where first run is exercised.
+    public func importedSummary(source: EventSource) async throws -> [ImportedCategorySummary] {
+        try await dbWriter.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT category AS k, COUNT(*) AS c, MIN(timestamp) AS earliest
+                FROM health_events
+                WHERE source = ? AND syntheticBatch IS NULL AND deletedAt IS NULL
+                GROUP BY category
+                """, arguments: [source.rawValue])
+            return rows.compactMap { row in
+                guard let earliest: Date = row["earliest"] else { return nil }
+                return ImportedCategorySummary(category: row["k"] as String,
+                                               count: row["c"] as Int,
+                                               earliest: earliest)
+            }
         }
     }
 
