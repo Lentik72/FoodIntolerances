@@ -226,12 +226,14 @@ struct CyclePhaseExposureSourceTests {
         let luteal = occ.filter { $0.key == .derived(.cyclePhase(.luteal)) }
         #expect(luteal.count == 5)
     }
-    @Test func singleDistinctStartYieldsNothing() {
-        // Two period-start events on the same day and no other distinct start:
-        // only one distinct day, can't bound a luteal window.
+    @Test func singleDistinctStartYieldsMenstrualButNoLuteal() {
+        // Two period-start events on the same day = one distinct start.
+        // One start is enough for its own menstrual day; a luteal window needs
+        // a NEXT start to be defined relative to, so there is none here.
         let events = [periodStart(dayOffset: 0, hourOffset: 0), periodStart(dayOffset: 0, hourOffset: 1)]
         let src = CyclePhaseExposureSource(config: .default, timeZone: TimeZone(identifier: "UTC")!)
         let occ = src.occurrences(from: events)
-        #expect(occ.isEmpty)
+        #expect(occ.count == 1)
+        #expect(occ.allSatisfy { $0.key == .derived(.cyclePhase(.menstrual)) })
     }
 }

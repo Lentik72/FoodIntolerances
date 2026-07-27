@@ -19,6 +19,8 @@ public struct EvidenceConfig: Sendable {
     public var lowMoodThreshold: Double = 1               // mood value ≤ 1 (Rough on the 1–3 scale) → low mood
     public var goodMoodThreshold: Double = 3              // mood value ≥ 3 (Good on the 1–3 scale) → good mood
     public var lutealWindowDays: Int = 5                  // days before next period start
+    public var maxFlowGapDays: Int = 2                    // a gap this small keeps one period (a missed day mustn't split a run)
+    public var minInferredStartGapDays: Int = 10          // suppression window for INFERRED starts only; does not touch authoritative ones
     public var weatherHighPercentile: Double = 0.75
     public var weatherLowPercentile: Double = 0.25
     public var minWeatherReadings: Int = 20
