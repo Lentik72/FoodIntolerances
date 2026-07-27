@@ -351,4 +351,26 @@ struct EventStoreTests {
         let db = try AppDatabase.inMemory()
         #expect(try await GRDBEventStore(database: db).importedSummary(source: .healthKit).isEmpty)
     }
+
+    @Test func earliestFollowsEventTimestampNotRowCreationTime() async throws {
+        // A HealthKit bulk import writes rows whose createdAt is the *import*
+        // moment but whose timestamp is the *historical* event time. The
+        // first-run summary ("back to <date>") must reflect when the event
+        // occurred, not when the row was ingested — MIN(timestamp), never
+        // MIN(createdAt). The rest of this suite cannot catch that swap: the
+        // shared event(...) helper sets createdAt equal to timestamp, so the
+        // two columns are indistinguishable there. This fixture deliberately
+        // diverges them, with createdAt far NEWER than timestamp (as in a real
+        // import), so a MIN(createdAt) mutant reports the later date and fails.
+        let db = try AppDatabase.inMemory()
+        let store = GRDBEventStore(database: db)
+        let backdated = HealthEvent(timestamp: t0.addingTimeInterval(-100 * 86_400), timezoneID: "UTC",
+                                    category: .sleep, subtype: "x", source: .healthKit,
+                                    createdAt: t0.addingTimeInterval(-1 * 86_400))
+        try await store.save(backdated)
+
+        let summary = try await store.importedSummary(source: .healthKit)
+        #expect(summary.count == 1)
+        #expect(summary[0].earliest == t0.addingTimeInterval(-100 * 86_400))  // event time, NOT createdAt
+    }
 }
