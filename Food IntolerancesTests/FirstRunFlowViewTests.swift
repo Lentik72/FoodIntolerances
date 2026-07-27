@@ -1,6 +1,8 @@
 import Foundation
+import HealthGraphCore
 import SwiftUI
 import Testing
+import UIKit
 @testable import Food_Intolerances
 
 @MainActor
@@ -49,6 +51,38 @@ import Testing
         // user onto Backfill for an import that never ran, past Connect — where
         // HealthKit authorization happens.
         #expect(initialStep(entry: .resume, importOutcome: .notStarted) == .promise)
+    }
+
+    @Test func mountingTheFlowMarksItStartedBeforeAnyUserAction() async throws {
+        // Pins `.task { firstRunState.markStarted() }` at FLOW ENTRY — the
+        // Mirror tests above cannot see it, and no other test mounts the flow.
+        // markStarted moved into Connect (or dropped) leaves "Not now" running
+        // the rest of the flow with startedVersion still 0, so a kill there
+        // plus a populated graph hits the reconciliation row and skips
+        // onboarding forever. The .promise step mounts only the promise
+        // screen, so a markStarted relocated into Connect fails here.
+        let d = UserDefaults(suiteName: "first-run-flow-\(UUID().uuidString)")!
+        let db = try AppDatabase.inMemory()
+        let state = FirstRunState(defaults: d, store: GRDBEventStore(database: db),
+                                  backfillAttempted: false)
+        #expect(d.integer(forKey: FirstRunKeys.startedVersion) == 0)   // not at init
+
+        let flow = FirstRunFlowView(entry: .fresh, importOutcome: .notStarted) { _ in }
+            .environmentObject(state)
+        let window = UIWindow(frame: UIScreen.main.bounds)
+        window.rootViewController = UIHostingController(rootView: flow)
+        window.makeKeyAndVisible()
+        window.rootViewController?.view.layoutIfNeeded()
+        defer { window.isHidden = true; window.rootViewController = nil }
+
+        // `.task` runs asynchronously after appearance — poll with a deadline
+        // rather than a fixed sleep so the pass is fast and the fail is bounded.
+        let deadline = Date().addingTimeInterval(5)
+        while d.integer(forKey: FirstRunKeys.startedVersion) == 0, Date() < deadline {
+            await Task.yield()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
+        #expect(d.integer(forKey: FirstRunKeys.startedVersion) == FirstRunState.currentVersion)
     }
 
     @Test func aResumedFlowWithATerminalNonCompletedOutcomeAlsoStartsAtThePromise() {

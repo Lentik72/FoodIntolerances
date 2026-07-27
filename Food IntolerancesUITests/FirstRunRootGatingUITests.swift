@@ -68,12 +68,14 @@ final class FirstRunRootGatingUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Health"].exists,
                        "Shell 'Health' tab is on screen during first run — root gating is broken")
 
-        // 1. The first-run flow is on screen. FirstRunPromiseView is still
-        // Task 11's one-button stub (Button("Continue")).
-        // TODO(Task 12): tighten this to the real promise headline once the
-        // real promise screen lands.
-        XCTAssertTrue(app.buttons["Continue"].exists,
-                      "First-run promise screen is not on screen at launch")
+        // 1. The first-run flow is on screen — asserted on the REAL promise
+        // headline (FirstRunPromiseView.headline), not the generic "Continue"
+        // button a stub or any other screen could also render. Hardcoded here
+        // because UI tests cannot import the app target; the exact copy is
+        // separately pinned by FirstRunPromiseCopyTests in the unit target.
+        XCTAssertTrue(
+            app.staticTexts["Notice patterns in what may help — or make symptoms worse."].exists,
+            "First-run promise screen (real headline) is not on screen at launch")
 
         // 3. No system location dialog before the user reaches the Location
         // step. The system permission alert lives in SpringBoard's element
