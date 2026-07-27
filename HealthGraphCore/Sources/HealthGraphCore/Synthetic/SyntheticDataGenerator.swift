@@ -226,7 +226,9 @@ public enum SyntheticDataGenerator {
             if s.stressSymptom, Double.random(in: 0..<1, using: &rng) < 0.4 {
                 let t = dayStart.addingTimeInterval(14 * 3600)
                 events.append(HealthEvent(timestamp: t, timezoneID: tz, category: .stress,
-                                          value: Double(Int.random(in: 7...10, using: &rng)), source: .manual))
+                                          subtype: HighStressExposureSource.ratingSubtype,
+                                          value: Double(Int.random(in: 7...10, using: &rng)),
+                                          unit: HighStressExposureSource.ratingUnit, source: .manual))
                 if Double.random(in: 0..<1, using: &rng) < 0.65 {
                     events.append(HealthEvent(timestamp: t.addingTimeInterval(3 * 3600), timezoneID: tz,
                                               category: .symptom, subtype: "tension",

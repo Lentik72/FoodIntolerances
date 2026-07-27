@@ -104,14 +104,6 @@ struct ShortSleepExposureSourceTests {
 }
 
 struct DerivedEventExposureSourceTests {
-    @Test func highStressAboveThreshold() {
-        let events = [
-            HealthEvent(timestamp: Date(timeIntervalSince1970: 100), category: .stress, value: 8, source: .manual),
-            HealthEvent(timestamp: Date(timeIntervalSince1970: 200), category: .stress, value: 4, source: .manual),
-        ]
-        let occ = HighStressExposureSource(config: .default).occurrences(from: events)
-        #expect(occ.map(\.key) == [.derived(.highStress)])
-    }
     @Test func pressureDropReadsPreEventizedSubtype() {
         let events = [
             HealthEvent(timestamp: Date(timeIntervalSince1970: 100), category: .environment,
@@ -121,6 +113,49 @@ struct DerivedEventExposureSourceTests {
         ]
         let occ = PressureDropExposureSource().occurrences(from: events)
         #expect(occ.map(\.key) == [.derived(.pressureDrop)])
+    }
+}
+
+struct HighStressExposureSourceTests {
+    let t0 = Date(timeIntervalSince1970: 1_750_000_000)
+
+    private func stress(_ value: Double?, subtype: String?, unit: String?) -> HealthEvent {
+        HealthEvent(timestamp: t0, timezoneID: "UTC", category: .stress, subtype: subtype,
+                    value: value, unit: unit, source: .manual, createdAt: t0)
+    }
+
+    @Test func acceptsAStressRatingAtOrAboveThreshold() {
+        let src = HighStressExposureSource(config: .default)
+        let events = [stress(8, subtype: "stressRating", unit: "score"),
+                      stress(4, subtype: "stressRating", unit: "score")]
+        #expect(src.occurrences(from: events).count == 1)   // 8 passes, 4 below threshold 7
+    }
+
+    @Test func rejectsMindfulSessionMinutes() {
+        // The live defect: HK Mindful Sessions write category .stress with
+        // value = duration in MINUTES, so any session >= 7 min was mined as
+        // "high stress" — semantics inverted.
+        let src = HighStressExposureSource(config: .default)
+        let events = [stress(20, subtype: "mindfulness", unit: "min")]
+        #expect(src.occurrences(from: events).isEmpty)
+    }
+
+    @Test func rejectsRightSubtypeWithWrongUnit() {
+        let src = HighStressExposureSource(config: .default)
+        #expect(src.occurrences(from: [stress(8, subtype: "stressRating", unit: "min")]).isEmpty)
+    }
+
+    @Test func rejectsOutOfRangeValues() {
+        let src = HighStressExposureSource(config: .default)
+        #expect(src.occurrences(from: [stress(60, subtype: "stressRating", unit: "score")]).isEmpty)
+        #expect(src.occurrences(from: [stress(0, subtype: "stressRating", unit: "score")]).isEmpty)
+    }
+
+    @Test func rejectsSubtypeNil() {
+        // Absence is not a durable allowlist — a future untyped .stress writer
+        // must fail closed, not inherit the old behaviour.
+        let src = HighStressExposureSource(config: .default)
+        #expect(src.occurrences(from: [stress(8, subtype: nil, unit: nil)]).isEmpty)
     }
 }
 

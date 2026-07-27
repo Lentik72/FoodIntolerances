@@ -2,11 +2,26 @@ import Foundation
 
 /// High-stress exposures: stress events at or above the threshold.
 public struct HighStressExposureSource: ExposureSource {
+    /// The ONLY subtype that counts as a self-reported stress rating.
+    /// Positive allowlist, not a denylist: the previous rule accepted any
+    /// `.stress` event, and the only real producer is HealthKit Mindful
+    /// Sessions carrying duration in MINUTES — so every meditation of 7+ min
+    /// was mined as a high-stress exposure with inverted semantics.
+    public static let ratingSubtype = "stressRating"
+    /// Unit guard. Not redundant with the subtype: it is what makes a future
+    /// producer that reuses the subtype with different units fail closed
+    /// rather than silently mis-scale, which is exactly how minutes got in.
+    public static let ratingUnit = "score"
+
     let config: EvidenceConfig
     public init(config: EvidenceConfig) { self.config = config }
     public func occurrences(from events: [HealthEvent]) -> [ExposureOccurrence] {
         events.compactMap { e in
-            guard e.category == .stress, let v = e.value, v >= config.highStressThreshold else { return nil }
+            guard e.category == .stress,
+                  e.subtype == Self.ratingSubtype,
+                  e.unit == Self.ratingUnit,
+                  let v = e.value, (1...10).contains(v),
+                  v >= config.highStressThreshold else { return nil }
             return ExposureOccurrence(key: .derived(.highStress), timestamp: e.timestamp,
                                       timezoneID: e.timezoneID, sourceEventID: e.id)
         }
