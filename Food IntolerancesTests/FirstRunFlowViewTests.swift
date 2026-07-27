@@ -42,4 +42,19 @@ import Testing
         // the promise and connect screens.
         #expect(initialStep(entry: .fresh, importOutcome: .interrupted) == .promise)
     }
+
+    @Test func aResumedFlowThatNeverStartedAnImportBeginsAtThePromise() {
+        // markStarted() fires at flow entry, so quitting ON the promise screen
+        // resumes with .notStarted. A blacklist gate (`!= .completed`) drops that
+        // user onto Backfill for an import that never ran, past Connect — where
+        // HealthKit authorization happens.
+        #expect(initialStep(entry: .resume, importOutcome: .notStarted) == .promise)
+    }
+
+    @Test func aResumedFlowWithATerminalNonCompletedOutcomeAlsoStartsAtThePromise() {
+        // .completedWithIssues is terminal: the import ran and finished. Only
+        // .interrupted and .inProgress belong on the recovery screen — the gate
+        // is a whitelist, not "anything but .completed".
+        #expect(initialStep(entry: .resume, importOutcome: .completedWithIssues) == .promise)
+    }
 }

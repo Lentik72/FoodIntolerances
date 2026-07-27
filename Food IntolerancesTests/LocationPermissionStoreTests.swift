@@ -60,6 +60,22 @@ private final class FakeAuthorizer: LocationAuthorizing {
         #expect(fake.requestCount == 0)
     }
 
+    @Test func requestIsANoOpWhenRestricted() {
+        // .restricted (parental controls / MDM) can never show the dialog —
+        // requesting from it must not fire the authorizer.
+        let fake = FakeAuthorizer(status: .restricted)
+        let store = LocationPermissionStore(authorizer: fake)
+        store.request()
+        #expect(fake.requestCount == 0)
+    }
+
+    @Test func requestIsANoOpWhenAuthorizedAlways() {
+        let fake = FakeAuthorizer(status: .authorizedAlways)
+        let store = LocationPermissionStore(authorizer: fake)
+        store.request()
+        #expect(fake.requestCount == 0)
+    }
+
     @Test func theChangeCallbackUpdatesTheObservedStore() {
         // The dialog is asynchronous: reading authorizationStatus right after
         // requestWhenInUseAuthorization() still says .notDetermined. The status
