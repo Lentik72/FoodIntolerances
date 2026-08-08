@@ -2348,7 +2348,7 @@ git commit -m "feat(first-run): persisted Apple Health import status with interr
 
 ---
 
-## Testability hardening (applies to Tasks 11, 12, 16, 17)
+## Testability hardening (applies to Tasks 11, 12, 13, 16, 17)
 
 Tasks 11–17 were originally specced with **no tests at all**, resting entirely on the
 device gate. That gate turned out to be thin: the device's graph is exposure-rich and
@@ -2368,6 +2368,7 @@ transition belongs there.
 |---|---|---|
 | 11 | explicit `backfillAttempted`; injectable location adapter | launch normalization applies to the **exact injected store instance**; permission-state transitions without a system dialog |
 | 12 | an injected Connect **workflow/controller**, not just a pure function | **call ORDER and counts**: that `.interrupted` is inspected *before* anything calls `beginAttempt()` |
+| 13 | an injected backfill **workflow** + a `BackfillViewState` | **call ORDER**: the failures snapshot taken at the instant `backfill()` returns; `startObserving()` only after `finish()`; entry policy (auto-run vs. recovery) and the synchronous double-invocation guard |
 | 16 | an injected import **workflow** | begin, success, partial failure, thrown failure, `startObserving()` invocation, cleanup after an export-import failure |
 | 17 | pure presentation helpers | every empty-state and copy branch |
 
@@ -2952,11 +2953,18 @@ git commit -m "feat(first-run): promise + connect screens with honest privacy co
 
 **Files:**
 - Modify: `Views/HealthOS/FirstRun/FirstRunBackfillView.swift`
+- Modify: `Views/HealthOS/FirstRun/FirstRunFlowView.swift` (pass the root-injected collaborators down)
 - Create: `Views/HealthOS/Health/DataSourcesPresentation.swift`
+- Create: `Views/HealthOS/FirstRun/BackfillWorkflow.swift`
+- Create: `Views/HealthOS/FirstRun/BackfillViewState.swift`
 - Test: `Food IntolerancesTests/DataSourcesPresentationTests.swift`
+- Test: `Food IntolerancesTests/BackfillWorkflowTests.swift`
+- Test: `Food IntolerancesTests/BackfillViewStateTests.swift`
 
 **Interfaces:**
 - Produces: `DataSourcesPresentation.backfillMessage(for:) -> String`, `.statusLabel(for:) -> String`, `.summaryLine(from:) -> String?`.
+- Produces: `BackfillWorkflow.run() async -> RunResult`, `.resumesInterruptedImport: Bool`, over three injected seams — `HealthBackfillRunning`, `ImportStatusRecording` (extends Task 12's `ImportStatusTransitioning`), `ImportedSummaryReading`.
+- Produces: `BackfillViewState` — `appeared()`, `retryTapped()`, published `isRunning` / `hasRun` / `summaries`, and a read-only `backfillTask` so tests await completion deterministically.
 
 **Snapshot the ingestor's state, don't read it after the await.** `lastBackfillFailures` is reset at the start of each run and `progress` is nil'd in a `defer`, so reading them after `backfill()` returns gives the wrong answer.
 
@@ -3122,101 +3130,73 @@ enum DataSourcesPresentation {
 }
 ```
 
-- [ ] **Step 4: Implement the backfill screen**
+- [ ] **Step 4: Extract the run's transitions into an injected workflow**
 
-Replace `Views/HealthOS/FirstRun/FirstRunBackfillView.swift`:
+Same rule as Task 12, for the same reason: do **not** put this inline in the view. The
+ordering that matters here is the **failures snapshot**. `backfill()` throws only when
+authorization throws; every per-type failure is swallowed into `lastBackfillFailures`,
+which the ingestor clears at the start of the next run and populates as the run proceeds.
+Read it after any further await and a partial import can be committed as a clean one —
+the persisted status is identical either way, so only the recorded position of the read
+discriminates.
 
-```swift
-import SwiftUI
-import HealthGraphCore
+Create `Views/HealthOS/FirstRun/BackfillWorkflow.swift` with three injected seams —
+`HealthBackfillRunning` (backfill + `lastBackfillFailures` + `startObserving`),
+`ImportStatusRecording` (Task 12's `ImportStatusTransitioning` plus `finish` and
+`recordCategories`), and `ImportedSummaryReading`. Pin with recording doubles that share
+one recorder, asserting the sequence:
 
-struct FirstRunBackfillView: View {
-    let onContinue: () -> Void
+| Path | Must be true |
+|---|---|
+| Success | `beginAttempt` → `backfill` → **read failures** → `finish` → `startObserving` → read summaries → `recordCategories`, in that exact order |
+| Per-type failures | the snapshotted identifiers reach `finish`, and the REAL store turns them into `.completedWithIssues` with identifiers stripped of their messages |
+| Authorization throws | `beginAttempt` → `backfill` → `failAttempt`; `finish` and `startObserving` **never** called |
+| Summary read fails | `recordCategories` **not called at all** — a failed read is not "0 categories", and recording zero overwrites the count the import just established |
+| Recovery inspection | `resumesInterruptedImport` reads status and mutates **nothing** |
+| Resumed run | `beginAttempt` **is** called — unlike Connect, an actual run here is a new attempt, or a second kill is undetectable |
 
-    @EnvironmentObject private var ingestor: HealthKitIngestor
-    @EnvironmentObject private var importStatus: HealthImportStatusStore
-    @State private var isRunning = false
-    @State private var summaries: [ImportedCategorySummary] = []
-    @State private var hasRun = false
+**Mutants to kill:** move the failures read after `startObserving()`; set the guard flags
+inside the dispatched Task instead of synchronously; auto-run on the `.interrupted` path;
+`recordCategories(summaries?.count ?? 0)`.
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(DataSourcesPresentation.backfillMessage(for: importStatus.current))
-                .font(HealthTheme.screenTitle())
-                .foregroundStyle(HealthTheme.ink)
+- [ ] **Step 5: Implement BackfillViewState, then the thin view**
 
-            if isRunning, let p = ingestor.progress {
-                VStack(alignment: .leading, spacing: 8) {
-                    ProgressView(value: Double(p.completedSteps), total: Double(max(p.totalSteps, 1)))
-                        .tint(HealthTheme.accent)
-                    Text("\(p.eventsIngested.formatted()) events so far")
-                        .font(.subheadline)
-                        .foregroundStyle(HealthTheme.inkSecondary)
-                }
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .hgCard()
-            } else if let line = DataSourcesPresentation.summaryLine(from: summaries) {
-                Text(line)
-                    .font(.subheadline)
-                    .foregroundStyle(HealthTheme.inkSecondary)
-                    .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .hgCard()
-            }
+`BackfillViewState` owns only screen state: published `isRunning` / `hasRun` /
+`summaries`, the entry policy, the guard, and a read-only `backfillTask` tests await.
+It builds the workflow over what it is given and **never constructs a status store** —
+`FirstRunFlowView` passes the root-injected `HealthKitIngestor` and
+`HealthImportStatusStore` down, exactly as it does for Connect (Task 11's binding
+constraint). A second instance would be written by Connect and read here, so the
+`.interrupted` recovery branch would never fire.
 
-            Spacer()
-            if hasRun && !isRunning {
-                Button("Retry") { Task { await runBackfill() } }
-                    .frame(maxWidth: .infinity, minHeight: 44)
-            }
-            Button("Continue", action: onContinue)
-                .buttonStyle(.borderedProminent)
-                .tint(HealthTheme.accent)
-                .foregroundStyle(HealthTheme.onAccent)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .disabled(isRunning)
-        }
-        .padding(.horizontal, 16)
-        .task {
-            // An interrupted import resumes here as a recovery screen rather
-            // than silently restarting a multi-minute job.
-            guard !hasRun, importStatus.current.outcome != .interrupted else { hasRun = true; return }
-            await runBackfill()
-        }
-    }
+The guard must run **synchronously** in `appeared()` / `retryTapped()`, before any
+dispatch: this screen starts a multi-minute HealthKit read on appearance with no tap at
+all, appearance callbacks can fire more than once, and two runs would walk the same
+anchors concurrently. A flag set inside the Task is too late.
 
-    private func runBackfill() async {
-        isRunning = true
-        hasRun = true
-        importStatus.beginAttempt()
-        defer { isRunning = false }
-        do {
-            let summary = try await ingestor.backfill()
-            // SNAPSHOT: lastBackfillFailures resets at the start of each run and
-            // progress is nil'd in a defer, so both must be read now.
-            let failures = ingestor.lastBackfillFailures
-            importStatus.finish(summary: summary, failures: failures)
-            ingestor.startObserving()
-            let store = GRDBEventStore(database: HealthGraphProvider.shared)
-            summaries = (try? await store.importedSummary(source: .healthKit)) ?? []
-            importStatus.recordCategories(summaries.count)
-        } catch {
-            importStatus.failAttempt()
-        }
-    }
-}
-```
+`appeared()` on an `.interrupted` status must set `hasRun` and return **without running** —
+the screen becomes a recovery screen offering Retry. A failed retry leaves the last good
+summary standing: those events are still in the graph, and the outcome copy above already
+reports the failure.
 
-- [ ] **Step 5: Run tests, build, commit**
+`FirstRunBackfillView` is then thin wiring — appearance and each button call exactly one
+model method. It observes the ingestor directly for the live progress bar only
+(display-only plumbing state, no decision attached) and the status store for the headline.
 
-Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/DataSourcesPresentationTests" -parallel-testing-enabled NO 2>&1 | grep -E "✔|✘|Test run"`
-Expected: 7 tests pass.
+- [ ] **Step 6: Run tests, build, commit**
+
+Run: `xcodebuild test -scheme "Food Intolerances" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"Food IntolerancesTests/DataSourcesPresentationTests" -only-testing:"Food IntolerancesTests/BackfillWorkflowTests" -only-testing:"Food IntolerancesTests/BackfillViewStateTests" -parallel-testing-enabled NO 2>&1 | grep -E "✔|✘|Test run"`
+Expected: 23 tests pass (9 presentation + 7 workflow + 7 view state).
 
 ```bash
 git add Views/HealthOS/FirstRun/FirstRunBackfillView.swift \
+        Views/HealthOS/FirstRun/FirstRunFlowView.swift \
+        Views/HealthOS/FirstRun/BackfillWorkflow.swift \
+        Views/HealthOS/FirstRun/BackfillViewState.swift \
         Views/HealthOS/Health/DataSourcesPresentation.swift \
-        "Food IntolerancesTests/DataSourcesPresentationTests.swift"
+        "Food IntolerancesTests/DataSourcesPresentationTests.swift" \
+        "Food IntolerancesTests/BackfillWorkflowTests.swift" \
+        "Food IntolerancesTests/BackfillViewStateTests.swift"
 git commit -m "feat(first-run): backfill screen covering all terminal and recovery states"
 ```
 
