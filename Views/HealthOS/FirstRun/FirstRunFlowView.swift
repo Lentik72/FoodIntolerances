@@ -25,13 +25,13 @@ struct FirstRunFlowView: View {
 
     @EnvironmentObject private var firstRunState: FirstRunState
 
-    /// Read HERE (not inside FirstRunConnectView) so Connect's state model
-    /// can be built in the view's init with explicit dependencies —
+    /// Read HERE (not inside the screens) so Connect's and Backfill's state
+    /// models can be built in their view inits with explicit dependencies —
     /// @EnvironmentObject is not available at init time. These are the
     /// root-injected instances; passing them down (never constructing) keeps
     /// the single-HealthImportStatusStore invariant, so Backfill observes the
-    /// same store Connect writes through. Accessed only when the .connect
-    /// case renders.
+    /// same store Connect writes through. Accessed only when the .connect and
+    /// .backfill cases render.
     @EnvironmentObject private var ingestor: HealthKitIngestor
     @EnvironmentObject private var importStatus: HealthImportStatusStore
 
@@ -56,7 +56,9 @@ struct FirstRunFlowView: View {
                                             importStatus: importStatus,
                                             onSkip: { advance(to: .seeding) },
                                             onConnected: { advance(to: .backfill) })
-        case .backfill: FirstRunBackfillView { advance(to: .seeding) }
+        case .backfill: FirstRunBackfillView(ingestor: ingestor,
+                                             importStatus: importStatus,
+                                             onContinue: { advance(to: .seeding) })
         case .seeding:  FirstRunSeedingView(selection: $selectedSeeds) { advance(to: .location) }
         case .location: FirstRunLocationView(seeds: selectedSeeds) { advance(to: .done) }
         case .done:     Color.clear.onAppear { onComplete(selectedSeeds) }
