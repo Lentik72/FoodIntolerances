@@ -11,6 +11,11 @@ struct HealthTabView: View {
     @Query private var userProfiles: [UserProfile]
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var statusStore: EnvironmentStatusStore
+    /// Passed DOWN into DataSourcesView rather than resolved there, so that
+    /// screen builds its state model in its init over the root-injected
+    /// instances — the same store every other surface observes.
+    @EnvironmentObject private var ingestor: HealthKitIngestor
+    @EnvironmentObject private var importStatus: HealthImportStatusStore
 
     private var tempUnitBinding: Binding<TemperatureUnit> {
         Binding(get: { TemperatureUnit.resolved(from: rawTempUnit) },
@@ -84,6 +89,27 @@ struct HealthTabView: View {
                             Divider().padding(.leading, 52)
                         }
                     }
+                }
+                .hgCard()
+
+                VStack(spacing: 0) {
+                    NavigationLink {
+                        DataSourcesView(ingestor: ingestor, importStatus: importStatus)
+                    } label: {
+                        HStack {
+                            Image(systemName: "heart.text.square")
+                                .foregroundStyle(HealthTheme.accent)
+                            Text("Data sources")
+                                .foregroundStyle(HealthTheme.ink)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.footnote)
+                                .foregroundStyle(HealthTheme.inkMuted)
+                        }
+                        .padding(16)
+                        .contentShape(Rectangle())
+                    }
+                    .accessibilityHint("Connect Apple Health and review what has been imported")
                 }
                 .hgCard()
 

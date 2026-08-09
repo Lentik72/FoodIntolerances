@@ -37,6 +37,19 @@ enum DataSourcesPresentation {
         }
     }
 
+    /// User-facing copy for a failed export-file import. Deliberately not
+    /// `String(describing: error)`: that puts type names and error domains on
+    /// screen, which tells the user nothing and reads as a crash. The raw error
+    /// goes to the log instead.
+    static func importErrorMessage(for error: Error) -> String {
+        switch error {
+        case ExportImportError.noPermission:
+            return "No permission to read the selected file."
+        default:
+            return "That export couldn't be read. Try exporting again from Apple Health."
+        }
+    }
+
     /// Derived from the HealthKit-scoped summary, never from the requested
     /// one-year window: export.zip reaches further back, a partial grant less.
     /// The earliest date is the whole point of Task 7 computing `earliest` —
