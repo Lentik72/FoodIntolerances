@@ -26,6 +26,31 @@ struct CaptureFlowTests {
         #expect(page.count == 4)                       // 3 seeded + 1 logged
         #expect(page.first?.value == 7)                // the just-logged (newest) event
     }
+    @Test func symptomChipsFallBackToFirstRunSeedsWhenHistoryIsEmpty() async throws {
+        // The app-side half of the seeding wiring: a `loadChips` that forgot to
+        // forward its `seeds` parameter to the ranker compiles, passes every
+        // other test here, and leaves a brand-new user staring at an empty chip
+        // row — the exact thing the seeding screen exists to prevent.
+        let model = SymptomCaptureModel(database: try db(),
+                                        now: { Date(timeIntervalSince1970: 1_750_000_000) })
+        await model.loadChips(seeds: ["bloating", "fatigue"])
+        #expect(model.chipKeys == ["bloating", "fatigue"])   // pick order preserved
+    }
+
+    @Test func realHistoryOutranksSeedsAndIsNeverDuplicated() async throws {
+        let database = try db()
+        let store = GRDBEventStore(database: database)
+        let base = Date(timeIntervalSince1970: 1_750_000_000)
+        try await store.save([
+            HealthEvent(timestamp: base, category: .symptom, subtype: "headache", value: 5,
+                        unit: "severity", source: .manual, createdAt: base),
+        ])
+        let model = SymptomCaptureModel(database: database, now: { base })
+        // "headache" is BOTH logged history and a seed — it must appear once.
+        await model.loadChips(seeds: ["headache", "bloating"])
+        #expect(model.chipKeys == ["headache", "bloating"])
+    }
+
     @Test func symptomNewKeyCanonicalizesTypedText() async throws {
         let model = SymptomCaptureModel(database: try db())
         model.searchText = "Sinus Pain"

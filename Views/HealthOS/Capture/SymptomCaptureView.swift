@@ -24,10 +24,15 @@ final class SymptomCaptureModel: ObservableObject {
     // `SymptomDefinition` type at its root, which would otherwise shadow HealthGraphCore's.
     var results: [HealthGraphCore.SymptomDefinition] { HealthGraphCore.SymptomCatalog.search(searchText) }
 
-    func loadChips() async {
+    /// Seeds arrive as a PARAMETER, not as mutable state on the model:
+    /// `@StateObject` property defaults cannot read `@EnvironmentObject`, and a
+    /// `model.seeds` property would work only if every caller remembered to set
+    /// it before `loadChips()`. A parameter makes that ordering unrepresentable.
+    /// They fill only the slots real history leaves empty (see ChipRanker).
+    func loadChips(seeds: [String] = []) async {
         guard let recent = try? await store.eventsPage(before: nil, limit: 300, categories: [.symptom], sources: [.manual]) else { return }
         chipKeys = ChipRanker.rank(history: recent, category: .symptom, now: now(),
-                                   timeZone: .current, limit: 8)
+                                   timeZone: .current, limit: 8, seeds: seeds)
     }
 
     /// Canonical key for the full-form (new/searched) path — a picked result or typed text.
@@ -48,6 +53,11 @@ struct SymptomCaptureView: View {
     @Binding var timestamp: Date
     let onLogged: (HealthEvent) -> Void
     @StateObject private var model = SymptomCaptureModel(database: HealthGraphProvider.shared)
+    /// Resolves because CaptureSheet is presented from inside HealthOSRootView,
+    /// which sits below the app root's injections — the same chain CaptureSheet
+    /// itself already relies on. A missing injection here is a runtime crash on
+    /// first access, not a build error.
+    @EnvironmentObject private var firstRunState: FirstRunState
 
     var body: some View {
         ScrollView {
@@ -63,7 +73,7 @@ struct SymptomCaptureView: View {
             }
             .padding(16)
         }
-        .task { await model.loadChips() }
+        .task { await model.loadChips(seeds: firstRunState.seeds) }   // re-validated on read
     }
 
     private var chipRow: some View {
