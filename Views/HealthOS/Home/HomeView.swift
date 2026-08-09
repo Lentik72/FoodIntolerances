@@ -30,7 +30,6 @@ struct HomeView: View {
                 if let summary = viewModel.backfillSummary {
                     backfillCard(summary)
                 }
-                whatsNext
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
@@ -141,17 +140,5 @@ struct HomeView: View {
         }
         .padding(16)
         .hgCard()
-    }
-
-    private var whatsNext: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("What's next")
-                .font(HealthTheme.sectionHeader())
-                .foregroundStyle(HealthTheme.ink)
-            Text("Capture and insights arrive in the next updates. Meanwhile, your timeline is filling itself.")
-                .font(.subheadline)
-                .foregroundStyle(HealthTheme.inkSecondary)
-        }
-        .padding(.top, 8)
     }
 }

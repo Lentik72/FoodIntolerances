@@ -2,6 +2,15 @@ import SwiftUI
 import HealthGraphCore
 
 struct InsightsPlaceholderView: View {
+    /// Despite the name this is the LIVE Insights empty state, rendered
+    /// whenever the feed has no sections — including the error path. The copy it
+    /// used to carry ("the engine isn't watching yet", "when the evidence engine
+    /// arrives") described a feature that has since shipped, so it told users a
+    /// working part of the app did not exist. Extracted as constants so
+    /// EmptyStateCopyTests can hold that line.
+    static let headline = "Nothing conclusive yet — here's what your graph holds."
+    static let explanation = "A pattern appears here once an exposure repeats enough times to test, and the result holds up when the data is split in half."
+
     @State private var familyCounts: [(family: CategoryFamily, count: Int)] = []
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var captureCoordinator: CaptureCoordinator
@@ -15,7 +24,7 @@ struct InsightsPlaceholderView: View {
                     .padding(.top, 8)
 
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("The engine isn't watching yet — but your data is ready.")
+                    Text(Self.headline)
                         .font(HealthTheme.sectionHeader())
                         .foregroundStyle(HealthTheme.ink)
                     ForEach(familyCounts, id: \.family) { entry in
@@ -33,7 +42,7 @@ struct InsightsPlaceholderView: View {
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel("\(entry.family.label): \(entry.count) events")
                     }
-                    Text("When the evidence engine arrives, patterns will appear here with the observations behind them.")
+                    Text(Self.explanation)
                         .font(.footnote)
                         .foregroundStyle(HealthTheme.inkMuted)
                         .padding(.top, 4)

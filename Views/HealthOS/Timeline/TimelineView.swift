@@ -16,6 +16,12 @@ struct TimelineView: View {
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var captureCoordinator: CaptureCoordinator
     @EnvironmentObject private var statusStore: EnvironmentStatusStore
+    /// The empty state branches on the persisted import status, and passes both
+    /// collaborators down to DataSourcesView so that screen never builds a
+    /// second store.
+    @EnvironmentObject private var importStatus: HealthImportStatusStore
+    @EnvironmentObject private var ingestor: HealthKitIngestor
+    @State private var showingDataSources = false
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -203,6 +209,12 @@ struct TimelineView: View {
         .background(HealthTheme.paper)
         .scrollDismissesKeyboard(.immediately)
         .refreshable { await viewModel.refresh() }
+        // Presented from here rather than routed cross-tab: the empty state's
+        // one action should land on the real screen, not on "go find the Health
+        // tab". Both collaborators are the root-injected instances.
+        .sheet(isPresented: $showingDataSources) {
+            NavigationStack { DataSourcesView(ingestor: ingestor, importStatus: importStatus) }
+        }
     }
 
     private var emptyState: some View {
@@ -210,14 +222,47 @@ struct TimelineView: View {
             Image(systemName: viewModel.isSearchActive ? "magnifyingglass" : "list.bullet.rectangle")
                 .font(.system(size: 32))
                 .foregroundStyle(HealthTheme.inkMuted)
-            Text(viewModel.isSearchActive
-                 ? "Nothing matches that search."
-                 : "Your timeline is empty. Connect Apple Health from the Health tab and your data flows in automatically.")
+            Text(Self.emptyStateMessage(isSearching: viewModel.isSearchActive,
+                                        hasActiveFilters: hasActiveFilters,
+                                        importOutcome: importStatus.current.outcome))
                 .font(.subheadline)
                 .foregroundStyle(HealthTheme.inkSecondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 40)
+            if Self.showsConnectAction(isSearching: viewModel.isSearchActive,
+                                       hasActiveFilters: hasActiveFilters,
+                                       importOutcome: importStatus.current.outcome) {
+                Button("Connect Apple Health") { showingDataSources = true }
+                    .frame(minHeight: 44)
+            }
         }
+    }
+
+    private var hasActiveFilters: Bool {
+        !viewModel.activeFamilies.isEmpty || !viewModel.activeSources.isEmpty
+    }
+
+    /// Four states, not two. Filters are checked BEFORE the import status: a
+    /// user whose filters match nothing has data, and telling them to connect
+    /// Apple Health sends them to fix something that is not broken.
+    static func emptyStateMessage(isSearching: Bool, hasActiveFilters: Bool,
+                                  importOutcome: HealthImportOutcome) -> String {
+        if isSearching { return "Nothing matches that search." }
+        if hasActiveFilters { return "No events match these filters." }
+        if importOutcome == .notStarted {
+            return "Your timeline is empty. Connect Apple Health to bring in the history you already have."
+        }
+        // The import ran and brought back nothing, so offering it again is a
+        // dead end. Capture exists — ask for that instead.
+        return "Nothing logged yet. Tap + to log your first thing."
+    }
+
+    /// Gated on the persisted import status, never on `hg.hk.backfillCompleted`:
+    /// that flag is set even after a run where every type failed, so it means
+    /// "we tried once", not "we have data".
+    static func showsConnectAction(isSearching: Bool, hasActiveFilters: Bool,
+                                   importOutcome: HealthImportOutcome) -> Bool {
+        !isSearching && !hasActiveFilters && importOutcome == .notStarted
     }
 }
 
