@@ -40,6 +40,12 @@ struct FirstRunBackfillView: View {
                 .font(HealthTheme.screenTitle())
                 .foregroundStyle(HealthTheme.ink)
 
+            // The card floats between the headline and the actions rather than
+            // clinging under the headline: once the import finishes this screen
+            // is two short lines, and a single top-aligned card left most of the
+            // display empty.
+            Spacer()
+
             if state.isRunning, let progress = ingestor.progress {
                 VStack(alignment: .leading, spacing: 8) {
                     ProgressView(value: Double(progress.completedSteps),
@@ -62,7 +68,11 @@ struct FirstRunBackfillView: View {
             }
 
             Spacer()
-            if state.hasRun && !state.isRunning {
+            // Offered only when there is something to retry. A clean import
+            // under a Retry button invites redoing a multi-minute job for
+            // nothing; the recovery and partial-failure states genuinely need it.
+            if state.hasRun && !state.isRunning,
+               DataSourcesPresentation.offersRetry(for: importStatus.current) {
                 Button("Retry") { state.retryTapped() }
                     .frame(maxWidth: .infinity, minHeight: 44)
             }

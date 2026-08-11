@@ -82,4 +82,25 @@ import HealthGraphCore
     @Test func summaryLineIsNilForAnEmptyImport() {
         #expect(DataSourcesPresentation.summaryLine(from: []) == nil)
     }
+
+    // MARK: - Retry is offered only when there is something to retry
+
+    @Test func aCleanImportDoesNotInviteYouToRedoIt() {
+        // A multi-minute job that just succeeded should not sit under a Retry
+        // button — there is nothing to fix, and re-running it costs minutes.
+        #expect(DataSourcesPresentation.offersRetry(for: status(.completed, events: 1200)) == false)
+    }
+
+    @Test func everyIncompleteOutcomeOffersRetry() {
+        for outcome: HealthImportOutcome in [.interrupted, .attemptFailed,
+                                             .completedNoData, .completedWithIssues] {
+            #expect(DataSourcesPresentation.offersRetry(for: status(outcome)) == true,
+                    "\(outcome) should offer retry")
+        }
+    }
+
+    @Test func anImportThatHasNotRunOrIsRunningOffersNoRetry() {
+        #expect(DataSourcesPresentation.offersRetry(for: status(.notStarted)) == false)
+        #expect(DataSourcesPresentation.offersRetry(for: status(.inProgress)) == false)
+    }
 }

@@ -1,15 +1,38 @@
 import Foundation
+import CoreLocation
 import Testing
 import HealthGraphCore
 @testable import Food_Intolerances
 
 @Suite struct FirstRunLocationCopyTests {
-    @Test func namesTheFirstTwoPickedSymptoms() {
-        let seeds = ["Migraine", "Bloating", "Nausea"]
-            .map { HealthGraphCore.SymptomCatalog.canonicalKey(for: $0) }
-        let copy = FirstRunLocationView.explanation(for: seeds)
-        #expect(copy.contains("Migraine and Bloating"))
-        #expect(!copy.contains("Nausea"))          // only the first two
+    private func keys(_ names: [String]) -> [String] {
+        names.map { HealthGraphCore.SymptomCatalog.canonicalKey(for: $0) }
+    }
+
+    @Test func namesTwoPickedSymptoms() {
+        let copy = FirstRunLocationView.explanation(for: keys(["Migraine", "Bloating"]))
+        #expect(copy.contains("You picked Migraine and Bloating."))
+    }
+
+    @Test func namesTwoAndCountsTheRestRatherThanSilentlyDroppingThem() {
+        // Naming two of eight and saying nothing about the other six reads as
+        // arbitrary — the first person to see it asked where the rest went.
+        let copy = FirstRunLocationView.explanation(
+            for: keys(["Migraine", "Bloating", "Nausea", "Fatigue", "Headache",
+                       "Dizziness", "Anxiety", "Congestion"]))
+        #expect(copy.contains("You picked Migraine, Bloating and 6 more."))
+        #expect(!copy.contains("Nausea"))
+    }
+
+    @Test func theCopyDoesNotClaimTheseSymptomsTrackTheWeather() {
+        // Every weather exposure is .contested in PlausibilityCatalog, so
+        // "we'll watch <weather> against them" asserts a link the Insights
+        // surface would then refuse to state. The picks are context; the
+        // watching is a capability, not a claim about those picks.
+        let copy = FirstRunLocationView.explanation(for: keys(["Hard Stool", "Bloating"]))
+        #expect(!copy.contains("against them"))
+        #expect(!copy.localizedCaseInsensitiveContains("against your"))
+        #expect(copy.contains("if a pattern is there"))   // conditional, not promised
     }
 
     @Test func fallsBackWhenNothingWasPicked() {
@@ -52,5 +75,25 @@ import HealthGraphCore
         let copy = FirstRunLocationView.explanation(for: [RedFlagCatalog.allSymptomKeys.first!])
         #expect(!copy.contains("You picked"))
         #expect(copy.contains("your symptoms"))
+    }
+
+    // MARK: - Status note
+
+    @Test func anAuthorizedDeviceSaysSoInsteadOfRenderingNothing() {
+        // Previously this state rendered EmptyView, leaving the screen with a
+        // headline, one paragraph and a void — and telling a user who had
+        // already granted location precisely nothing about it.
+        let note = FirstRunLocationView.statusNote(for: .authorizedWhenInUse)
+        #expect(note?.contains("Location is on") == true)
+        #expect(FirstRunLocationView.statusNote(for: .authorizedAlways) == note)
+    }
+
+    @Test func aDeniedDeviceIsToldWhereTheSwitchIs() {
+        #expect(FirstRunLocationView.statusNote(for: .denied) == "Location is turned off for this app.")
+        #expect(FirstRunLocationView.statusNote(for: .restricted) == "Location is turned off for this app.")
+    }
+
+    @Test func anUndecidedDeviceGetsNoNoteBecauseTheButtonIsTheMessage() {
+        #expect(FirstRunLocationView.statusNote(for: .notDetermined) == nil)
     }
 }

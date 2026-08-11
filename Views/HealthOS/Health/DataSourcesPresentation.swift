@@ -37,6 +37,18 @@ enum DataSourcesPresentation {
         }
     }
 
+    /// Whether the surface should offer to run the import again. A clean import
+    /// must NOT — re-running costs minutes and there is nothing to fix, so a
+    /// permanent Retry beside it just invites waste.
+    static func offersRetry(for status: HealthImportStatus) -> Bool {
+        switch status.outcome {
+        case .interrupted, .attemptFailed, .completedNoData, .completedWithIssues:
+            return true
+        case .notStarted, .inProgress, .completed:
+            return false
+        }
+    }
+
     /// User-facing copy for a failed export-file import. Deliberately not
     /// `String(describing: error)`: that puts type names and error domains on
     /// screen, which tells the user nothing and reads as a crash. The raw error
