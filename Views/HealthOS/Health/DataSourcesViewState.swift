@@ -124,6 +124,29 @@ final class DataSourcesViewState: ObservableObject {
     static func resetBackfill(defaults: UserDefaults = .standard) {
         defaults.removeObject(forKey: HealthKitIngestor.backfillCompletedKey)
     }
+
+    /// Puts the app into the state a killed onboarding import leaves behind, so
+    /// the recovery screen is reachable by tapping.
+    ///
+    /// It exists because `resetFirstRun` cannot get you there: that sets
+    /// `forceShow`, the resolver checks `forceShow` FIRST and unconditionally,
+    /// and only `markCompleted` ever clears it — so after a reset every launch
+    /// resolves `.flow(.fresh)` and an interrupted import can never resume.
+    /// Worse, a masked resume and a broken resume look identical from the
+    /// outside (both land on the promise screen), so the path quietly goes
+    /// unverified. Clearing `forceShow` here is the load-bearing line.
+    ///
+    /// `beginAttempt()` goes through the real store rather than writing the
+    /// status key directly, so this cannot drift from how a genuine import
+    /// records itself. Launch normalization then turns `.inProgress` into
+    /// `.interrupted`, exactly as it would after a process kill.
+    static func simulateInterruptedOnboarding(importStatus: any ImportStatusTransitioning,
+                                              defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: FirstRunKeys.forceShow)
+        defaults.removeObject(forKey: FirstRunKeys.completedVersion)
+        defaults.set(FirstRunState.currentVersion, forKey: FirstRunKeys.startedVersion)
+        importStatus.beginAttempt()
+    }
     #endif
 
     private func refreshSummary() async {

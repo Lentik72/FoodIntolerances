@@ -147,6 +147,20 @@ struct DataSourcesView: View {
             }
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .padding(16)
+            Divider().padding(.leading, 16)
+            // Reachable by tapping on purpose: "Reset first run" sets forceShow,
+            // which the resolver honours before anything else, so the recovery
+            // screen cannot be reached from a reset alone.
+            Button("Simulate interrupted import (DEBUG)") {
+                DataSourcesViewState.simulateInterruptedOnboarding(importStatus: importStatus)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .padding(16)
+            Divider().padding(.leading, 16)
+            Text("Relaunch after any of these — first-run resolution happens once, before the first frame.")
+                .font(.footnote)
+                .foregroundStyle(HealthTheme.inkMuted)
+                .padding(16)
         }
         .hgCard()
     }

@@ -269,6 +269,31 @@ import HealthGraphCore
         #expect(defaults.bool(forKey: FirstRunKeys.forceShow) == true)
     }
 
+    @Test func simulatingAnInterruptedOnboardingActuallyResolvesToResume() {
+        // Asserted through the REAL resolver rather than key by key, because the
+        // purpose is the resolution, not the bookkeeping. forceShow starts set —
+        // that is the state resetFirstRun leaves behind, and the trap this
+        // affordance exists to escape: the resolver short-circuits on it, so a
+        // version that forgets to clear it yields .flow(.fresh) and the recovery
+        // screen is never reached.
+        let defaults = UserDefaults(suiteName: "data-sources-sim-\(UUID().uuidString)")!
+        defaults.set(true, forKey: FirstRunKeys.forceShow)
+        defaults.set(FirstRunState.currentVersion, forKey: FirstRunKeys.completedVersion)
+        let recorder = Recorder()
+        let status = RecordingImportStatus(recorder: recorder)
+
+        DataSourcesViewState.simulateInterruptedOnboarding(importStatus: status, defaults: defaults)
+
+        // .inProgress persisted through the real store API; launch normalization
+        // turns it into .interrupted, as it would after a process kill.
+        #expect(recorder.calls == [.beginAttempt])
+        #expect(status.outcome == .inProgress)
+        #expect(FirstRunResolver.resolve(defaults: defaults,
+                                         currentVersion: FirstRunState.currentVersion,
+                                         anyEventExists: { true },
+                                         backfillAttempted: true) == .flow(.resume))
+    }
+
     @Test func resettingTheBackfillTouchesOnlyTheBackfillFlag() {
         // Deliberately NOT folded into resetFirstRun: clearing this invites a
         // year-long re-backfill, so it stays a separate, labelled action.
