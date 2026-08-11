@@ -14,6 +14,14 @@ import HealthGraphCore
         #expect(copy.contains("You picked Migraine and Bloating."))
     }
 
+    @Test func threePicksAreAllNamedBecauseSummarizingOneSavesNothing() {
+        // "Fatigue, Joint Pain and 1 more" is absurd when the one more would
+        // fit in the same space it took to not name it.
+        let copy = FirstRunLocationView.explanation(for: keys(["Fatigue", "Joint Pain", "Nausea"]))
+        #expect(copy.contains("You picked Fatigue, Joint Pain and Nausea."))
+        #expect(!copy.contains("1 more"))
+    }
+
     @Test func namesTwoAndCountsTheRestRatherThanSilentlyDroppingThem() {
         // Naming two of eight and saying nothing about the other six reads as
         // arbitrary — the first person to see it asked where the rest went.

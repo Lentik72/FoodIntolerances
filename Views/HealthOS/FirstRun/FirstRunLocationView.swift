@@ -38,14 +38,17 @@ struct FirstRunLocationView: View {
         return "You picked \(picked). Share location and \(watching) everything you log \(tail)"
     }
 
-    /// Two names plus a count. Naming two of eight and saying nothing about the
-    /// rest reads as arbitrary; listing all eight buries the sentence.
+    /// Names up to three, then counts. Naming two of eight and saying nothing
+    /// about the rest reads as arbitrary; listing all eight buries the sentence.
+    /// Three is the cutoff because "X, Y and 1 more" is absurd when the one more
+    /// would fit — summarizing has to save more than it costs.
     private static func namedPicks(_ validated: [String]) -> String? {
         let names = validated.map { HealthGraphCore.SymptomCatalog.displayName(for: $0) }
         switch names.count {
         case 0:  return nil
         case 1:  return names[0]
         case 2:  return "\(names[0]) and \(names[1])"
+        case 3:  return "\(names[0]), \(names[1]) and \(names[2])"
         default: return "\(names[0]), \(names[1]) and \(names.count - 2) more"
         }
     }

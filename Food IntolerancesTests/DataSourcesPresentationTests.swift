@@ -101,6 +101,29 @@ import HealthGraphCore
 
     @Test func anImportThatHasNotRunOrIsRunningOffersNoRetry() {
         #expect(DataSourcesPresentation.offersRetry(for: status(.notStarted)) == false)
+        #expect(DataSourcesPresentation.offersRetry(for: status(.interrupted)) == true)
         #expect(DataSourcesPresentation.offersRetry(for: status(.inProgress)) == false)
+    }
+
+    // MARK: - Saying what the buttons do
+
+    @Test func theRecoveryScreenExplainsThatRetryingDoesNotDuplicate() throws {
+        // On device this screen was a headline and two unexplained buttons, and
+        // the obvious question — does retrying start over, do I lose the 36,799
+        // events already in? — went unanswered on an otherwise empty screen.
+        let hint = try #require(DataSourcesPresentation.backfillActionHint(for: status(.interrupted)))
+        #expect(hint.localizedCaseInsensitiveContains("duplicated"))
+        #expect(hint.localizedCaseInsensitiveContains("Data sources"))
+    }
+
+    @Test func anEmptyImportIsExplainedAsConnectedRatherThanBroken() throws {
+        let hint = try #require(DataSourcesPresentation.backfillActionHint(for: status(.completedNoData)))
+        #expect(hint.localizedCaseInsensitiveContains("stays connected"))
+    }
+
+    @Test func thereIsNothingToExplainOnACleanOrRunningImport() {
+        #expect(DataSourcesPresentation.backfillActionHint(for: status(.completed, events: 1200)) == nil)
+        #expect(DataSourcesPresentation.backfillActionHint(for: status(.inProgress)) == nil)
+        #expect(DataSourcesPresentation.backfillActionHint(for: status(.notStarted)) == nil)
     }
 }

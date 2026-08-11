@@ -40,6 +40,12 @@ struct FirstRunBackfillView: View {
                 .font(HealthTheme.screenTitle())
                 .foregroundStyle(HealthTheme.ink)
 
+            if let hint = DataSourcesPresentation.backfillActionHint(for: importStatus.current) {
+                Text(hint)
+                    .font(.subheadline)
+                    .foregroundStyle(HealthTheme.inkSecondary)
+            }
+
             // The card floats between the headline and the actions rather than
             // clinging under the headline: once the import finishes this screen
             // is two short lines, and a single top-aligned card left most of the

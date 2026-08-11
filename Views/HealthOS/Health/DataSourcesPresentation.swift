@@ -49,6 +49,26 @@ enum DataSourcesPresentation {
         }
     }
 
+    /// What the buttons under a stalled import actually do, or nil when there
+    /// is nothing to explain. The recovery screen otherwise states that the
+    /// import was interrupted and offers two buttons without answering the
+    /// question that raises: does retrying start over, and do I lose what
+    /// already came in?
+    static func backfillActionHint(for status: HealthImportStatus) -> String? {
+        guard offersRetry(for: status) else { return nil }
+        switch status.outcome {
+        case .completedNoData:
+            // Retry is still offered, but the honest emphasis is that nothing
+            // is broken — observation is running and new data will arrive.
+            return "Apple Health stays connected, so anything new will flow in. You can continue."
+        default:
+            // Accurate, not reassuring-by-default: backfill matches existing
+            // dedup keys and reports them as updated rather than inserting
+            // twice, which is why a re-run does not double the count.
+            return "Retry runs the import again — nothing already imported is duplicated. You can also continue and import later from Data sources."
+        }
+    }
+
     /// User-facing copy for a failed export-file import. Deliberately not
     /// `String(describing: error)`: that puts type names and error domains on
     /// screen, which tells the user nothing and reads as a crash. The raw error
