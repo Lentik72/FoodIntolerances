@@ -18,7 +18,15 @@ public struct CandidateGenerator {
         let exposures = exposuresByKey.filter { $0.value.count >= config.minExposures }.keys
         let outcomes = outcomesByKey.filter { $0.value.count >= config.minOutcomeOccurrences }.keys
         var out: [Candidate] = []
-        for e in exposures { for o in outcomes { out.append(Candidate(exposure: e, outcome: o)) } }
+        // Skip pairs where the exposure was derived from the outcome's own
+        // events — excluded HERE so the tautology is never scored, never
+        // stored, and never displayed. Hiding it at the Insights layer would
+        // leave the engine believing something false.
+        for e in exposures {
+            for o in outcomes where !ExposureDerivation.isDerived(e, from: o) {
+                out.append(Candidate(exposure: e, outcome: o))
+            }
+        }
         return out
     }
 }

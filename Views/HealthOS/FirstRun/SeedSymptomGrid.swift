@@ -50,7 +50,7 @@ struct SeedSymptomGrid: View {
         "Headache", "Migraine", "Bloating", "Upper Abdominal Cramps", "Nausea",
         "Loose Stool", "Hard Stool", "Indigestion", "Fatigue", "Cognitive Fog",
         "Joint Pain", "Muscle Soreness", "Skin Rash", "Congestion",
-        "Anxiety", "Dizziness",
+        "Anxiety", "Stress", "Dizziness",
     ]
 
     /// No filtering here. A filter would silently swallow a bad name and leave
