@@ -43,6 +43,35 @@ public struct OutcomeOccurrence: Sendable, Equatable {
     }
 }
 
+/// Which exposures are derived FROM outcome events, and therefore must never be
+/// tested against them.
+///
+/// A stress log is both an exposure (`derived:highStress`) and an outcome
+/// (`symptom("stress")`) — the SAME event on both sides. Pairing them yields a
+/// perfect co-occurrence by construction, which clears every evidence gate and
+/// surfaces as a confident "High stress → Stress". Not a crash; a statistically
+/// immaculate tautology sitting beside real findings and devaluing them.
+///
+/// Declared rather than written as an `if` at the call site so the REASON lives
+/// with the model: the next exposure derived from an outcome event adds itself
+/// here and is correct automatically, instead of reproducing this bug and
+/// waiting for someone to notice a suspiciously perfect result.
+///
+/// Deliberately per-KEY, not per-event. Both occurrence types carry a
+/// `sourceEventID`, so this could exclude only the same log — but that would
+/// still permit "your 9am stress predicts your 3pm stress", which is
+/// autocorrelation dressed as insight. Any stress→stress edge is uninformative.
+public enum ExposureDerivation {
+    public static func isDerived(_ exposure: ExposureKey, from outcome: OutcomeKey) -> Bool {
+        switch (exposure, outcome) {
+        case (.derived(.highStress), .symptom(let subtype)):
+            return subtype == HighStressExposureSource.symptomSubtype
+        default:
+            return false
+        }
+    }
+}
+
 /// Pure extractor: raw events → normalized exposure occurrences.
 public protocol ExposureSource {
     func occurrences(from events: [HealthEvent]) -> [ExposureOccurrence]
