@@ -126,13 +126,32 @@ No new screens, no new `CaptureService` method, no schema change, no migration. 
 window (`stressLagHours = 0...24`) and the Insights label ("High stress", via
 `InsightPhrasing`) already exist and are correct.
 
-## Consequence: this change is retroactive
+## Consequence: this change is retroactive, and it reaches further than new edges
 
 Any historical `.symptom`/`stress` log with a severity ≥ 7 becomes a high-stress exposure on
 **the next recompute**. This is intended — the signal arrives immediately rather than after
-weeks of new logging — but it means the relationship set can change without the user
-logging anything new. Expect new `highStress → …` relationships to appear on first
-recompute after this ships, on any device with rated stress history.
+weeks of new logging — but the relationship set can change without the user logging
+anything new.
+
+**It is not only additive.** `EvidenceEngine` builds its confounder pool from *every
+exposure key that has occurrences* (`EvidenceEngine.swift:86-87`: "Day-sets for confounder
+analysis: every exposure key + illness (always)"). `highStress` has always been in that
+loop and has always contributed nothing, because it had no occurrences. The moment it has
+some, **high-stress days join the confounder pool for every other candidate**, and existing
+relationships whose exposure days overlap stressful days can be penalized and lose
+confidence.
+
+That is the correct behaviour — stress is a genuine confounder, and the engine was built to
+account for it — but it means this round can *demote* findings a user has already seen. It
+is not an out-of-scope item to be avoided; it is a consequence to expect and to look for
+when verifying.
+
+**A second-order interaction, accepted:** for a candidate whose *outcome* is
+`symptom("stress")` — say `poorAirDay → stress` — the confounder pool still contains
+`highStress` days, which are by construction the days that outcome is severe. Such a
+candidate is therefore penalized by something close to its own outcome. The effect is
+suppression, never fabrication, and stress-as-an-outcome is deferred anyway, so this round
+accepts it rather than special-casing the confounder pool. Revisit it in the outcome round.
 
 ## Testing
 
@@ -172,7 +191,6 @@ Named so they do not drift in:
 - A dedicated stress capture surface, and any Home quick-check for stress.
 - HRV-derived or otherwise inferred stress. Inferring stress from physiology is exactly the
   class of mistake the Mindful Sessions defect was.
-- Stress as a confounder for other relationships.
 - Mindfulness as a protective exposure family (a separate spec follow-up).
 - Any change to `highStressThreshold`, the lag window, or the evidence gates.
 

@@ -4,7 +4,7 @@
 
 **Goal:** Wake the dormant `highStress` exposure by mining the rated "Stress" symptom logs the app can already record, without letting the same log be tested against itself.
 
-**Architecture:** `HighStressExposureSource` gains a second positive allowlist (`.symptom`/`stress`/`severity`) alongside its existing dormant one (`.stress`/`stressRating`/`score`). Because a stress log then produces both an exposure and an outcome from one event, `CandidateGenerator` consults a new shadowing declaration and skips the self-pair. The app side adds "Stress" to the first-run seed grid for discoverability. No new screens, no schema change, no migration.
+**Architecture:** `HighStressExposureSource` gains a second positive allowlist (`.symptom`/`stress`/`severity`) alongside its existing dormant one (`.stress`/`stressRating`/`score`). Because a stress log then produces both an exposure and an outcome from one event, `CandidateGenerator` consults a new derivation declaration and skips the self-pair. The app side adds "Stress" to the first-run seed grid for discoverability. No new screens, no schema change, no migration.
 
 **Tech Stack:** Swift 6, Swift Testing (`@Test`/`#expect`), swift-package `HealthGraphCore`, Xcode app target `Food Intolerances`.
 
@@ -14,7 +14,7 @@
 - Both accepted shapes are **positive allowlists with a unit guard**. Never widen to "any `.stress` event" — that is the defect that mined HealthKit Mindful Session *minutes* as high stress.
 - The existing `HighStressExposureSourceTests` must keep passing **unchanged**. The new shape is additive; if an existing test needs editing, the change is wrong.
 - Only **rated** stress logs count. `CaptureService.logSymptom` writes `unit: "severity"` only when a severity was given, so an unrated log has `nil` value and must be rejected.
-- The shadow exclusion is **per-key, not per-event**, and must stay surgical: `highStress → symptom("headache")` must survive.
+- The derivation exclusion is **per-key, not per-event**, and must stay surgical: `highStress → symptom("headache")` must survive.
 - Package tests: `swift test --package-path HealthGraphCore`. App tests need `-parallel-testing-enabled NO`.
 - Every task ends with a commit. Follow the repo's Conventional Commit style.
 
@@ -24,8 +24,8 @@
 |---|---|---|
 | `HealthGraphCore/Sources/HealthGraphCore/Evidence/DerivedEventExposureSources.swift` | Accept the second stress shape | 1 |
 | `HealthGraphCore/Tests/HealthGraphCoreTests/ExposureSourceTests.swift` | Extend `HighStressExposureSourceTests` | 1 |
-| `HealthGraphCore/Sources/HealthGraphCore/Evidence/ExposureModel.swift` | Declare which exposures shadow which outcomes | 2 |
-| `HealthGraphCore/Sources/HealthGraphCore/Evidence/CandidateGenerator.swift` | Skip shadowed pairs | 2 |
+| `HealthGraphCore/Sources/HealthGraphCore/Evidence/ExposureModel.swift` | Declare which exposures are derived from which outcomes | 2 |
+| `HealthGraphCore/Sources/HealthGraphCore/Evidence/CandidateGenerator.swift` | Skip self-derived pairs | 2 |
 | `HealthGraphCore/Tests/HealthGraphCoreTests/CandidateGeneratorTests.swift` | Pin the skip and its narrowness | 2 |
 | `HealthGraphCore/Tests/HealthGraphCoreTests/StressExposureIntegrationTests.swift` | Prove the pieces compose | 3 |
 | `Views/HealthOS/FirstRun/SeedSymptomGrid.swift` | Offer "Stress" as a seed | 4 |
@@ -192,7 +192,7 @@ git commit -m "feat(evidence): mine the rated Stress symptom as a high-stress ex
 
 **Interfaces:**
 - Consumes: `HighStressExposureSource.symptomSubtype` from Task 1.
-- Produces: `ExposureOutcomeShadowing.shadows(_ exposure: ExposureKey, _ outcome: OutcomeKey) -> Bool`.
+- Produces: `ExposureDerivation.isDerived(_ exposure: ExposureKey, from outcome: OutcomeKey) -> Bool`.
 
 **Why this exists:** after Task 1, one stress log yields an exposure (`derived:highStress`) and an outcome (`symptom("stress")`) from the **same event**. `CandidateGenerator` pairs every qualifying exposure with every qualifying outcome, so it would generate `highStress → stress`, whose co-occurrence is perfect by construction. That passes every evidence gate and surfaces as a confident insight reading "High stress → Stress" — a tautology sitting beside real findings.
 
@@ -222,8 +222,8 @@ Append to `CandidateGeneratorTests` (keep `gatesOnMinCounts` unchanged):
         #expect(cands == [Candidate(exposure: .derived(.highStress), outcome: .symptom("headache"))])
     }
 
-    @Test func otherExposuresAreUnaffectedByShadowing() {
-        // Only an exposure DERIVED FROM an outcome's events shadows it. A food
+    @Test func otherExposuresAreUnaffectedByTheRule() {
+        // Only an exposure DERIVED FROM an outcome's events is excluded from it. A food
         // trigger has no such relationship to the stress outcome.
         let dairy = ExposureKey.object(UUID(), .food)
         let cands = CandidateGenerator(config: .default)
@@ -232,22 +232,22 @@ Append to `CandidateGeneratorTests` (keep `gatesOnMinCounts` unchanged):
         #expect(cands == [Candidate(exposure: dairy, outcome: .symptom("stress"))])
     }
 
-    @Test func shadowingIsDeclaredNotInferred() {
+    @Test func derivationIsDeclaredNotInferred() {
         // Direct unit coverage of the declaration, so the rule is pinned even if
         // CandidateGenerator is later restructured.
-        #expect(ExposureOutcomeShadowing.shadows(.derived(.highStress), .symptom("stress")))
-        #expect(!ExposureOutcomeShadowing.shadows(.derived(.highStress), .symptom("headache")))
-        #expect(!ExposureOutcomeShadowing.shadows(.derived(.shortSleep), .symptom("stress")))
-        #expect(!ExposureOutcomeShadowing.shadows(.derived(.highStress), .lowMood))
+        #expect(ExposureDerivation.isDerived(.derived(.highStress), from: .symptom("stress")))
+        #expect(!ExposureDerivation.isDerived(.derived(.highStress), from: .symptom("headache")))
+        #expect(!ExposureDerivation.isDerived(.derived(.shortSleep), from: .symptom("stress")))
+        #expect(!ExposureDerivation.isDerived(.derived(.highStress), from: .lowMood))
     }
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `swift test --package-path HealthGraphCore --filter CandidateGeneratorTests 2>&1 | tail -12`
-Expected: FAIL — `cannot find 'ExposureOutcomeShadowing' in scope`.
+Expected: FAIL — `cannot find 'ExposureDerivation' in scope`.
 
-- [ ] **Step 3: Declare the shadowing rule**
+- [ ] **Step 3: Declare the derivation**
 
 Append to `ExposureModel.swift`, after the `OutcomeOccurrence` struct:
 
@@ -270,8 +270,8 @@ Append to `ExposureModel.swift`, after the `OutcomeOccurrence` struct:
 /// `sourceEventID`, so this could exclude only the same log — but that would
 /// still permit "your 9am stress predicts your 3pm stress", which is
 /// autocorrelation dressed as insight. Any stress→stress edge is uninformative.
-public enum ExposureOutcomeShadowing {
-    public static func shadows(_ exposure: ExposureKey, _ outcome: OutcomeKey) -> Bool {
+public enum ExposureDerivation {
+    public static func isDerived(_ exposure: ExposureKey, from outcome: OutcomeKey) -> Bool {
         switch (exposure, outcome) {
         case (.derived(.highStress), .symptom(let subtype)):
             return subtype == HighStressExposureSource.symptomSubtype
@@ -293,7 +293,7 @@ In `CandidateGenerator.swift`, replace the pairing loop:
         // stored, and never displayed. Hiding it at the Insights layer would
         // leave the engine believing something false.
         for e in exposures {
-            for o in outcomes where !ExposureOutcomeShadowing.shadows(e, o) {
+            for o in outcomes where !ExposureDerivation.isDerived(e, from: o) {
                 out.append(Candidate(exposure: e, outcome: o))
             }
         }
@@ -312,9 +312,9 @@ Expected: all pass. Watch the acceptance suite in particular — it plants a `.s
 
 - [ ] **Step 7: Demonstrate the two mutants**
 
-1. **Remove the rule** — change `shadows` to `return false` unconditionally.
-   Expected failure: `neverPairsHighStressWithTheStressOutcomeItIsDerivedFrom` and `shadowingIsDeclaredNotInferred`.
-2. **Over-broaden it** — change the case body to `return true` (every symptom shadowed by high stress).
+1. **Remove the rule** — change `isDerived` to `return false` unconditionally.
+   Expected failure: `neverPairsHighStressWithTheStressOutcomeItIsDerivedFrom` and `derivationIsDeclaredNotInferred`.
+2. **Over-broaden it** — change the case body to `return true` (every symptom treated as high stress's origin).
    Expected failure: `stillPairsHighStressWithEveryOtherSymptom`. This is the important one: the "safe" over-correction silently deletes the feature.
 
 Restore after each and confirm green.
@@ -336,7 +336,7 @@ git commit -m "fix(evidence): never test an exposure against the outcome it is d
 - Create: `HealthGraphCore/Tests/HealthGraphCoreTests/StressExposureIntegrationTests.swift`
 
 **Interfaces:**
-- Consumes: Task 1's second shape, Task 2's `ExposureOutcomeShadowing`, and `EvidenceEngine.extract(_:)` (internal, reachable via `@testable`).
+- Consumes: Task 1's second shape, Task 2's `ExposureDerivation`, and `EvidenceEngine.extract(_:)` (internal, reachable via `@testable`).
 
 **Why this is a separate task:** Tasks 1 and 2 each pin their own unit in isolation, and neither proves the wiring. `HighStressExposureSource` must actually be registered in `EvidenceEngine.extract` (it is, at `EvidenceEngine.swift:35`) for any of this to reach a real recompute. This test runs the real extraction over a hand-built corpus.
 
@@ -479,9 +479,14 @@ git commit -m "feat(first-run): offer Stress as a seed so the exposure has a one
 Not a full device gate — this round adds no screens. Two observations on hardware:
 
 - [ ] Log **Stress at 8** from symptom capture. It appears in Timeline as a symptom, as before.
-- [ ] Health tab → Health Graph Debug → **Dump relationship report**. With enough rated stress history the report may now contain `derived:highStress` rows; it must **never** contain a `highStress → stress` edge. On a graph with little manual history, expect no new rows at all — that is consistent, not a failure.
+- [ ] Health tab → Health Graph Debug → **Dump relationship report**, and keep the output. With enough rated stress history the report may now contain `derived:highStress` rows; it must **never** contain a `highStress → stress` edge. On a graph with little manual history, expect no new rows at all — that is consistent, not a failure.
+- [ ] Compare against the previous dump for **demotions**, not just additions. Existing relationships losing confidence is the expected consequence of high-stress days entering the confounder pool. A demotion accompanied by `derived:highStress` in the confounder list is correct; a demotion with no stress overlap is not, and wants investigating.
+
+Note the gate before any of this shows anything: `minExposures = 5`, so at least five rated stress logs at ≥ 7 must exist before a single candidate is generated.
 
 ## Notes carried from the spec
 
 - This change is **retroactive**: existing `.symptom`/`stress` logs rated ≥ 7 become exposures on the next recompute, so relationships can appear without the user logging anything new.
-- Out of scope, do not drift in: stress as an outcome family, a dedicated stress capture surface, HRV-derived stress, stress as a confounder, mindfulness as a protective family, and any change to thresholds or gates.
+- **It is not only additive.** `EvidenceEngine.swift:86-87` builds the confounder pool from *every exposure key that has occurrences*. `highStress` has always been in that loop contributing nothing; once it has occurrences, high-stress days become a confounder for every other candidate, and **existing relationships can be demoted**. This is correct behaviour, not a regression — but do not report it as one, and do not "fix" it.
+- A second-order interaction, accepted for this round: a candidate whose *outcome* is `symptom("stress")` is penalized by the `highStress` confounder, which is by construction its own outcome's severe days. The effect is suppression, never fabrication. Revisit in the stress-as-outcome round.
+- Out of scope, do not drift in: stress as an outcome family, a dedicated stress capture surface, HRV-derived stress, mindfulness as a protective family, and any change to thresholds or gates.
