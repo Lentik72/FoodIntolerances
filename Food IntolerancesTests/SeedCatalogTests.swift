@@ -39,4 +39,12 @@ import HealthGraphCore
         let offered = Array(SeedSymptomGrid.offered.prefix(SeedSelection.limit))
         #expect(SymptomSeeds.validate(offered, limit: SeedSelection.limit) == offered)
     }
+
+    @Test func stressIsOfferedSoTheExposureHasAOneTapPath() {
+        // The high-stress exposure mines the rated "Stress" symptom log. If the
+        // grid stops offering it, the feature still works but loses its
+        // discoverable entry point, which is the whole reason it is here.
+        #expect(SeedSymptomGrid.offeredNames.contains("Stress"))
+        #expect(SeedSymptomGrid.offered.contains("stress"))
+    }
 }
