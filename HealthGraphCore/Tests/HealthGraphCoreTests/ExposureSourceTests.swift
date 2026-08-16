@@ -168,6 +168,53 @@ struct HighStressExposureSourceTests {
         #expect(src.occurrences(from: [stress(8, subtype: "otherRating", unit: "score")]).isEmpty)
         #expect(src.occurrences(from: [stress(8, subtype: nil, unit: "score")]).isEmpty)
     }
+
+    // MARK: - The second shape: the rated "Stress" symptom people can already log
+
+    private func symptomStress(_ value: Double?, subtype: String = "stress",
+                               unit: String? = "severity") -> HealthEvent {
+        HealthEvent(timestamp: t0, timezoneID: "UTC", category: .symptom, subtype: subtype,
+                    value: value, unit: unit, source: .manual, createdAt: t0)
+    }
+
+    @Test func acceptsARatedStressSymptomAtOrAboveThreshold() {
+        // SymptomCatalog has had a "Stress" entry all along, so this is the log
+        // people actually make. Before this it fed outcomes only and was
+        // invisible to the exposure miner.
+        let src = HighStressExposureSource(config: .default)
+        #expect(src.occurrences(from: [symptomStress(8)]).map(\.key) == [.derived(.highStress)])
+    }
+
+    @Test func rejectsARatedStressSymptomBelowThreshold() {
+        let src = HighStressExposureSource(config: .default)
+        #expect(src.occurrences(from: [symptomStress(4)]).isEmpty)
+    }
+
+    @Test func rejectsAnUnratedStressSymptom() {
+        // logSymptom writes unit: nil when no severity was given. "I was
+        // stressed" without a number cannot be thresholded at 7, and guessing
+        // a value would invent data.
+        let src = HighStressExposureSource(config: .default)
+        #expect(src.occurrences(from: [symptomStress(nil, unit: nil)]).isEmpty)
+    }
+
+    @Test func rejectsOtherSymptomsRatedHigh() {
+        // Without the subtype guard, EVERY symptom logged at 7+ would become a
+        // high-stress exposure — every bad headache would read as stress.
+        let src = HighStressExposureSource(config: .default)
+        #expect(src.occurrences(from: [symptomStress(9, subtype: "headache")]).isEmpty)
+    }
+
+    @Test func theUnitGuardIsPerShapeNotGlobal() {
+        // Each shape owns its unit. A symptom carrying "score" is not the
+        // symptom shape, and a .stress event carrying "severity" is not the
+        // rating shape — otherwise the two allowlists leak into each other and
+        // the Mindful Sessions class of defect reopens.
+        let src = HighStressExposureSource(config: .default)
+        #expect(src.occurrences(from: [symptomStress(8, unit: "score")]).isEmpty)
+        #expect(src.occurrences(from: [symptomStress(8, unit: "min")]).isEmpty)
+        #expect(src.occurrences(from: [stress(8, subtype: "stress", unit: "severity")]).isEmpty)
+    }
 }
 
 struct OutsideFactorExposureSourceTests {
