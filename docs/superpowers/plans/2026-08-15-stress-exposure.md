@@ -478,7 +478,9 @@ git commit -m "feat(first-run): offer Stress as a seed so the exposure has a one
 
 Not a full device gate — this round adds no screens. Two observations on hardware:
 
+- [ ] Seed the check first, or it proves nothing: nothing in the app generates the new shape, so with `minExposures = 5` the "no self-pair" assertion below is trivially satisfied on an untouched device. Using the capture sheet's "When" picker, back-date **five or six Stress logs rated 8** across distinct days, each followed ~3h later by a headache log.
 - [ ] Log **Stress at 8** from symptom capture. It appears in Timeline as a symptom, as before.
+- [ ] Note that the chip path always produces a rated log — tapping a Stress chip forces the 1–10 severity step — so a seeded chip log is always mineable.
 - [ ] Health tab → Health Graph Debug → **Dump relationship report**, and keep the output. With enough rated stress history the report may now contain `derived:highStress` rows; it must **never** contain a `highStress → stress` edge. On a graph with little manual history, expect no new rows at all — that is consistent, not a failure.
 - [ ] Compare against the previous dump for **demotions**, not just additions. Existing relationships losing confidence is the expected consequence of high-stress days entering the confounder pool. A demotion accompanied by `derived:highStress` in the confounder list is correct; a demotion with no stress overlap is not, and wants investigating.
 

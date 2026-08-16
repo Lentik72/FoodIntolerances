@@ -196,6 +196,10 @@ struct HighStressExposureSourceTests {
         // a value would invent data.
         let src = HighStressExposureSource(config: .default)
         #expect(src.occurrences(from: [symptomStress(nil, unit: nil)]).isEmpty)
+        // The same log after an edit: EventEditView writes the unit
+        // unconditionally, so this shape is reachable and the range check is
+        // what rejects it.
+        #expect(src.occurrences(from: [symptomStress(nil, unit: "severity")]).isEmpty)
     }
 
     @Test func rejectsOtherSymptomsRatedHigh() {
@@ -214,6 +218,10 @@ struct HighStressExposureSourceTests {
         #expect(src.occurrences(from: [symptomStress(8, unit: "score")]).isEmpty)
         #expect(src.occurrences(from: [symptomStress(8, unit: "min")]).isEmpty)
         #expect(src.occurrences(from: [stress(8, subtype: "stress", unit: "severity")]).isEmpty)
+        // The fourth combination: a symptom carrying shape 1's subtype and unit.
+        // Unreachable today — nothing writes unit "score" — but a refactor that
+        // hoisted the category test out of the two branches would open it silently.
+        #expect(src.occurrences(from: [symptomStress(8, subtype: "stressRating", unit: "score")]).isEmpty)
     }
 }
 

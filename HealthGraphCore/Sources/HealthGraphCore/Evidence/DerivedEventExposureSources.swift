@@ -14,9 +14,11 @@ public struct HighStressExposureSource: ExposureSource {
 
     /// Shape 2 — the "Stress" entry that already exists in SymptomCatalog,
     /// logged through symptom capture. This is the log people actually make;
-    /// before it was mined here it fed outcomes only. `logSymptom` writes this
-    /// unit only when a severity was given, so an unrated stress log has a nil
-    /// value and is rejected by the range check below.
+    /// before it was mined here it fed outcomes only. Unrated logs are rejected
+    /// twice over: `logSymptom` omits the unit entirely when no severity was
+    /// given, so the unit guard rejects them on the capture path — and
+    /// `EventEditView` writes the unit unconditionally, so an edited log with no
+    /// severity still carries a nil value and is caught by the range check.
     public static let symptomSubtype = "stress"
     public static let symptomUnit = "severity"
 
