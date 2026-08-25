@@ -27,13 +27,16 @@ extension ExperimentAdherence {
             e.deletedAt == nil
                 && e.objectID == experiment.interventionObjectID
                 && e.timestamp >= experiment.startedAt
-                && e.timestamp <= end
+                && e.timestamp < end
         }
         let days = Set(inWindow.map { calendar.startOfDay(for: $0.timestamp) })
         let startDay = calendar.startOfDay(for: experiment.startedAt)
         let endDay = calendar.startOfDay(for: end)
-        let components = calendar.dateComponents([.day], from: startDay, to: endDay)
-        let windowDays = max(components.day ?? 0, 0)
+        let spanned = calendar.dateComponents([.day], from: startDay, to: endDay).day ?? 0
+        // A window ending exactly at midnight does not include that final day; one
+        // ending later in the day does — and ending mid-day is the normal case, because
+        // stopping an experiment stamps Date(), not a midnight boundary.
+        let windowDays = max(spanned + (end > endDay ? 1 : 0), 0)
         return ExperimentAdherence(doseDays: days.count, doses: inWindow.count, windowDays: windowDays)
     }
 }
