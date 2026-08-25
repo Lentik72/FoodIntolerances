@@ -808,8 +808,10 @@ git commit -m "feat(experiments): the claim ladder, with the safety lines pinned
 - Test: `Food IntolerancesTests/ExperimentViewStateTests.swift`
 
 **Interfaces:**
-- Consumes: `Experiment`, `GRDBExperimentStore`, `ExperimentAdherence`, `ExperimentResult`.
-- Produces: `ExperimentWorkflow` (`start(...)`, `end(_:)`, `abandon(_:)`, `resolve(_:)`) and `ExperimentViewState` (`createTapped(...)`, `endTapped(_:)`, published `experiments`, `isSaving`, read-only `saveTask`).
+- Consumes: `Experiment`, `GRDBExperimentStore`.
+- Produces: `ExperimentWorkflow` (`start(...)`, `end(_:)`, `abandon(_:)`, `all()`) and `ExperimentViewState` (`createTapped(...)`, `endTapped(_:)`, published `experiments`, `isSaving`, `endingIDs`, read-only `saveTask`).
+
+**No `resolve(_:)`, deliberately.** An earlier draft routed result derivation through the workflow; Task 6 instead resolves the relationship at the call site and passes it to `ExperimentResult.derive`, which keeps the "relationship arrives as an input" rule visible where the lookup happens. This task therefore does not consume `ExperimentAdherence` or `ExperimentResult` at all.
 
 Follow the Connect/Backfill split exactly: ordering and persistence in the workflow pinned by recording doubles; screen state, callbacks and a **synchronous** double-invocation guard in the view state, with the in-flight `Task` exposed read-only so tests await it deterministically.
 
