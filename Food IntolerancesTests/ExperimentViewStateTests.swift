@@ -122,4 +122,51 @@ import HealthGraphCore
         await state.loadTask?.value
         #expect(store.loads == 2)
     }
+
+    @Test func failedLaterRefreshDoesNotDiscardEarlierSuccess() async {
+        // Two refreshes in flight: first reads and succeeds, second reads and fails.
+        // With generation-based ordering, the first's success applies even though
+        // the second's failure happened after. The key: generation bump and all()
+        // are adjacent with no await between, so "second all() call" = "second generation".
+        final class FailOnSecondReadStore: ExperimentPersisting {
+            var readCount = 0
+            var stored: [Experiment] = []
+            func save(_ e: Experiment) async throws {
+                stored.removeAll { $0.id == e.id }
+                stored.append(e)
+            }
+            func all() async throws -> [Experiment] {
+                readCount += 1
+                if readCount == 2 {
+                    throw NSError(domain: "test", code: 1)
+                }
+                return stored
+            }
+        }
+
+        let store = FailOnSecondReadStore()
+        let state = ExperimentViewState(store: store)
+        let e1 = Experiment(interventionObjectID: UUID(), outcomeSubtype: "test",
+                            shape: .course, startedAt: Date(),
+                            intendedEndAt: Date().addingTimeInterval(14 * 86_400))
+        let e2 = Experiment(interventionObjectID: UUID(), outcomeSubtype: "test",
+                            shape: .course, startedAt: Date(),
+                            intendedEndAt: Date().addingTimeInterval(14 * 86_400))
+        store.stored.append(contentsOf: [e1, e2])
+
+        // Trigger two refreshes via endTapped on different experiments.
+        // First one will call all() (readCount = 1, succeeds).
+        // Second one will call all() (readCount = 2, throws).
+        state.endTapped(e1)
+        state.endTapped(e2)
+
+        // Wait for both refreshes to complete
+        await state.saveTask?.value
+        await settle()
+
+        // Both refreshes should have called all()
+        #expect(store.readCount == 2)
+        // The first read's result should be applied, not discarded
+        #expect(state.experiments.count == 2)
+    }
 }
