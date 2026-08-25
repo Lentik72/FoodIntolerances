@@ -289,6 +289,24 @@ public struct AppDatabase: Sendable {
                 """)
         }
 
+        migrator.registerMigration("v8") { db in
+            // Protocols & experiments. A declared question with a window; no dose
+            // logging of its own, so nothing here duplicates health_events.
+            try db.create(table: "experiments") { t in
+                t.primaryKey("id", .text).notNull()
+                t.column("interventionObjectID", .text).notNull()
+                t.column("outcomeSubtype", .text).notNull()
+                t.column("shape", .text).notNull()
+                t.column("startedAt", .datetime).notNull()
+                t.column("intendedEndAt", .datetime).notNull()
+                t.column("endedAt", .datetime)
+                t.column("status", .text).notNull()
+                t.column("remindersEnabled", .boolean).notNull().defaults(to: false)
+                t.column("createdAt", .datetime).notNull()
+            }
+            try db.execute(sql: "CREATE INDEX idx_experiments_status ON experiments(status)")
+        }
+
         return migrator
     }
 }
@@ -305,6 +323,7 @@ extension AppDatabase {
             try HealthEvent.deleteAll(db)
             try Relationship.deleteAll(db)
             try HealthObject.deleteAll(db)
+            try Experiment.deleteAll(db)
         }
     }
 }
