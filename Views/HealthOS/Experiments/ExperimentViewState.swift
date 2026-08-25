@@ -12,6 +12,7 @@ final class ExperimentViewState: ObservableObject {
     private let workflow: ExperimentWorkflow
     private var isLoading = false
     private var refreshGeneration = 0
+    private var lastAppliedGeneration = 0
 
     /// Read-only outside; tests await it so assertions run after completion
     /// rather than spinning a run loop. Production code never reads it.
@@ -60,10 +61,12 @@ final class ExperimentViewState: ObservableObject {
     private func refresh() async {
         refreshGeneration += 1
         let generation = refreshGeneration
+        // A failed read must NOT consume the slot: bumping on entry meant a later
+        // refresh that failed could discard an earlier one that succeeded.
         guard let latest = try? await workflow.all() else { return }
-        // A newer refresh started while this read was in flight; its result is the
-        // fresher truth, so this one must not overwrite it.
-        guard generation == refreshGeneration else { return }
+        // Only a read that started more recently than the last APPLIED one wins.
+        guard generation > lastAppliedGeneration else { return }
+        lastAppliedGeneration = generation
         experiments = latest
     }
 }
