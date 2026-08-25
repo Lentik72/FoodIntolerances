@@ -61,6 +61,10 @@ struct HealthGraphDebugView: View {
                     Task { await loadWeatherDemo() }
                 }
                 .disabled(isWorking)
+                Button("Load STRESS demo") {
+                    Task { await loadStressDemo() }
+                }
+                .disabled(isWorking)
                 Button("Clear demo data (keeps real data)", role: .destructive) {
                     Task {
                         errorMessage = nil
@@ -250,6 +254,29 @@ struct HealthGraphDebugView: View {
     /// Seeds two plausible mood correlations (Magnesium → good mood, Coffee → low mood)
     /// and recomputes, so "what lifts your mood" insights render immediately in the
     /// Insights tab. DEBUG-only; reloads its own demo batch first, so a re-tap replaces (not appends), then recomputes.
+    /// Plants the one corpus that exercises the high-stress exposure, because a
+    /// real graph cannot: it is overwhelmingly imported HealthKit data with a
+    /// handful of manual events, so it has almost no outcomes to mine and its
+    /// relationship report comes back empty.
+    ///
+    /// Marked and namespaced like its siblings, so "Clear demo data" removes it
+    /// completely — no invented stress logs left behind in a real history.
+    private func loadStressDemo() async {
+        errorMessage = nil
+        isWorking = true
+        defer { isWorking = false; graphMutation.graphMutated() }
+        do {
+            let events = StressDemoSeed.events(endingAt: Date())
+            try await database.resetForSeedReload(batch: DemoBatch.stress)
+            try await GRDBEventStore(database: database)
+                .save(DemoBatch.stamp(events, batch: DemoBatch.stress))
+            _ = try await EvidenceEngine(database: database).recompute(asOf: Date())
+            await refresh()
+        } catch {
+            errorMessage = String(describing: error)
+        }
+    }
+
     private func loadMoodDemo() async {
         errorMessage = nil
         isWorking = true
