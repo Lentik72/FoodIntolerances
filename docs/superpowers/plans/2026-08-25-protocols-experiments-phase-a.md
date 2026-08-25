@@ -394,10 +394,6 @@ public struct ExperimentAdherence: Equatable, Sendable {
     }
 }
 
-public enum ExperimentAdherenceMeasurement {
-    // Namespace only — see ExperimentAdherence.measure below.
-}
-
 extension ExperimentAdherence {
     public static func measure(experiment: Experiment, events: [HealthEvent],
                                calendar: Calendar) -> ExperimentAdherence {
@@ -450,7 +446,7 @@ git commit -m "feat(experiments): adherence in distinct days, derived from logge
 
 **Interfaces:**
 - Consumes: `Experiment`, `ExperimentAdherence`.
-- Produces: `ExperimentOutcomeKind` (`.helps`, `.worsens`, `.noDetectableEffect`, `.pictureOnly`) and `ExperimentResult.derive(experiment:adherence:relationship:)`. Task 4 consumes both.
+- Produces: `ExperimentOutcomeKind` (`.helps`, `.worsens`, `.noDetectableEffect`, `.pictureOnly`), `ExperimentResult` **with a public memberwise init**, and `ExperimentResult.derive(experiment:adherence:relationship:)`. Task 4 consumes all three — its tests are in the app target, which imports the package normally, so the init must be public or they will not compile.
 
 **This task is where the spec's central rule lives.** The derivation takes the engine's relationship for the declared pair **as an input** — it does not query, score, or threshold anything itself. A caller finds the relationship; this function maps it. That keeps every statistical decision inside `EvidenceEngine` where it already is.
 
@@ -564,6 +560,14 @@ public struct ExperimentResult: Equatable, Sendable {
     public let adherence: ExperimentAdherence
     /// The engine's edge, when there is one. nil for every picture.
     public let relationship: Relationship?
+
+    /// Public because the presentation tests live in the APP target, which
+    /// imports HealthGraphCore normally rather than @testable — without it the
+    /// synthesised memberwise init is internal and those tests cannot compile.
+    public init(kind: ExperimentOutcomeKind, adherence: ExperimentAdherence,
+                relationship: Relationship?) {
+        self.kind = kind; self.adherence = adherence; self.relationship = relationship
+    }
 
     public static func derive(experiment: Experiment, adherence: ExperimentAdherence,
                               relationship: Relationship?) -> ExperimentResult {
