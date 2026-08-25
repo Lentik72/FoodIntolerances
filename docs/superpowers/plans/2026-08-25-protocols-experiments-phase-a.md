@@ -293,7 +293,11 @@ import Foundation
 @testable import HealthGraphCore
 
 struct ExperimentAdherenceTests {
-    let t0 = Date(timeIntervalSince1970: 1_750_000_000)
+    /// EXACTLY midnight UTC (1_749_945_600 = 86_400 x 20_254). This matters: the
+    /// `hour:` parameter below is an offset from t0, so if t0 were mid-afternoon
+    /// — as 1_750_000_000 is, at 15:06 UTC — then `hour: 14` would land on the
+    /// NEXT day and the distinct-day expectations would be silently wrong.
+    let t0 = Date(timeIntervalSince1970: 1_749_945_600)
     let utc = TimeZone(identifier: "UTC")!
     let objectID = UUID()
 
