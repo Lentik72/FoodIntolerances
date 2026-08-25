@@ -8,6 +8,29 @@ follow-up rounds, not part of this one.
 
 ---
 
+## Delivered in two phases
+
+This spec describes the whole feature. **Phase A is the implementation round that follows
+it; Phase B is a named, committed follow-up — not a maybe.**
+
+**Phase A — a complete vertical slice, entirely in the Health tab.** The model and its
+table, the lifecycle (start / run / end / abandon), adherence, the verdict gate delegating
+to the engine, the full claim ladder including prescription framing and the organ-harm line,
+and a list + creation + result UI. Shippable and testable on its own: you can create an
+experiment, run it, and see what it says.
+
+**Phase B — spreading it through the app.** The Home card and its midpoint nudge, the
+Insights result rendering with its distinct "you tested this" voice, the *Test this* entry
+point from an insight card, and per-experiment reminders with the notification permission
+ask.
+
+Phase A carries the thinking — the honesty rules, course-versus-repeated, gate delegation.
+Phase B is surfaces plus one permission flow, and the notification consent story deserves
+its own attention rather than arriving as task 14 of a long list. **Everything in "Where it
+lives" and the reminder behaviour above is Phase B unless it names the Health tab.**
+
+---
+
 ## Why this exists
 
 The evidence engine raises questions it cannot answer. A card reads "magnesium may reduce
