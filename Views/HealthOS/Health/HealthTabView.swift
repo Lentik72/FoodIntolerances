@@ -51,7 +51,6 @@ struct HealthTabView: View {
 
     private let comingRows: [(icon: String, name: String, detail: String)] = [
         ("cabinet", "Cabinet", "meds, supplements, peptides — stock and refills"),
-        ("checklist", "Protocols & experiments", "adherence and outcomes"),
         ("testtube.2", "Labs", "trends per analyte, imports"),
         ("chart.bar", "Health confidence", "how complete your data is"),
         ("doc.text", "Doctor report", "a PDF your practitioner can actually read"),
@@ -89,6 +88,27 @@ struct HealthTabView: View {
                             Divider().padding(.leading, 52)
                         }
                     }
+                }
+                .hgCard()
+
+                VStack(spacing: 0) {
+                    NavigationLink {
+                        ExperimentsView()
+                    } label: {
+                        HStack {
+                            Image(systemName: "checklist")
+                                .foregroundStyle(HealthTheme.accent)
+                            Text("Protocols & experiments")
+                                .foregroundStyle(HealthTheme.ink)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.footnote)
+                                .foregroundStyle(HealthTheme.inkMuted)
+                        }
+                        .padding(16)
+                        .contentShape(Rectangle())
+                    }
+                    .accessibilityHint("Track whether a medication or supplement is helping a symptom")
                 }
                 .hgCard()
 
