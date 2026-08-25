@@ -42,9 +42,9 @@ struct ExperimentStoreTests {
         #expect(try await store.experiment(id: course.id)?.shape == .course)
     }
 
-    @Test func migrationAddsTheTableToAnExistingDatabase() async throws {
-        // v8 must apply to a database created before it existed, not only to a
-        // fresh one — a migration that only works on new installs is not one.
+    @Test func experimentsCoexistWithExistingEventData() async throws {
+        // Experiments table can be created alongside existing event data in a
+        // single migrator run, and both tables remain accessible and intact.
         let db = try AppDatabase.inMemory()
         try await GRDBEventStore(database: db).save([
             HealthEvent(timestamp: t0, category: .symptom, subtype: "migraine",

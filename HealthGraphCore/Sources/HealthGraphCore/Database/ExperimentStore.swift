@@ -20,21 +20,19 @@ public struct GRDBExperimentStore: ExperimentStore {
     }
 
     public func experiment(id: UUID) async throws -> Experiment? {
-        try await dbWriter.read { db in
-            try Experiment.filter(Column("id") == id.uuidString).fetchOne(db)
-        }
+        try await dbWriter.read { db in try Experiment.fetchOne(db, key: id) }
     }
 
     public func experiments(status: ExperimentStatus) async throws -> [Experiment] {
         try await dbWriter.read { db in
             try Experiment.filter(Column("status") == status.rawValue)
-                .order(Column("startedAt").desc).fetchAll(db)
+                .order(Column("startedAt").desc, Column("id").desc).fetchAll(db)
         }
     }
 
     public func all() async throws -> [Experiment] {
         try await dbWriter.read { db in
-            try Experiment.order(Column("startedAt").desc).fetchAll(db)
+            try Experiment.order(Column("startedAt").desc, Column("id").desc).fetchAll(db)
         }
     }
 }

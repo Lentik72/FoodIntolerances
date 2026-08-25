@@ -52,55 +52,7 @@ public struct Experiment: Codable, Identifiable, Equatable,
         self.createdAt = createdAt
     }
 
-    enum CodingKeys: String, CodingKey {
-        case id, interventionObjectID, outcomeSubtype, shape, startedAt, intendedEndAt
-        case endedAt, status, remindersEnabled, createdAt
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-
-        // Decode id: try both UUID directly and String
-        if let idString = try container.decodeIfPresent(String.self, forKey: .id),
-           let uuid = UUID(uuidString: idString) {
-            id = uuid
-        } else if let uuid = try container.decodeIfPresent(UUID.self, forKey: .id) {
-            id = uuid
-        } else {
-            throw DecodingError.dataCorruptedError(forKey: .id, in: container, debugDescription: "Cannot decode id as UUID")
-        }
-
-        // Decode interventionObjectID: try both UUID directly and String
-        if let idString = try container.decodeIfPresent(String.self, forKey: .interventionObjectID),
-           let uuid = UUID(uuidString: idString) {
-            interventionObjectID = uuid
-        } else if let uuid = try container.decodeIfPresent(UUID.self, forKey: .interventionObjectID) {
-            interventionObjectID = uuid
-        } else {
-            throw DecodingError.dataCorruptedError(forKey: .interventionObjectID, in: container, debugDescription: "Cannot decode interventionObjectID as UUID")
-        }
-
-        outcomeSubtype = try container.decode(String.self, forKey: .outcomeSubtype)
-        shape = try container.decode(ExperimentShape.self, forKey: .shape)
-        startedAt = try container.decode(Date.self, forKey: .startedAt)
-        intendedEndAt = try container.decode(Date.self, forKey: .intendedEndAt)
-        endedAt = try container.decodeIfPresent(Date.self, forKey: .endedAt)
-        status = try container.decode(ExperimentStatus.self, forKey: .status)
-        remindersEnabled = try container.decode(Bool.self, forKey: .remindersEnabled)
-        createdAt = try container.decode(Date.self, forKey: .createdAt)
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(id.uuidString, forKey: .id)
-        try container.encode(interventionObjectID.uuidString, forKey: .interventionObjectID)
-        try container.encode(outcomeSubtype, forKey: .outcomeSubtype)
-        try container.encode(shape, forKey: .shape)
-        try container.encode(startedAt, forKey: .startedAt)
-        try container.encode(intendedEndAt, forKey: .intendedEndAt)
-        try container.encode(endedAt, forKey: .endedAt)
-        try container.encode(status, forKey: .status)
-        try container.encode(remindersEnabled, forKey: .remindersEnabled)
-        try container.encode(createdAt, forKey: .createdAt)
+    public static func databaseUUIDEncodingStrategy(for: String) -> DatabaseUUIDEncodingStrategy {
+        .uppercaseString
     }
 }
