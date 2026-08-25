@@ -8,8 +8,6 @@ import HealthGraphCore
     enum Call: Equatable {
         case save(ExperimentStatus)
         case loadAll
-        case readEvents
-        case readRelationships
     }
 
     final class Recorder { var calls: [Call] = [] }
@@ -60,11 +58,13 @@ import HealthGraphCore
     @Test func abandoningIsDistinctFromCompleting() async throws {
         // They mean different things to the result: an abandoned experiment
         // measures adherence to the day it stopped, not its intended end.
-        let (workflow, _, _) = harness()
+        let (workflow, recorder, store) = harness()
         let e = try await workflow.start(interventionObjectID: UUID(), outcomeSubtype: "migraine",
                                          shape: .repeated, startedAt: Date(), days: 21)
         let stopped = try await workflow.abandon(e, at: Date())
         #expect(stopped.status == .abandoned)
         #expect(stopped.endedAt != nil)
+        #expect(recorder.calls == [.save(.running), .save(.abandoned)])
+        #expect(store.stored.last?.status == .abandoned)
     }
 }

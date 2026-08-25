@@ -7,6 +7,7 @@ import HealthGraphCore
 final class ExperimentViewState: ObservableObject {
     @Published private(set) var experiments: [Experiment] = []
     @Published private(set) var isSaving = false
+    @Published private(set) var endingIDs: Set<UUID> = []
 
     private let workflow: ExperimentWorkflow
 
@@ -20,7 +21,8 @@ final class ExperimentViewState: ObservableObject {
     }
 
     func appeared() {
-        loadTask = Task { experiments = (try? await workflow.all()) ?? [] }
+        guard !experiments.isEmpty || loadTask == nil else { return }
+        loadTask = Task { await refresh() }
     }
 
     /// The guard runs SYNCHRONOUSLY, before any dispatch: two taps can land in the
@@ -35,17 +37,23 @@ final class ExperimentViewState: ObservableObject {
             _ = try? await workflow.start(interventionObjectID: interventionObjectID,
                                           outcomeSubtype: outcomeSubtype, shape: shape,
                                           startedAt: Date(), days: days)
-            experiments = (try? await workflow.all()) ?? []
+            await refresh()
         }
     }
 
     func endTapped(_ experiment: Experiment) {
-        guard !isSaving else { return }
-        isSaving = true
+        guard !endingIDs.contains(experiment.id) else { return }
+        endingIDs.insert(experiment.id)
         saveTask = Task {
-            defer { isSaving = false }
+            defer { endingIDs.remove(experiment.id) }
             _ = try? await workflow.end(experiment, at: Date())
-            experiments = (try? await workflow.all()) ?? []
+            await refresh()
         }
+    }
+
+    private func refresh() async {
+        // nil means the READ failed, which is not an empty list. Blanking the screen
+        // would invite someone to re-create an experiment that already exists.
+        if let latest = try? await workflow.all() { experiments = latest }
     }
 }

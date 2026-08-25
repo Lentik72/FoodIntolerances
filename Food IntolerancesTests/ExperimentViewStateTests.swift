@@ -45,4 +45,54 @@ import HealthGraphCore
         #expect(state.experiments.count == 1)
         #expect(state.experiments.first?.shape == .course)
     }
+
+    @Test func twoImmediateEndTapsOnTheSameExperimentCreateOneSave() async {
+        // Both taps land in the same main-actor turn. Only a guard that checks
+        // the specific experiment ID separates one from two — a shared flag would
+        // allow the second tap to enqueue, violating the per-experiment guard.
+        let store = CountingStore()
+        let state = ExperimentViewState(store: store)
+        let e = Experiment(interventionObjectID: UUID(), outcomeSubtype: "migraine",
+                           shape: .repeated, startedAt: Date(),
+                           intendedEndAt: Date().addingTimeInterval(21 * 86_400))
+        store.stored.append(e)
+        state.endTapped(e)
+        state.endTapped(e)
+        await state.saveTask?.value
+        await settle()
+        #expect(store.saves == 1)
+        #expect(state.endingIDs.isEmpty)
+    }
+
+    @Test func twoImmediateEndTapsOnDifferentExperimentsCreateTwoSaves() async {
+        // Two different experiments are legitimately independent. Two taps on
+        // different rows should produce two saves, not one.
+        let store = CountingStore()
+        let state = ExperimentViewState(store: store)
+        let e1 = Experiment(interventionObjectID: UUID(), outcomeSubtype: "migraine",
+                            shape: .repeated, startedAt: Date(),
+                            intendedEndAt: Date().addingTimeInterval(21 * 86_400))
+        let e2 = Experiment(interventionObjectID: UUID(), outcomeSubtype: "headache",
+                            shape: .course, startedAt: Date(),
+                            intendedEndAt: Date().addingTimeInterval(14 * 86_400))
+        store.stored.append(contentsOf: [e1, e2])
+        state.endTapped(e1)
+        state.endTapped(e2)
+        await state.saveTask?.value
+        await settle()
+        #expect(store.saves == 2)
+        #expect(state.endingIDs.isEmpty)
+    }
+
+    @Test func endingMarksCompletedStatus() async {
+        let store = CountingStore()
+        let state = ExperimentViewState(store: store)
+        let e = Experiment(interventionObjectID: UUID(), outcomeSubtype: "migraine",
+                           shape: .repeated, startedAt: Date(),
+                           intendedEndAt: Date().addingTimeInterval(21 * 86_400))
+        store.stored.append(e)
+        state.endTapped(e)
+        await state.saveTask?.value
+        #expect(store.stored.last?.status == .completed)
+    }
 }
