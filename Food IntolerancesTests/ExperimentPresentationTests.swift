@@ -4,9 +4,9 @@ import HealthGraphCore
 @testable import Food_Intolerances
 
 @Suite struct ExperimentPresentationTests {
-    private func result(_ kind: ExperimentOutcomeKind, days: Int = 18) -> ExperimentResult {
+    private func result(_ kind: ExperimentOutcomeKind, days: Int = 18, windowDays: Int = 21) -> ExperimentResult {
         ExperimentResult(kind: kind,
-                         adherence: ExperimentAdherence(doseDays: days, doses: days, windowDays: 21),
+                         adherence: ExperimentAdherence(doseDays: days, doses: days, windowDays: windowDays),
                          relationship: nil)
     }
 
@@ -28,13 +28,17 @@ import HealthGraphCore
     @Test func everyMedicationResultCarriesBothSafetyLines() {
         // Required on EVERY outcome, not only the discouraging ones: a "helps"
         // result is exactly when someone feels licensed to self-manage.
+        // Two DISTINCT lines. Asserting over a joined string let the organ line —
+        // which itself says "Ask your doctor" — satisfy the prescriber assertion
+        // too, so deleting the prescriber line passed unnoticed.
         for kind in [ExperimentOutcomeKind.helps, .worsens, .noDetectableEffect, .pictureOnly] {
             let caveats = ExperimentPresentation.caveats(for: result(kind), interventionKind: .medication)
-            let joined = caveats.joined(separator: " ")
-            #expect(joined.localizedCaseInsensitiveContains("prescriber")
-                    || joined.localizedCaseInsensitiveContains("doctor"))
-            #expect(joined.localizedCaseInsensitiveContains("kidney")
-                    || joined.localizedCaseInsensitiveContains("organ"))
+            let prescriber = caveats.filter { $0.localizedCaseInsensitiveContains("prescriber") }
+            let organs = caveats.filter { $0.localizedCaseInsensitiveContains("kidney")
+                                          || $0.localizedCaseInsensitiveContains("organ") }
+            #expect(prescriber.count == 1)
+            #expect(organs.count == 1)
+            #expect(prescriber.first != organs.first)
         }
     }
 
@@ -63,7 +67,29 @@ import HealthGraphCore
 
     @Test func adherenceIsStatedInDaysOnEveryOutcome() {
         for kind in [ExperimentOutcomeKind.helps, .worsens, .noDetectableEffect, .pictureOnly] {
-            #expect(ExperimentPresentation.detail(for: result(kind, days: 18)).contains("18"))
+            let detail = ExperimentPresentation.detail(for: result(kind, days: 18, windowDays: 21))
+            // Asserts the fraction framing: both numerator and denominator in the
+            // "X of Y" shape, e.g. "18 of 21", to prevent reintroducing the
+            // dose-versus-day confound that ExperimentAdherence's doc comment calls out.
+            #expect(detail.contains("18 of 21"))
         }
+    }
+
+    @Test func noDetectableEffectOnSupplementGetsCaveat() {
+        // A supplement with .noDetectableEffect gets no observational caveat
+        // (those are only for .helps/.worsens) and no medication caveat. Without
+        // the noDetectableEffect-specific caveat, the result reads as "it doesn't work".
+        let caveats = ExperimentPresentation.caveats(for: result(.noDetectableEffect), interventionKind: .supplement)
+        let joined = caveats.joined(separator: " ")
+        #expect(!caveats.isEmpty)
+        #expect(joined.localizedCaseInsensitiveContains("rule an effect out"))
+    }
+
+    @Test func edgeCaseWindowDaysOneIsSingular() {
+        // windowDays == 1 is reachable for a same-day experiment.
+        // Pluralise the unit.
+        let detail = ExperimentPresentation.detail(for: result(.helps, days: 1, windowDays: 1))
+        #expect(detail.contains("1 of 1 day"))
+        #expect(!detail.contains("1 of 1 days"))
     }
 }

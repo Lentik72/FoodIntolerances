@@ -25,7 +25,8 @@ enum ExperimentPresentation {
 
     static func detail(for result: ExperimentResult) -> String {
         let a = result.adherence
-        let logged = "You logged it on \(a.doseDays) of \(a.windowDays) days."
+        let dayUnit = a.windowDays == 1 ? "day" : "days"
+        let logged = "You logged it on \(a.doseDays) of \(a.windowDays) \(dayUnit)."
         switch result.kind {
         case .helps, .worsens, .noDetectableEffect:
             return logged
@@ -44,6 +45,9 @@ enum ExperimentPresentation {
         var out: [String] = []
         if result.kind == .helps || result.kind == .worsens {
             out.append("This is your own observation, not a trial — it can't rule out that something else changed.")
+        }
+        if result.kind == .noDetectableEffect {
+            out.append("This doesn't rule an effect out — it means nothing showed up in what you logged, at this scale.")
         }
         if interventionKind == .medication {
             out.append("This isn't a reason to change a prescription. Talk to your prescriber first.")
