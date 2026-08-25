@@ -43,6 +43,15 @@ struct ExperimentResultTests {
                                         relationship: rel(.worsens)).kind == .worsens)
     }
 
+    @Test func theTypeTheEngineActuallyEmitsForWorseningIsMapped() {
+        // RelationshipClassifier.classify emits .possibleTrigger for the "worsens"
+        // direction (analgesic overuse → rebound headaches), not .worsens. This test
+        // verifies the actual production type is mapped distinctly and never collapsed
+        // into "no effect" or "picture".
+        #expect(ExperimentResult.derive(experiment: exp(.repeated), adherence: adherence(),
+                                        relationship: rel(.possibleTrigger)).kind == .worsens)
+    }
+
     @Test func aConfirmedNoEffectIsADistinctOutcome() {
         let r = ExperimentResult.derive(experiment: exp(.repeated), adherence: adherence(),
                                         relationship: rel(.noEffect, status: .confirmedNoEffect))
@@ -67,10 +76,18 @@ struct ExperimentResultTests {
 
     @Test func theAdherenceIsCarriedOntoEveryResult() {
         // Every output shows what the person actually did, including the pictures.
+        // Verify adherence is carried through all decision branches, not just verdicts.
         for shape in ExperimentShape.allCases {
             let r = ExperimentResult.derive(experiment: exp(shape), adherence: adherence(11),
                                             relationship: rel(.improves))
             #expect(r.adherence.doseDays == 11)
         }
+        // Verify adherence is carried through pictureOnly paths.
+        let nilRelResult = ExperimentResult.derive(experiment: exp(.repeated), adherence: adherence(7),
+                                                   relationship: nil)
+        #expect(nilRelResult.adherence.doseDays == 7)
+        let candidateResult = ExperimentResult.derive(experiment: exp(.repeated), adherence: adherence(9),
+                                                      relationship: rel(.improves, status: .candidate))
+        #expect(candidateResult.adherence.doseDays == 9)
     }
 }

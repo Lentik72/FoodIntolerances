@@ -42,9 +42,13 @@ public struct ExperimentResult: Equatable, Sendable {
             return ExperimentResult(kind: .helps, adherence: adherence, relationship: r)
         case (.worsens, .active), (.possibleTrigger, .active):
             return ExperimentResult(kind: .worsens, adherence: adherence, relationship: r)
+        // RelationshipClassifier always pairs .confirmedNoEffect with .noEffect type,
+        // an invariant enforced elsewhere. Matching on status alone is safe.
         case (_, .confirmedNoEffect):
             return ExperimentResult(kind: .noDetectableEffect, adherence: adherence, relationship: r)
         default:
+            // Includes .precedes (temporal order has no helps/worsens valence) and
+            // any unsettled status (.decayed, .userDismissed).
             return ExperimentResult(kind: .pictureOnly, adherence: adherence, relationship: nil)
         }
     }
