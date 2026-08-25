@@ -15,14 +15,25 @@ final class InsightsViewModel: ObservableObject {
     private let engine: EvidenceEngine
     private let config = InsightsConfig.default
     private let hasSyntheticDataCheck: @Sendable () async throws -> Bool
+    /// Injectable for the same reason `hasSyntheticDataCheck` is: it lets a test
+    /// assert this is called ONCE per render rather than once per card. Defaults
+    /// to the real engine, so every production call site is unaffected.
+    private let evidenceReportsProvider: @Sendable ([Relationship], Date) async throws -> [UUID: RelationshipEvidence]
 
     init(database: AppDatabase = HealthGraphProvider.shared, now: @escaping () -> Date = { Date() },
-         hasSyntheticData: (@Sendable () async throws -> Bool)? = nil) {
+         hasSyntheticData: (@Sendable () async throws -> Bool)? = nil,
+         evidenceReports: (@Sendable ([Relationship], Date) async throws -> [UUID: RelationshipEvidence])? = nil) {
         self.database = database; self.now = now
         self.relStore = GRDBRelationshipStore(database: database)
         self.objectStore = GRDBObjectStore(database: database)
-        self.engine = EvidenceEngine(database: database)
+        // Captured as a local, never `self`, so the default closure below does not
+        // retain the view model.
+        let engine = EvidenceEngine(database: database)
+        self.engine = engine
         self.hasSyntheticDataCheck = hasSyntheticData ?? { try await database.hasSyntheticData() }
+        self.evidenceReportsProvider = evidenceReports ?? { rels, asOf in
+            try await engine.evidenceReports(for: rels, asOf: asOf)
+        }
     }
 
     func load() async {
@@ -32,18 +43,30 @@ final class InsightsViewModel: ObservableObject {
         if demo { pendingUndo = nil }        // a queued undo would target a rebuilt id
         demoDataLoaded = demo
         guard let rels = try? await relStore.all() else { feed = InsightsFeedModel(sections: []); return }
+        // ONE corpus read for every active card. `evidence(for:)` reads the ENTIRE
+        // event corpus per call, so the previous per-card loop cost N full reads of
+        // the graph — measured at ~7s for 10 cards over 38k events, and growing with
+        // both imported history and discovered relationships.
+        //
+        // `asOf` is taken once, so every card in a render is dated from the same
+        // instant rather than drifting across the loop.
+        let asOf = now()
+        let active = rels.filter { $0.status == .active }
+        let reports = (try? await evidenceReportsProvider(active, asOf)) ?? [:]
         var resolved: [ResolvedRelationship] = []
         for r in rels {
             let (label, category) = await exposure(for: r)
             var recent: [Bool] = []
-            if r.status == .active, let ev = try? await engine.evidence(for: r, asOf: now()) {
+            // Unchanged failure behaviour: the batch path fails soft per edge, so a
+            // missing entry yields the same empty dot row a failed per-card call did.
+            if r.status == .active, let ev = reports[r.id] {
                 recent = ev.exposures.suffix(config.recentDotCount).map(\.outcomeFollowed)   // last-N chronological
             }
             resolved.append(ResolvedRelationship(relationship: r, exposureLabel: label,
                                                  outcomeLabel: InsightPhrasing.outcomeLabel(for: r),
                                                  exposureCategory: category, recentOutcomes: recent))
         }
-        feed = InsightsFeed.build(resolved, now: now())
+        feed = InsightsFeed.build(resolved, now: asOf)
     }
 
     func dismiss(_ card: InsightCardModel) async {
