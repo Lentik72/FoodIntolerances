@@ -95,11 +95,10 @@ struct StressDemoSeedTests {
         let events = seed()
         let window = EvidenceConfig.default.stressLagHours
         let stressTimes = stressEvents(events).map(\.timestamp).sorted()
-        let followers = events.filter {
-            $0.subtype == StressDemoSeed.outcomeSubtype
+        let followers = events.filter { h in
+            h.subtype == StressDemoSeed.outcomeSubtype
                 && stressTimes.contains { s in
-                    let hours = $0.timestamp.timeIntervalSince(s) / 3600
-                    return window.contains(hours)
+                    window.contains(h.timestamp.timeIntervalSince(s) / 3600)
                 }
         }
         #expect(followers.count == 45)     // three of every four stress days
@@ -185,8 +184,15 @@ public enum StressDemoSeed {
                 // A headache on one in seven stress-free days (~15%). Without
                 // this the unexposed rate is zero, the ratio is degenerate, and
                 // the demo proves less than it appears to.
+                //
+                // 18:00 specifically, NOT the morning: stress lands at 14:00 and
+                // stressLagHours is 0...24, so a stress-free day's morning is still
+                // inside the PREVIOUS stress day's window. A baseline headache
+                // placed there would be counted as a follow, inflating the exposed
+                // rate and shrinking the very contrast this noise exists to create.
+                // 18:00 on an odd day is 28h after the last stress event.
                 if (d / 2) % 7 == 0 {
-                    events.append(headache(at: dayStart.addingTimeInterval(11 * 3600), tz: tz,
+                    events.append(headache(at: dayStart.addingTimeInterval(18 * 3600), tz: tz,
                                            day: d, severity: 4, kind: "base"))
                 }
                 continue

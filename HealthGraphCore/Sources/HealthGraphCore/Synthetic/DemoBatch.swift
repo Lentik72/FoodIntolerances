@@ -12,6 +12,7 @@ public enum DemoBatch {
     public static let mood = "mood"
     public static let outsideFactors = "outsideFactors"
     public static let weather = "weather"
+    public static let stress = "stress"
 
     /// The namespace applied to a demo row's dedup key and normalized name.
     public static func prefix(_ batch: String) -> String { "demo:\(batch)|" }
