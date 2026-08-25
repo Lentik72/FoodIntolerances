@@ -95,10 +95,15 @@ private struct RunningExperimentRow: View {
 
     @State private var loaded: ExperimentRowLoader.Adherence?
 
+    /// The declared target, shown so two experiments on the same intervention
+    /// (e.g. two magnesium runs, one for migraine and one for sleep) read as
+    /// distinct rows instead of duplicates.
+    private var symptomName: String { HealthGraphCore.SymptomCatalog.displayName(for: experiment.outcomeSubtype) }
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(loaded?.name ?? "…")
+                Text(loaded.map { "\($0.name) · \(symptomName)" } ?? "…")
                     .font(.body)
                     .foregroundStyle(HealthTheme.ink)
                 if let loaded {
@@ -145,15 +150,30 @@ private struct FinishedExperimentRow: View {
 
     @State private var loaded: ExperimentRowLoader.Resolved?
 
+    private var symptomName: String { HealthGraphCore.SymptomCatalog.displayName(for: experiment.outcomeSubtype) }
+
     var body: some View {
         Group {
             if let loaded {
                 NavigationLink {
                     ExperimentResultDetailView(interventionName: loaded.name, interventionKind: loaded.kind,
+                                               outcomeSubtype: experiment.outcomeSubtype,
                                                shape: loaded.shape, result: loaded.result)
                 } label: {
-                    Text(ExperimentPresentation.headline(for: loaded.result, interventionName: loaded.name))
-                        .foregroundStyle(HealthTheme.ink)
+                    // Neutral identifier only — every claim (headline, caveats,
+                    // the prescriber/organ safety lines) lives behind the tap in
+                    // ExperimentResultDetailView. This row is the surface most
+                    // people read and never tap, so it must never assert
+                    // "Sertraline may be making things worse" with no safety
+                    // line anywhere near it.
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("\(loaded.name) · \(symptomName)")
+                            .font(.body)
+                            .foregroundStyle(HealthTheme.ink)
+                        Text("Tap to see the result")
+                            .font(.footnote)
+                            .foregroundStyle(HealthTheme.inkSecondary)
+                    }
                 }
             } else {
                 Text("…")
@@ -173,12 +193,21 @@ private struct FinishedExperimentRow: View {
 private struct ExperimentResultDetailView: View {
     let interventionName: String
     let interventionKind: ObjectKind
+    let outcomeSubtype: String
     let shape: ExperimentShape
     let result: ExperimentResult
+
+    private var symptomName: String { HealthGraphCore.SymptomCatalog.displayName(for: outcomeSubtype) }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                // The declared pair, named plainly, so this reads unambiguously
+                // even when the person has more than one experiment on the same
+                // intervention (e.g. magnesium for migraine AND for sleep).
+                Text("\(interventionName) · \(symptomName)")
+                    .font(.subheadline)
+                    .foregroundStyle(HealthTheme.inkSecondary)
                 Text(ExperimentPresentation.headline(for: result, interventionName: interventionName))
                     .font(HealthTheme.screenTitle())
                     .foregroundStyle(HealthTheme.ink)

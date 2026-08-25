@@ -32,6 +32,18 @@ public struct ExperimentResult: Equatable, Sendable {
         guard experiment.shape == .repeated else {
             return ExperimentResult(kind: .pictureOnly, adherence: adherence, relationship: nil)
         }
+        // The engine's edge is computed over the user's WHOLE history, not this
+        // window — so a settled relationship says nothing about whether this
+        // experiment happened. Without this gate, declaring an experiment over an
+        // intervention you already have history with yields a verdict for a window
+        // in which you took nothing.
+        //
+        // Not a statistical threshold: the bar is the engine's own definition of
+        // "enough exposures to say anything at all", reused here to ask a different
+        // question — did the window contain a test?
+        guard adherence.doseDays >= EvidenceConfig.default.minExposures else {
+            return ExperimentResult(kind: .pictureOnly, adherence: adherence, relationship: nil)
+        }
         guard let r = relationship else {
             return ExperimentResult(kind: .pictureOnly, adherence: adherence, relationship: nil)
         }

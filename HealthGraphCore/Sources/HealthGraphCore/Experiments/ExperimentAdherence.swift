@@ -33,10 +33,17 @@ extension ExperimentAdherence {
         let startDay = calendar.startOfDay(for: experiment.startedAt)
         let endDay = calendar.startOfDay(for: end)
         let spanned = calendar.dateComponents([.day], from: startDay, to: endDay).day ?? 0
-        // A window ending exactly at midnight does not include that final day; one
-        // ending later in the day does — and ending mid-day is the normal case, because
-        // stopping an experiment stamps Date(), not a midnight boundary.
-        let windowDays = max(spanned + (end > endDay ? 1 : 0), 0)
+        // The +1 only belongs to an experiment that ENDED EARLY mid-day — that
+        // partial day was actually lived, and stopping an experiment stamps
+        // Date(), not a midnight boundary. It does NOT belong to the INTENDED
+        // end: `intendedEndAt = startedAt + days*86400` preserves startedAt's
+        // time of day, so a 21-day experiment started at 10:00 has an intended
+        // end at 10:00 on day 21 — `end > endDay` is true there too, but no day
+        // 21 was ever lived; counting it would report "22 days" for a 21-day
+        // declaration while the countdown UI still says "21 days left" (or,
+        // worse, let 22 days of logging outrun a 21-day denominator).
+        let endedEarly = experiment.endedAt != nil
+        let windowDays = max(spanned + (endedEarly && end > endDay ? 1 : 0), 0)
         return ExperimentAdherence(doseDays: days.count, doses: inWindow.count, windowDays: windowDays)
     }
 }

@@ -42,6 +42,23 @@ import HealthGraphCore
         }
     }
 
+    @Test func everyVerdictCarriesTheWholeHistoryCaveat() {
+        // ExperimentResult.derive's relationship is computed by
+        // EvidenceEngine.recompute over the person's WHOLE logged history with
+        // this intervention, not this experiment's window — every verdict must
+        // say so plainly, or "Magnesium appears to help" reads as a finding
+        // about only the declared dates. Verdicts only: .pictureOnly carries no
+        // relationship at all, so there is nothing "everything logged" to caveat.
+        for kind in [ExperimentOutcomeKind.helps, .worsens, .noDetectableEffect] {
+            let caveats = ExperimentPresentation.caveats(for: result(kind), interventionKind: .supplement)
+            let matches = caveats.filter {
+                $0.localizedCaseInsensitiveContains("everything you")
+                    && $0.localizedCaseInsensitiveContains("this experiment")
+            }
+            #expect(matches.count == 1, "missing whole-history caveat for \(kind)")
+        }
+    }
+
     @Test func aSelfChosenSupplementDoesNotGetThePrescriberLine() {
         // The line has to mean something. On every result it becomes wallpaper.
         let caveats = ExperimentPresentation.caveats(for: result(.helps), interventionKind: .supplement)

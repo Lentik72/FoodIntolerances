@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import GRDB
 @testable import HealthGraphCore
 
 struct ExperimentStoreTests {
@@ -54,5 +55,52 @@ struct ExperimentStoreTests {
         try await store.save(experiment())
         #expect(try await store.all().count == 1)
         #expect(try await GRDBEventStore(database: db).count() == 1)   // existing data intact
+    }
+
+    // MARK: - True upgrade path (v7 -> v8)
+
+    /// Every other test above uses `AppDatabase.inMemory()`, which runs v1...v8
+    /// in a single shot on a brand-new database — that can never exercise the
+    /// v8 migration BODY running against data that is already sitting in an
+    /// at-rest v7 database, which is what every real installed app does on
+    /// upgrade. Precedent: EnvProvenanceMigrationTests migrates to "v5", seeds
+    /// legacy rows, then applies the rest. This is that same shape for v8, the
+    /// only migration this feature ships, and the only defect class here that
+    /// can damage a real user's existing data.
+    @Test func migratingFromV7PreservesExistingDataAndBringsUpTheExperimentsTable() async throws {
+        let queue = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(queue, upTo: "v7")
+
+        // Seed data into the pre-v8 database, via the plain GRDB record API
+        // (not a store, which requires an already-fully-migrated AppDatabase) —
+        // exactly as EnvProvenanceMigrationTests seeds legacy rows before
+        // applying the migration under test.
+        // createdAt is pinned to `t0` (an integer number of seconds), not
+        // `Date()`: GRDB's date round trip loses sub-second precision, so a
+        // wall-clock `Date()` default would make the post-fetch equality check
+        // below fail on precision alone, unrelated to what this test verifies.
+        let object = HealthObject(kind: .supplement, name: "Magnesium", createdAt: t0)
+        let event = HealthEvent(timestamp: t0, category: .supplement, subtype: "Magnesium",
+                                objectID: object.id, value: 200, unit: "mg", source: .manual,
+                                createdAt: t0)
+        try await queue.write { db in
+            try object.insert(db)
+            try event.insert(db)
+        }
+
+        let appDB = try AppDatabase(queue)   // applies v8 on top of the seeded v7 database
+
+        // Pre-existing rows survived the upgrade untouched.
+        let objectsAfter = try await queue.read { db in try HealthObject.fetchAll(db) }
+        let eventsAfter = try await queue.read { db in try HealthEvent.fetchAll(db) }
+        #expect(objectsAfter == [object])
+        #expect(eventsAfter == [event])
+
+        // The experiments table introduced by v8 actually works on a database
+        // that upgraded to it, not only one created fresh at v8.
+        let store = GRDBExperimentStore(database: appDB)
+        let e = experiment()
+        try await store.save(e)
+        #expect(try await store.experiment(id: e.id) == e)
     }
 }

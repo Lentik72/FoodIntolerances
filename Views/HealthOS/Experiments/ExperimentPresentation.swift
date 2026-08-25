@@ -48,14 +48,25 @@ enum ExperimentPresentation {
         }
     }
 
-    /// Order matters: the observational caveat first, then the prescription
-    /// framing, then the limitation. Required on EVERY medication outcome
+    /// Order matters: the observational caveat first, then the whole-history
+    /// caveat, then the noDetectableEffect limitation, then the prescription
+    /// framing, then the organ limitation. Required on EVERY medication outcome
     /// including "helps" — that is exactly when someone feels licensed to
     /// self-manage.
     static func caveats(for result: ExperimentResult, interventionKind: ObjectKind) -> [String] {
         var out: [String] = []
         if result.kind == .helps || result.kind == .worsens {
             out.append("This is your own observation, not a trial — it can't rule out that something else changed.")
+        }
+        // Every verdict (helps/worsens/noDetectableEffect) is computed from the
+        // relationship the engine has settled over the person's WHOLE logged
+        // history with this intervention, not from the dates of this experiment
+        // alone (EvidenceEngine.recompute mines .distantPast...distantFuture).
+        // Without this line, "Magnesium appears to help" reads as a finding about
+        // the 21 days just declared, when it may rest mostly on history from
+        // before the experiment even started.
+        if result.kind == .helps || result.kind == .worsens || result.kind == .noDetectableEffect {
+            out.append("This looks at everything you've logged for this, not only what happened during this experiment.")
         }
         if result.kind == .noDetectableEffect {
             out.append("This doesn't rule an effect out — it means nothing showed up in what you logged, at this scale.")

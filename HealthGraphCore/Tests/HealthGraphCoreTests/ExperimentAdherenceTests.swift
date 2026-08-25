@@ -106,6 +106,25 @@ struct ExperimentAdherenceTests {
         #expect(a.doses == 0)
     }
 
+    @Test func aNonMidnightStartReportsTheDeclaredWindowNotOneDayMore() {
+        // The defect: `intendedEndAt = startedAt + days*86400` preserves
+        // startedAt's time of day, so a 21-day experiment started at 10:00 has
+        // its INTENDED end at 10:00 on day 21 — `end > endDay` (the day-start
+        // boundary) is true there too, exactly like a genuine mid-day early
+        // stop. Every other fixture in this file pins `t0` to midnight, which
+        // made this invisible: `end > endDay` was always false for them
+        // regardless of whether the +1 was conditioned on `endedAt != nil`.
+        // This experiment never ended (`endedAt` is nil), so no day was ever
+        // "partially lived" — the window must report exactly its declared
+        // length, not length + 1.
+        let start = t0.addingTimeInterval(10 * 3600)   // 10:00 UTC
+        let e = Experiment(interventionObjectID: objectID, outcomeSubtype: "migraine", shape: .repeated,
+                           startedAt: start, intendedEndAt: start.addingTimeInterval(21 * 86_400),
+                           createdAt: start)
+        let a = ExperimentAdherence.measure(experiment: e, events: [], calendar: cal)
+        #expect(a.windowDays == 21)
+    }
+
     @Test func experimentEndedMidDayIncludesThatDay() {
         // An experiment ended at 14:00 on day 3 spans four calendar days (0, 1, 2, 3).
         // Without accounting for mid-day endings, windowDays would be 3 and doseDays

@@ -34,12 +34,25 @@ import HealthGraphCore
                     lastRecomputed: Date(), status: status, toSubtype: toSubtype)
     }
 
-    private func resolve(_ candidates: [Relationship], outcomeSubtype: String = "migraine") async -> ExperimentResult? {
+    /// `count` distinct-day dose events ending "yesterday", safely inside
+    /// `experiment()`'s ~21-day trailing window regardless of the few
+    /// milliseconds of drift between this call and the `Date()` inside
+    /// `experiment(...)`.
+    private func doseEvents(count: Int) -> [HealthEvent] {
+        (1...count).map { daysAgo in
+            HealthEvent(timestamp: Date().addingTimeInterval(-Double(daysAgo) * 86_400),
+                       category: .supplement, subtype: "Magnesium", objectID: interventionID,
+                       value: 200, unit: "mg", source: .manual)
+        }
+    }
+
+    private func resolve(_ candidates: [Relationship], outcomeSubtype: String = "migraine",
+                         events: [HealthEvent] = []) async -> ExperimentResult? {
         let resolved = await ExperimentRowLoader.result(
             for: experiment(outcomeSubtype: outcomeSubtype),
             objectStore: StubObjectStore(object: intervention),
             relationshipStore: StubRelationshipStore(candidates: candidates),
-            eventStore: StubEventStore(),
+            eventStore: StubEventStore(stored: events),
             calendar: .current)
         return resolved?.result
     }
@@ -50,10 +63,30 @@ import HealthGraphCore
         // does not lower confidence, so `relationships(fromObjectID:)`'s
         // confidence-DESC order still surfaces the stale row first. Taking
         // `.first` unconditionally would silently withhold an earned verdict.
+        //
+        // Six distinct dose days clears ExperimentResult.derive's own exposure
+        // gate (EvidenceConfig.default.minExposures == 5) so this test still
+        // exercises the relationship-selection logic, not the gate.
         let decayed = relationship(type: .possibleTrigger, status: .decayed, confidence: 0.8, toSubtype: "migraine")
         let active = relationship(type: .improves, status: .active, confidence: 0.6, toSubtype: "migraine")
-        let result = await resolve([decayed, active])
+        let result = await resolve([decayed, active], events: doseEvents(count: 6))
         #expect(result?.kind == .helps)
+    }
+
+    @Test func aMedicationInterventionResolvesToTheMedicationKind() async {
+        // `Resolved.kind` gates BOTH safety lines (prescriber + organ) at every
+        // call site that renders a claim. A hardcoded `.supplement` here would
+        // silently drop them from every medication result in the app while every
+        // other assertion in this suite — which only ever looks at `.result` —
+        // kept passing.
+        let medication = HealthObject(id: interventionID, kind: .medication, name: "Sertraline")
+        let resolved = await ExperimentRowLoader.result(
+            for: experiment(),
+            objectStore: StubObjectStore(object: medication),
+            relationshipStore: StubRelationshipStore(candidates: []),
+            eventStore: StubEventStore(),
+            calendar: .current)
+        #expect(resolved?.kind == .medication)
     }
 
     @Test func aRelationshipForADifferentOutcomeIsExcluded() async {
@@ -111,13 +144,16 @@ private struct StubRelationshipStore: RelationshipStore {
     func save(_ relationships: [Relationship]) async throws {}
 }
 
-/// Adherence numbers play no part in the assertions above (only `result.kind`
-/// does), so this always reports no dose history.
+/// Reports whatever `events` it was constructed with, unfiltered by `interval`
+/// or `category` — callers hand in exactly the events they want visible to the
+/// experiment being resolved. Defaults to no dose history for tests where
+/// adherence numbers play no part in the assertion (only `result.kind` does).
 private struct StubEventStore: EventStore {
+    var stored: [HealthEvent] = []
     func save(_ event: HealthEvent) async throws {}
     func save(_ events: [HealthEvent]) async throws {}
     func event(id: UUID) async throws -> HealthEvent? { nil }
-    func events(in interval: DateInterval, category: EventCategory?) async throws -> [HealthEvent] { [] }
+    func events(in interval: DateInterval, category: EventCategory?) async throws -> [HealthEvent] { stored }
     func recentEvents(limit: Int) async throws -> [HealthEvent] { [] }
     func softDelete(id: UUID) async throws {}
     func count() async throws -> Int { 0 }

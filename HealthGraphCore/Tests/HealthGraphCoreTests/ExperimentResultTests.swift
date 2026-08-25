@@ -59,11 +59,38 @@ struct ExperimentResultTests {
     }
 
     @Test func noRelationshipMeansNoVerdict() {
-        // The engine did not clear its gates for this pair — thin adherence, too
-        // few exposures, or clumped ones. The experiment reports a picture rather
-        // than inventing a threshold of its own.
+        // Passes because `relationship` is nil, not because of adherence — the
+        // engine did not settle a relationship for this pair at all, so there is
+        // nothing to report but a picture.
         #expect(ExperimentResult.derive(experiment: exp(.repeated), adherence: adherence(4),
                                         relationship: nil).kind == .pictureOnly)
+    }
+
+    @Test func aWindowWithZeroDosesNeverGetsAVerdictEvenWithASettledRelationship() {
+        // The defect this gate closes: two years of magnesium history settles an
+        // `.improves` relationship over the WHOLE history, computed by
+        // `EvidenceEngine.recompute` over `.distantPast...distantFuture`, not this
+        // window. Declaring a 21-day experiment and logging zero doses must not
+        // borrow that history's verdict for a window in which nothing was tested.
+        let r = ExperimentResult.derive(experiment: exp(.repeated), adherence: adherence(0),
+                                        relationship: rel(.improves))
+        #expect(r.kind == .pictureOnly)
+    }
+
+    @Test func aWindowBelowTheEnginesOwnExposureFloorNeverGetsAVerdict() {
+        // 4 dose days is one below EvidenceConfig.default.minExposures (5) — still
+        // gated, even with an active, settled relationship handed in.
+        let r = ExperimentResult.derive(experiment: exp(.repeated), adherence: adherence(4),
+                                        relationship: rel(.improves))
+        #expect(r.kind == .pictureOnly)
+    }
+
+    @Test func aWindowAtTheEnginesOwnExposureFloorCanEarnAVerdict() {
+        // 5 dose days meets EvidenceConfig.default.minExposures exactly — the gate
+        // reuses the engine's own floor, not a new threshold invented here.
+        let r = ExperimentResult.derive(experiment: exp(.repeated), adherence: adherence(5),
+                                        relationship: rel(.improves))
+        #expect(r.kind == .helps)
     }
 
     @Test func aCandidateRelationshipIsNotAVerdict() {
