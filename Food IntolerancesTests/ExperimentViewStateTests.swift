@@ -123,11 +123,21 @@ import HealthGraphCore
         #expect(store.loads == 2)
     }
 
-    @Test func failedLaterRefreshDoesNotDiscardEarlierSuccess() async {
-        // Two refreshes in flight: first reads and succeeds, second reads and fails.
-        // With generation-based ordering, the first's success applies even though
-        // the second's failure happened after. The key: generation bump and all()
-        // are adjacent with no await between, so "second all() call" = "second generation".
+    @Test func successfulReadIsAppliedWhenLaterReadFails() async {
+        // Exercise the failure path: two reads are triggered, the second fails, and
+        // verify that the first's success is still applied (not discarded). This tests
+        // the guard let pattern and the generation-based logic working together.
+        //
+        // Gap: This test does NOT pin the true concurrency scenario — an earlier read
+        // succeeding while a later one is in flight and fails. That would require a
+        // continuation-based store double to park the first read mid-call. The store
+        // here completes all() synchronously, so reads run sequentially (first succeeds,
+        // second fails) with no async preemption. The generation ordering logic is
+        // therefore verified by trace (three scenarios tested by hand) rather than by
+        // this test's execution. Anyone changing refresh() should read that trace and
+        // understand the ordering is correct even though this test exercises only the
+        // sequential case. The test remains valuable because it exercises the failure
+        // path and the successful-read case, which self-corrects on next appearance.
         final class FailOnSecondReadStore: ExperimentPersisting {
             var readCount = 0
             var stored: [Experiment] = []
