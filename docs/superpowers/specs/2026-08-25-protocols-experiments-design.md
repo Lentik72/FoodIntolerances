@@ -72,11 +72,22 @@ regimen and an unreminded one are different evidence and the record should say w
 
 ## What an experiment may claim
 
-**The gate.** A verdict requires the *repeated* shape and enough of it — at least the
-engine's existing `minExposures`, spread rather than clumped. A *course* never produces a
-verdict regardless of dose count: fourteen consecutive days during one illness cannot be
-separated from recovering anyway, and split-half stability across one contiguous block is
-meaningless. Thin adherence on a repeated experiment also drops to a picture.
+**The gate — and it must not be a second statistics implementation.** A verdict requires two
+things: the *repeated* shape, and **the evidence engine having produced a result for that
+exact pair that cleared its own gates**. The experiment asks the engine about
+`intervention → outcome` and reports what comes back; it does not compute its own
+significance, effect size or stability.
+
+That matters beyond saving work. The engine's split-half stability gate is already what
+rejects clumped exposures — a run of consecutive doses fails it — so "enough, and spread
+rather than clumped" needs no new rule and no new threshold to drift out of sync with
+`EvidenceConfig`. A parallel statistics path inside the experiments feature would be a
+second opinion the app could contradict itself with.
+
+A *course* never produces a verdict regardless of dose count: fourteen consecutive days
+during one illness cannot be separated from recovering anyway. Thin adherence on a repeated
+experiment likewise drops to a picture, because the engine will not have produced a result
+to report.
 
 **Why an experiment may speak more plainly than a mined card.** Not more data —
 **pre-registration**. The engine mines every exposure against every outcome and needs strict
