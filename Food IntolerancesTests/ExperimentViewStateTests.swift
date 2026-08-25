@@ -16,6 +16,19 @@ import HealthGraphCore
         func all() async throws -> [Experiment] { stored }
     }
 
+    final class LoadCountingStore: ExperimentPersisting {
+        var loads = 0
+        var stored: [Experiment] = []
+        func save(_ e: Experiment) async throws {
+            stored.removeAll { $0.id == e.id }
+            stored.append(e)
+        }
+        func all() async throws -> [Experiment] {
+            loads += 1
+            return stored
+        }
+    }
+
     private func settle() async { for _ in 0..<25 { await Task.yield() } }
 
     @Test func twoImmediateCreateTapsCreateOneExperiment() async {
@@ -94,5 +107,19 @@ import HealthGraphCore
         state.endTapped(e)
         await state.saveTask?.value
         #expect(store.stored.last?.status == .completed)
+    }
+
+    @Test func appearedTwiceLoadsTheListTwice() async {
+        // The guard on appeared() checks isLoading, not "has-ever-run".
+        // A screen can be shown, dismissed, and shown again, and it should
+        // resync on each appearance, not latch shut permanently.
+        let store = LoadCountingStore()
+        let state = ExperimentViewState(store: store)
+        state.appeared()
+        await state.loadTask?.value
+        #expect(store.loads == 1)
+        state.appeared()
+        await state.loadTask?.value
+        #expect(store.loads == 2)
     }
 }

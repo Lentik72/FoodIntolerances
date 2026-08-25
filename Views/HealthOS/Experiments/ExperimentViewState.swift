@@ -10,6 +10,8 @@ final class ExperimentViewState: ObservableObject {
     @Published private(set) var endingIDs: Set<UUID> = []
 
     private let workflow: ExperimentWorkflow
+    private var isLoading = false
+    private var refreshGeneration = 0
 
     /// Read-only outside; tests await it so assertions run after completion
     /// rather than spinning a run loop. Production code never reads it.
@@ -21,8 +23,12 @@ final class ExperimentViewState: ObservableObject {
     }
 
     func appeared() {
-        guard !experiments.isEmpty || loadTask == nil else { return }
-        loadTask = Task { await refresh() }
+        guard !isLoading else { return }
+        isLoading = true
+        loadTask = Task {
+            defer { isLoading = false }
+            await refresh()
+        }
     }
 
     /// The guard runs SYNCHRONOUSLY, before any dispatch: two taps can land in the
@@ -52,8 +58,12 @@ final class ExperimentViewState: ObservableObject {
     }
 
     private func refresh() async {
-        // nil means the READ failed, which is not an empty list. Blanking the screen
-        // would invite someone to re-create an experiment that already exists.
-        if let latest = try? await workflow.all() { experiments = latest }
+        refreshGeneration += 1
+        let generation = refreshGeneration
+        guard let latest = try? await workflow.all() else { return }
+        // A newer refresh started while this read was in flight; its result is the
+        // fresher truth, so this one must not overwrite it.
+        guard generation == refreshGeneration else { return }
+        experiments = latest
     }
 }

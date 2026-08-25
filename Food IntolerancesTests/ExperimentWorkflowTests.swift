@@ -66,5 +66,6 @@ import HealthGraphCore
         #expect(stopped.endedAt != nil)
         #expect(recorder.calls == [.save(.running), .save(.abandoned)])
         #expect(store.stored.last?.status == .abandoned)
+        #expect(store.stored.last?.endedAt != nil)
     }
 }
