@@ -23,7 +23,13 @@ enum ExperimentPresentation {
         }
     }
 
-    static func detail(for result: ExperimentResult) -> String {
+    /// `shape` matters ONLY for `.pictureOnly`: `.course` and `.repeated` reach a
+    /// picture for different reasons, and conflating them misstates one of them.
+    /// `.repeated` is the ONLY shape that can ever earn a verdict, so a fresh,
+    /// still-accumulating repeated experiment must not be told "a single course
+    /// can't be evaluated" — that is true of `.course`, not of "not enough data
+    /// yet".
+    static func detail(for result: ExperimentResult, shape: ExperimentShape) -> String {
         let a = result.adherence
         let dayUnit = a.windowDays == 1 ? "day" : "days"
         let logged = "You logged it on \(a.doseDays) of \(a.windowDays) \(dayUnit)."
@@ -33,7 +39,12 @@ enum ExperimentPresentation {
         case .pictureOnly:
             // Never "nothing to show" — that reads as a malfunction rather than a
             // limit of the evidence.
-            return logged + " A single course can't be evaluated — there's nothing to compare it against."
+            switch shape {
+            case .course:
+                return logged + " A single course can't be evaluated — there's nothing to compare it against."
+            case .repeated:
+                return logged + " Not enough yet to tell. Keep logging and this will fill in."
+            }
         }
     }
 

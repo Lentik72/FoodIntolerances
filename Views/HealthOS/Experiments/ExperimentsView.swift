@@ -150,7 +150,7 @@ private struct FinishedExperimentRow: View {
             if let loaded {
                 NavigationLink {
                     ExperimentResultDetailView(interventionName: loaded.name, interventionKind: loaded.kind,
-                                               result: loaded.result)
+                                               shape: loaded.shape, result: loaded.result)
                 } label: {
                     Text(ExperimentPresentation.headline(for: loaded.result, interventionName: loaded.name))
                         .foregroundStyle(HealthTheme.ink)
@@ -173,6 +173,7 @@ private struct FinishedExperimentRow: View {
 private struct ExperimentResultDetailView: View {
     let interventionName: String
     let interventionKind: ObjectKind
+    let shape: ExperimentShape
     let result: ExperimentResult
 
     var body: some View {
@@ -181,7 +182,7 @@ private struct ExperimentResultDetailView: View {
                 Text(ExperimentPresentation.headline(for: result, interventionName: interventionName))
                     .font(HealthTheme.screenTitle())
                     .foregroundStyle(HealthTheme.ink)
-                Text(ExperimentPresentation.detail(for: result))
+                Text(ExperimentPresentation.detail(for: result, shape: shape))
                     .font(.subheadline)
                     .foregroundStyle(HealthTheme.inkSecondary)
 
@@ -214,7 +215,17 @@ private struct ExperimentResultDetailView: View {
 /// documented below is written exactly once. Plain reads only — no
 /// statistics, no thresholds; `ExperimentResult.derive` is the only place a
 /// verdict gets decided, and it decides it from what this hands in.
-private enum ExperimentRowLoader {
+///
+/// Internal (not `private`) on purpose: this holds the highest-risk logic in
+/// the screen — the relationship filter below — and `private` in Swift is
+/// file-scoped, which would leave it unreachable even from a `@testable`
+/// import. See `ExperimentRowLoaderTests`.
+///
+/// Store parameters are typed by protocol (`any ObjectStore` etc.), not the
+/// concrete `GRDB*Store`, purely so those tests can substitute recording/stub
+/// doubles the way `ExperimentWorkflowTests` does for `ExperimentPersisting` —
+/// production call sites still pass the real GRDB-backed stores.
+enum ExperimentRowLoader {
     struct Adherence {
         let name: String
         let kind: ObjectKind
@@ -224,11 +235,12 @@ private enum ExperimentRowLoader {
     struct Resolved {
         let name: String
         let kind: ObjectKind
+        let shape: ExperimentShape
         let result: ExperimentResult
     }
 
-    static func adherence(for experiment: Experiment, objectStore: GRDBObjectStore,
-                          eventStore: GRDBEventStore, calendar: Calendar) async -> Adherence? {
+    static func adherence(for experiment: Experiment, objectStore: any ObjectStore,
+                          eventStore: any EventStore, calendar: Calendar) async -> Adherence? {
         guard let object = try? await objectStore.object(id: experiment.interventionObjectID) else { return nil }
         let events = await doseEvents(for: experiment, kind: object.kind, eventStore: eventStore)
         let measured = ExperimentAdherence.measure(experiment: experiment, events: events, calendar: calendar)
@@ -237,27 +249,46 @@ private enum ExperimentRowLoader {
 
     /// `ExperimentResult.derive` trusts its caller that the relationship it is
     /// handed corresponds to this exact experiment's declared pair — it does
-    /// not check. That check happens HERE, and nowhere else:
-    /// `relationships(fromObjectID:)` narrows to the intervention, but a
-    /// relationship for a DIFFERENT outcome on that same object would still
-    /// pass that filter alone. The `toSubtype` comparison below is the part
-    /// that must not be skipped, or a wrong-symptom relationship could hand
-    /// back a confident, wrong verdict about this intervention.
-    static func result(for experiment: Experiment, objectStore: GRDBObjectStore,
-                       relationshipStore: GRDBRelationshipStore, eventStore: GRDBEventStore,
+    /// not check. That check happens HERE, and nowhere else, in two parts:
+    ///
+    /// - `relationships(fromObjectID:)` narrows to the intervention, but a
+    ///   relationship for a DIFFERENT outcome on that same object would still
+    ///   pass that filter alone — `toSubtype` must match too, or a
+    ///   wrong-symptom relationship could hand back a confident, wrong verdict
+    ///   about this intervention. `toCategory == "symptom"` is folded in
+    ///   alongside it: it is a no-op today, because mood relationships key on
+    ///   the fixed `"low"`/`"good"` tokens rather than a catalog subtype and
+    ///   so cannot collide — but Phase B's committed mood-outcome experiments
+    ///   will route mood through this exact `toSubtype` comparison, and at
+    ///   that point the category guard is what keeps a mood edge from ever
+    ///   satisfying a symptom experiment's filter by accident.
+    /// - Among rows that DO match, prefer a SETTLED one (`.active` or
+    ///   `.confirmedNoEffect`). `relationships(fromObjectID:)` sorts by
+    ///   confidence with no status filter, and `EvidenceEngine.recompute`
+    ///   decays a superseded row without lowering its confidence — so an
+    ///   early noisy `.decayed` reading can outrank a later, genuine
+    ///   `.active` one. Taking `.first` unconditionally would silently
+    ///   downgrade an earned verdict to a picture; that is the mirror image
+    ///   of asserting a false one, and just as much a defect.
+    static func result(for experiment: Experiment, objectStore: any ObjectStore,
+                       relationshipStore: any RelationshipStore, eventStore: any EventStore,
                        calendar: Calendar) async -> Resolved? {
         guard let base = await adherence(for: experiment, objectStore: objectStore,
                                          eventStore: eventStore, calendar: calendar) else { return nil }
         let sameIntervention = (try? await relationshipStore.relationships(
             fromObjectID: experiment.interventionObjectID)) ?? []
-        let declaredPairOnly = sameIntervention.first { $0.toSubtype == experiment.outcomeSubtype }
+        let declaredPair = sameIntervention.filter {
+            $0.toSubtype == experiment.outcomeSubtype && $0.toCategory == "symptom"
+        }
+        let chosen = declaredPair.first { $0.status == .active || $0.status == .confirmedNoEffect }
+            ?? declaredPair.first
         let result = ExperimentResult.derive(experiment: experiment, adherence: base.adherence,
-                                             relationship: declaredPairOnly)
-        return Resolved(name: base.name, kind: base.kind, result: result)
+                                             relationship: chosen)
+        return Resolved(name: base.name, kind: base.kind, shape: experiment.shape, result: result)
     }
 
     private static func doseEvents(for experiment: Experiment, kind: ObjectKind,
-                                   eventStore: GRDBEventStore) async -> [HealthEvent] {
+                                   eventStore: any EventStore) async -> [HealthEvent] {
         // An ended experiment's own window can end before it started only if the
         // record is corrupt; clamping keeps DateInterval's end >= start invariant
         // safe regardless.

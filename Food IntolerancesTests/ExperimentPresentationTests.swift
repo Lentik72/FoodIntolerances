@@ -16,7 +16,7 @@ import HealthGraphCore
         // a later edit, so it is pinned across the whole surface, not one string.
         let all = [ExperimentPresentation.headline(for: result(.noDetectableEffect),
                                                    interventionName: "Magnesium"),
-                   ExperimentPresentation.detail(for: result(.noDetectableEffect))]
+                   ExperimentPresentation.detail(for: result(.noDetectableEffect), shape: .repeated)]
         for text in all {
             #expect(!text.localizedCaseInsensitiveContains("doesn't work"))
             #expect(!text.localizedCaseInsensitiveContains("does not work"))
@@ -59,15 +59,28 @@ import HealthGraphCore
 
     @Test func aPictureSaysWhyThereIsNoVerdict() {
         // "Nothing to show" would read as a malfunction. The honest version says
-        // a single course has nothing to compare against.
-        let text = ExperimentPresentation.detail(for: result(.pictureOnly, days: 12))
+        // a single course has nothing to compare against. This is the .course
+        // wording specifically — see aRepeatedPictureDoesNotClaimASingleCourse
+        // below for why .repeated must NOT say this.
+        let text = ExperimentPresentation.detail(for: result(.pictureOnly, days: 12), shape: .course)
         #expect(text.localizedCaseInsensitiveContains("can't be evaluated")
                 || text.localizedCaseInsensitiveContains("nothing to compare"))
     }
 
+    @Test func aRepeatedPictureDoesNotClaimASingleCourseIsTheReason() {
+        // .repeated is the ONLY shape that can ever earn a verdict. Telling a
+        // fresh, still-accumulating repeated experiment "a single course can't
+        // be evaluated" misstates why it has no answer yet — it isn't a course,
+        // and it isn't precluded from ever getting a verdict.
+        let text = ExperimentPresentation.detail(for: result(.pictureOnly, days: 3, windowDays: 21),
+                                                  shape: .repeated)
+        #expect(!text.localizedCaseInsensitiveContains("single course"))
+        #expect(text.contains("3 of 21"))   // still states adherence, same as every other branch
+    }
+
     @Test func adherenceIsStatedInDaysOnEveryOutcome() {
         for kind in [ExperimentOutcomeKind.helps, .worsens, .noDetectableEffect, .pictureOnly] {
-            let detail = ExperimentPresentation.detail(for: result(kind, days: 18, windowDays: 21))
+            let detail = ExperimentPresentation.detail(for: result(kind, days: 18, windowDays: 21), shape: .course)
             // Asserts the fraction framing: both numerator and denominator in the
             // "X of Y" shape, e.g. "18 of 21", to prevent reintroducing the
             // dose-versus-day confound that ExperimentAdherence's doc comment calls out.
@@ -88,7 +101,7 @@ import HealthGraphCore
     @Test func edgeCaseWindowDaysOneIsSingular() {
         // windowDays == 1 is reachable for a same-day experiment.
         // Pluralise the unit.
-        let detail = ExperimentPresentation.detail(for: result(.helps, days: 1, windowDays: 1))
+        let detail = ExperimentPresentation.detail(for: result(.helps, days: 1, windowDays: 1), shape: .course)
         #expect(detail.contains("1 of 1 day"))
         #expect(!detail.contains("1 of 1 days"))
     }
