@@ -16,6 +16,45 @@ struct InsightsViewModelTests {
         return db
     }
 
+    /// Box for counting calls from inside the @Sendable provider closure.
+    final class Counter: @unchecked Sendable { var value = 0 }
+
+    @Test func evidenceIsFetchedOnceForTheWholeFeedNotOncePerCard() async throws {
+        // The N+1: evidence(for:) reads the ENTIRE event corpus on every call, so
+        // one call per active card meant N full reads of the graph — measured at
+        // ~7s for 10 cards over 38k events. Asserted by CALL COUNT rather than
+        // elapsed time: a timing threshold would flake on CI and would not say
+        // what regressed.
+        let asOf = Date(timeIntervalSince1970: 1_713_000_000)
+        // seedMinedDB alone yields a single active card, and with N = 1 a batched
+        // call is indistinguishable from a per-card loop — the test would pass
+        // against the very bug it exists to catch. The stress corpus adds a second
+        // independent active edge.
+        let db = try await seedMinedDB()
+        try await GRDBEventStore(database: db).save(
+            StressDemoSeed.events(endingAt: asOf, timeZone: TimeZone(identifier: "UTC")!))
+        _ = try await EvidenceEngine(database: db).recompute(asOf: asOf)
+        let activeCount = try await GRDBRelationshipStore(database: db)
+            .relationships(status: .active).count
+        #expect(activeCount >= 2)   // non-vacuous: one call differs from N only when N > 1
+
+        let calls = Counter()
+        let vm = InsightsViewModel(database: db, now: { asOf }, hasSyntheticData: { false },
+                                   evidenceReports: { rels, at in
+                                       calls.value += 1
+                                       // Delegate to the real engine, so this test also
+                                       // proves the batched path still renders dots.
+                                       return try await EvidenceEngine(database: db)
+                                           .evidenceReports(for: rels, asOf: at)
+                                   })
+        await vm.load()
+
+        #expect(calls.value == 1)
+        let dairy = vm.feed.sections.first { $0.kind == .active }?.cards
+            .first { $0.claim.lowercased().contains("dairy") }
+        #expect(dairy?.recentDots.isEmpty == false)   // equivalence: dots survive batching
+    }
+
     @Test func loadsActiveDairyBloatingCardWithRecentWindow() async throws {
         let db = try await seedMinedDB()
         let vm = InsightsViewModel(database: db, now: { Date(timeIntervalSince1970: 1_713_000_000) })
