@@ -118,6 +118,21 @@ mechanism of the fix. On the device that took 3,650 calendar days to roughly 400
 The reasoning is that someone engaged enough to log lunch would have logged a migraine. A
 narrower rule was measured and is degenerate (above).
 
+**Imported symptoms do not make a day tracked.** `HealthKitSampleMapper` emits
+`category: .symptom` (line 345), so an outcome can arrive from Apple Health on a day with no
+manual capture. Those days are excluded from both sides. The alternative — treating an imported
+symptom as evidence the outcome was observable that day — was rejected because the inference does
+not hold in reverse: the *absence* of an imported symptom on such a day proves nothing about
+whether the person had one, since they may not use that other app daily. Counting the days the
+symptom appears while ignoring the days it would not have been recorded is precisely the
+selection bias this round exists to remove.
+
+The cost is real and worth naming: for a *derived* exposure (weather, air quality, sleep) the
+exposure is known on every calendar day, so a day with an imported symptom and no manual log is
+genuinely informative for that pair, and this rule discards it. That is a per-pair refinement —
+"informative" means something different for a manual exposure than a derived one — and it is
+deliberately out of scope here. See follow-ups.
+
 ### 2. One rule, applied to both sides
 
 The restriction applies to the whole rate computation, not only the denominator:
@@ -245,6 +260,12 @@ Named so they do not drift in:
 
 ## Follow-ups this round generates
 
+- **Per-pair definitions of "informative".** For a derived exposure the exposure is known on every
+  calendar day, so the day only needs the OUTCOME to have been observable; for a manual exposure,
+  absence of a log does not establish absence of the exposure, so the day needs manual engagement
+  too. This round applies the manual-exposure rule to both, which is conservative and costs
+  environment→symptom pairs the days carrying an imported symptom and no manual log. Worth
+  revisiting once the corrected graph can be inspected on a real device.
 - Whether a minimum tracked-day count should gate mining, once the corrected graph can be seen on
   real data.
 - Whether the Insights drill-down should say what its count means, and in what words.
