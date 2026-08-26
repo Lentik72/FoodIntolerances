@@ -230,7 +230,7 @@ struct HealthGraphDebugView: View {
         isWorking = true
         defer { isWorking = false; graphMutation.graphMutated() }
         do {
-            let config = SyntheticConfig(
+            var config = SyntheticConfig(
                 startDate: Date().addingTimeInterval(-400 * 86_400),
                 days: 400, seed: 42,
                 patterns: [PlantedPattern(
@@ -241,6 +241,14 @@ struct HealthGraphDebugView: View {
                 outcomeBaseRatePerDay: 0.05,
                 noiseFoodsPerDay: 1...3
             )
+            // Plants magnesium -> reduced migraine rate: the only demo signal an
+            // EXPERIMENT can target, since experiments take medication/supplement/
+            // peptide interventions and every other loader's exposures are foods
+            // or derived environment factors. NOTE this alone does not produce a
+            // verdict — these events are all historical and adherence only counts
+            // doses inside the experiment's window, so the experiment must also be
+            // backdated (DEBUG stepper on the create screen).
+            config.derivedScenarios = DerivedScenarios(protectiveSupplement: true)
             try await database.resetForSeedReload(batch: DemoBatch.synthetic)
             try await SyntheticDataGenerator.generate(config: config)
                 .insert(into: database, batch: DemoBatch.synthetic)

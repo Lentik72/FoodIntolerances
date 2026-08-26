@@ -23,6 +23,10 @@ struct ExperimentCreateView: View {
     @State private var selectedSymptomKey: String?
     @State private var shape: ExperimentShape = .repeated
     @State private var days = 21
+    #if DEBUG
+    /// Days to shift the start INTO THE PAST. 0 in every normal run.
+    @State private var backdateDays = 0
+    #endif
 
     // Qualified: the app target has a legacy `SymptomCatalog` / `SymptomDefinition`
     // pair at its root that would otherwise shadow HealthGraphCore's (see
@@ -42,6 +46,9 @@ struct ExperimentCreateView: View {
                 symptomSection
                 shapeSection
                 lengthSection
+                #if DEBUG
+                backdateSection
+                #endif
             }
             .padding(16)
         }
@@ -56,7 +63,8 @@ struct ExperimentCreateView: View {
                 Button("Start") {
                     guard let interventionObjectID, let selectedSymptomKey else { return }
                     state.createTapped(interventionObjectID: interventionObjectID,
-                                       outcomeSubtype: selectedSymptomKey, shape: shape, days: days)
+                                       outcomeSubtype: selectedSymptomKey, shape: shape, days: days,
+                                       startedAt: startDate)
                     dismiss()
                 }
                 .disabled(!canStart)
@@ -185,6 +193,34 @@ struct ExperimentCreateView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+
+    private var startDate: Date {
+        #if DEBUG
+        return Date().addingTimeInterval(-Double(backdateDays) * 86_400)
+        #else
+        return Date()
+        #endif
+    }
+
+    #if DEBUG
+    private var backdateSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Backdate start (DEBUG)")
+                .font(.subheadline)
+                .foregroundStyle(HealthTheme.inkSecondary)
+            VStack(alignment: .leading, spacing: 4) {
+                Stepper(backdateDays == 0 ? "Start today" : "Start \(backdateDays) days ago",
+                        value: $backdateDays, in: 0...365, step: 30)
+                Text("Doses only count inside the window, so a start of today sees no past logs. Backdate to evaluate against demo data.")
+                    .font(.caption)
+                    .foregroundStyle(HealthTheme.inkMuted)
+            }
+            .padding(12)
+            .hgCard()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    #endif
 
     // MARK: loading
 
