@@ -145,7 +145,26 @@ the test. Test 3 below must construct the case properly; until it is green this 
 would inflate confidence with days that taught us nothing, and split the semantics: rates about
 tracked days, counts about calendar days. One rule everywhere.
 
-### 4. No denominator means no answer
+### 4. Three call sites, not one
+
+`analyze` is called from three places, and all three must receive the same tracked-day set or the
+engine contradicts itself:
+
+- **`EvidenceEngine.recompute`** — the main pass. Replaces `observation` with `trackedDays`.
+- **`EvidenceContext` / `evidence(for:in:)`** — the Insights drill-down. It carries its own
+  `observation: DateInterval?` built in `makeContext`, and that function's doc comment already
+  warns that a narrowed read makes "the batch numbers stop matching the stored evidenceCount".
+  Left alone, the drill-down explains a card using different follow/miss counts than the card
+  itself displays.
+- **`StabilityValidator`** — the subtle one. It builds a *per-half* window from each half's
+  exposure times (`DateInterval(start: lo, end: obsEnd)`) and compares each half's ratio against
+  the same `candidateRatioTrigger` / `candidateRatioProtective` thresholds the full pass uses. If
+  the halves keep a calendar-day denominator while the full pass moves to tracked days, the two
+  ratios are computed on different scales and the stability gate becomes incoherent — passing and
+  failing edges for reasons unrelated to stability, with every test still green. Each half must
+  use `trackedDays` intersected with that half's window.
+
+### 5. No denominator means no answer
 
 `trackedDays.subtracting(exposureDays)` can be empty — a user who imported Apple Health and never
 logged. Today's `max(1, …)` would floor that to one day and report "every outcome happened on the
@@ -195,6 +214,13 @@ Package-level, in `HealthGraphCoreTests`. In the order they should be written:
 5. **The acceptance suite unchanged.** `recallAllPlantedPatterns` and
    `precisionIsHonestForAnAssociationEngine` must pass without edits — they run on an all-manual
    corpus, where the fix is a no-op. If they need editing, the implementation is wrong.
+6. **Drill-down agrees with the card.** On a corpus with imported history, the follow/miss counts
+   from `evidence(for:in:)` equal the `evidenceCount`/`contradictionCount` stored on the
+   relationship by `recompute`. This is the test that catches a missed `EvidenceContext`.
+7. **Stability stays coherent.** An edge that is genuinely stable across both halves still passes
+   the gate once the full pass uses tracked days. Without this, `StabilityValidator` silently
+   compares half-ratios on a calendar-day scale against thresholds calibrated on a tracked-day
+   scale, and nothing else in the suite notices.
 
 **Mutants to demonstrate** (mutate, run, restore, report both directions):
 
@@ -202,6 +228,8 @@ Package-level, in `HealthGraphCoreTests`. In the order they should be written:
 2. Let HealthKit events count as tracked days → test 1 fails.
 3. Fix the denominator but leave exposure days unfiltered → test 3 fails.
 4. Drop the empty-set guard → test 4 fails.
+5. Update `EvidenceEngine` but leave `EvidenceContext` on the calendar denominator → test 6 fails.
+6. Update `EvidenceEngine` but leave `StabilityValidator`'s per-half windows alone → test 7 fails.
 
 ## Not touched
 
