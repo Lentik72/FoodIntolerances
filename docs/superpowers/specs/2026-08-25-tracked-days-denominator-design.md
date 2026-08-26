@@ -199,9 +199,18 @@ false triggers do not vanish — they become decayed rows. Worth confirming duri
 decayed edge is invisible on every surface, because a device carrying fifteen wrong triggers will
 be carrying fifteen decayed rows afterwards.
 
-**Stored relationships do not fix themselves.** There is no schema change, but the rewrite only
-happens on a recompute. The round must force one after the update, or users keep the wrong edges
-until some unrelated event triggers a pass.
+**Stored relationships fix themselves on the next launch — but only by accident.** There is no
+schema change, and the rewrite happens on the next recompute. Checking the code rather than
+assuming: `InsightsRefreshCoordinator` keeps `lastRecomputeAt` in memory only, and
+`RecomputePolicy.shouldRecompute` opens with `guard let lastRunAt else { return true }`, so the
+first `refreshIfNeeded()` of every launch recomputes unconditionally. No forcing mechanism is
+needed. What is needed is a test pinning that guarantee, because persisting `lastRecomputeAt`
+across launches is an obvious-looking optimisation that would silently strand every existing
+install on the old maths.
+
+One gap this leaves: `refreshIfNeeded()` is only called from `InsightsView`, while
+`PoorAirPersonalization` filters on `.active` and Home renders first. A stale wrong edge can
+personalise the Home banner for one session after updating.
 
 **`PoorAirPersonalization` filters on `.active`**, so the Home banner's personalization shifts
 with the corrected graph.
