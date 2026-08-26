@@ -35,15 +35,20 @@ final class ExperimentViewState: ObservableObject {
     /// The guard runs SYNCHRONOUSLY, before any dispatch: two taps can land in the
     /// same main-actor turn, and two experiments over one regimen would double
     /// every adherence count derived from the same doses.
+    /// `startedAt` defaults to now — the only value production passes. It is a
+    /// parameter so a DEBUG affordance can backdate a start over existing logs:
+    /// adherence counts doses INSIDE the window, so an experiment started today
+    /// can never see yesterday's doses, and on a demo corpus (all historical)
+    /// the verdict path is otherwise unreachable.
     func createTapped(interventionObjectID: UUID, outcomeSubtype: String,
-                      shape: ExperimentShape, days: Int) {
+                      shape: ExperimentShape, days: Int, startedAt: Date = Date()) {
         guard !isSaving else { return }
         isSaving = true
         saveTask = Task {
             defer { isSaving = false }
             _ = try? await workflow.start(interventionObjectID: interventionObjectID,
                                           outcomeSubtype: outcomeSubtype, shape: shape,
-                                          startedAt: Date(), days: days)
+                                          startedAt: startedAt, days: days)
             await refresh()
         }
     }

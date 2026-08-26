@@ -16,7 +16,8 @@ import HealthGraphCore
         // a later edit, so it is pinned across the whole surface, not one string.
         let all = [ExperimentPresentation.headline(for: result(.noDetectableEffect),
                                                    interventionName: "Magnesium"),
-                   ExperimentPresentation.detail(for: result(.noDetectableEffect), shape: .repeated)]
+                   ExperimentPresentation.detail(for: result(.noDetectableEffect), shape: .repeated,
+                                                 status: .completed)]
         for text in all {
             #expect(!text.localizedCaseInsensitiveContains("doesn't work"))
             #expect(!text.localizedCaseInsensitiveContains("does not work"))
@@ -79,9 +80,36 @@ import HealthGraphCore
         // a single course has nothing to compare against. This is the .course
         // wording specifically — see aRepeatedPictureDoesNotClaimASingleCourse
         // below for why .repeated must NOT say this.
-        let text = ExperimentPresentation.detail(for: result(.pictureOnly, days: 12), shape: .course)
+        let text = ExperimentPresentation.detail(for: result(.pictureOnly, days: 12), shape: .course,
+                                                status: .running)
         #expect(text.localizedCaseInsensitiveContains("can't be evaluated")
                 || text.localizedCaseInsensitiveContains("nothing to compare"))
+    }
+
+    @Test func aFinishedRepeatedPictureDoesNotTellYouToKeepLogging() {
+        // Seen on device: an experiment the user had just ENDED read "Not enough
+        // yet to tell. Keep logging and this will fill in." There is nothing left
+        // to fill in — the window is closed. The copy branched on shape but not
+        // on whether the thing was still running.
+        for status in [ExperimentStatus.completed, .abandoned] {
+            let text = ExperimentPresentation.detail(for: result(.pictureOnly),
+                                                     shape: .repeated, status: status)
+            #expect(!text.localizedCaseInsensitiveContains("keep logging"))
+            #expect(!text.localizedCaseInsensitiveContains("will fill in"))
+            #expect(text.localizedCaseInsensitiveContains("not enough"))
+        }
+    }
+
+    /// NOTE: no current surface renders `detail` for a running experiment —
+    /// `ExperimentResultDetailView` is built only from `FinishedExperimentRow`.
+    /// This pins the forward-looking wording for the Phase B running surfaces
+    /// (Home card, midpoint nudge) so they cannot inherit the past-tense copy.
+    @Test func aRunningRepeatedPictureStillInvitesMoreLogging() {
+        // The forward-looking wording is right while the window is open — this is
+        // the case the original copy was written for, and it must survive.
+        let text = ExperimentPresentation.detail(for: result(.pictureOnly),
+                                                 shape: .repeated, status: .running)
+        #expect(text.localizedCaseInsensitiveContains("keep logging"))
     }
 
     @Test func aRepeatedPictureDoesNotClaimASingleCourseIsTheReason() {
@@ -90,14 +118,19 @@ import HealthGraphCore
         // be evaluated" misstates why it has no answer yet — it isn't a course,
         // and it isn't precluded from ever getting a verdict.
         let text = ExperimentPresentation.detail(for: result(.pictureOnly, days: 3, windowDays: 21),
-                                                  shape: .repeated)
+                                                  shape: .repeated, status: .running)
         #expect(!text.localizedCaseInsensitiveContains("single course"))
         #expect(text.contains("3 of 21"))   // still states adherence, same as every other branch
     }
 
     @Test func adherenceIsStatedInDaysOnEveryOutcome() {
-        for kind in [ExperimentOutcomeKind.helps, .worsens, .noDetectableEffect, .pictureOnly] {
-            let detail = ExperimentPresentation.detail(for: result(kind, days: 18, windowDays: 21), shape: .course)
+        for (kind, status) in [(ExperimentOutcomeKind.helps, ExperimentStatus.completed),
+                               (.worsens, .completed), (.noDetectableEffect, .abandoned),
+                               (.pictureOnly, .running), (.pictureOnly, .completed)] {
+            // Across statuses too: the status branch added for ended experiments
+            // must not drop the adherence sentence on its way past.
+            let detail = ExperimentPresentation.detail(for: result(kind, days: 18, windowDays: 21),
+                                                       shape: .course, status: status)
             // Asserts the fraction framing: both numerator and denominator in the
             // "X of Y" shape, e.g. "18 of 21", to prevent reintroducing the
             // dose-versus-day confound that ExperimentAdherence's doc comment calls out.
@@ -118,7 +151,8 @@ import HealthGraphCore
     @Test func edgeCaseWindowDaysOneIsSingular() {
         // windowDays == 1 is reachable for a same-day experiment.
         // Pluralise the unit.
-        let detail = ExperimentPresentation.detail(for: result(.helps, days: 1, windowDays: 1), shape: .course)
+        let detail = ExperimentPresentation.detail(for: result(.helps, days: 1, windowDays: 1), shape: .course,
+                                                  status: .completed)
         #expect(detail.contains("1 of 1 day"))
         #expect(!detail.contains("1 of 1 days"))
     }

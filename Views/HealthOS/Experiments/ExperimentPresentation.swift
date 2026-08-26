@@ -29,7 +29,8 @@ enum ExperimentPresentation {
     /// still-accumulating repeated experiment must not be told "a single course
     /// can't be evaluated" — that is true of `.course`, not of "not enough data
     /// yet".
-    static func detail(for result: ExperimentResult, shape: ExperimentShape) -> String {
+    static func detail(for result: ExperimentResult, shape: ExperimentShape,
+                       status: ExperimentStatus) -> String {
         let a = result.adherence
         let dayUnit = a.windowDays == 1 ? "day" : "days"
         let logged = "You logged it on \(a.doseDays) of \(a.windowDays) \(dayUnit)."
@@ -43,7 +44,13 @@ enum ExperimentPresentation {
             case .course:
                 return logged + " A single course can't be evaluated — there's nothing to compare it against."
             case .repeated:
-                return logged + " Not enough yet to tell. Keep logging and this will fill in."
+                // Tense matters. Telling someone to keep logging into an
+                // experiment they have already ended is nonsense — there is
+                // nothing left to fill in. Seen on device, where a just-ended
+                // experiment still read "Keep logging".
+                return status == .running
+                    ? logged + " Not enough yet to tell. Keep logging and this will fill in."
+                    : logged + " Not enough was logged to tell." 
             }
         }
     }

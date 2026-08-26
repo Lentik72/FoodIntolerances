@@ -59,6 +59,23 @@ import HealthGraphCore
         #expect(state.experiments.first?.shape == .course)
     }
 
+    @Test func aBackdatedStartIsSavedAsGivenAndDatesTheWindowFromIt() async {
+        // The DEBUG backdate affordance is worthless if the date does not reach
+        // the record: adherence counts doses inside [startedAt, end), so a start
+        // quietly reset to now evaluates an EMPTY window and reports "0 days",
+        // which is the exact device symptom this parameter exists to fix.
+        let store = CountingStore()
+        let state = ExperimentViewState(store: store)
+        let past = Date().addingTimeInterval(-90 * 86_400)
+        state.createTapped(interventionObjectID: UUID(), outcomeSubtype: "migraine",
+                           shape: .repeated, days: 21, startedAt: past)
+        await state.saveTask?.value
+        #expect(state.experiments.first?.startedAt == past)
+        // The window is measured from the backdated start, not from now — otherwise
+        // a 21-day experiment backdated 90 days would still be open for 21 more days.
+        #expect(state.experiments.first?.intendedEndAt == past.addingTimeInterval(21 * 86_400))
+    }
+
     @Test func twoImmediateEndTapsOnTheSameExperimentCreateOneSave() async {
         // Both taps land in the same main-actor turn. Only a guard that checks
         // the specific experiment ID separates one from two — a shared flag would

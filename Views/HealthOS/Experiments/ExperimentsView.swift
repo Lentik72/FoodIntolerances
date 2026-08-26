@@ -158,7 +158,8 @@ private struct FinishedExperimentRow: View {
                 NavigationLink {
                     ExperimentResultDetailView(interventionName: loaded.name, interventionKind: loaded.kind,
                                                outcomeSubtype: experiment.outcomeSubtype,
-                                               shape: loaded.shape, result: loaded.result)
+                                               shape: loaded.shape, status: experiment.status,
+                                               result: loaded.result)
                 } label: {
                     // Neutral identifier only — every claim (headline, caveats,
                     // the prescriber/organ safety lines) lives behind the tap in
@@ -195,6 +196,9 @@ private struct ExperimentResultDetailView: View {
     let interventionKind: ObjectKind
     let outcomeSubtype: String
     let shape: ExperimentShape
+    /// Needed for copy, not for decisions: a picture on a CLOSED window must not
+    /// invite more logging.
+    let status: ExperimentStatus
     let result: ExperimentResult
 
     private var symptomName: String { HealthGraphCore.SymptomCatalog.displayName(for: outcomeSubtype) }
@@ -211,7 +215,7 @@ private struct ExperimentResultDetailView: View {
                 Text(ExperimentPresentation.headline(for: result, interventionName: interventionName))
                     .font(HealthTheme.screenTitle())
                     .foregroundStyle(HealthTheme.ink)
-                Text(ExperimentPresentation.detail(for: result, shape: shape))
+                Text(ExperimentPresentation.detail(for: result, shape: shape, status: status))
                     .font(.subheadline)
                     .foregroundStyle(HealthTheme.inkSecondary)
 
