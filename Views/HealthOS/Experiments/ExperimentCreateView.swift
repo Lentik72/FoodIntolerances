@@ -94,6 +94,22 @@ struct ExperimentCreateView: View {
                         } label: {
                             HStack {
                                 Text(object.name).foregroundStyle(HealthTheme.ink)
+                                #if DEBUG
+                                // Demo objects are namespaced away from real ones on
+                                // purpose (DemoBatch), so a seeded "magnesium" sits
+                                // beside a real "Magnesium" and reads as a duplicate.
+                                // Without this the only difference on screen is a
+                                // capital letter, and picking wrong evaluates the
+                                // wrong history.
+                                if object.syntheticBatch != nil {
+                                    Text("DEMO")
+                                        .font(.caption2.weight(.semibold))
+                                        .padding(.horizontal, 6).padding(.vertical, 2)
+                                        .background(Capsule().fill(HealthTheme.dotMiss.opacity(0.4)))
+                                        .foregroundStyle(HealthTheme.inkMuted)
+                                        .accessibilityLabel("demo data")
+                                }
+                                #endif
                                 Spacer()
                                 Text(object.kind.rawValue.capitalized)
                                     .font(.caption)
