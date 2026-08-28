@@ -6,6 +6,7 @@ struct SleepSessionBuilderTests {
     let utc = TimeZone(identifier: "UTC")!
     /// 2025-06-15 00:00:00 UTC — a fixed local midnight for offset math.
     let midnight = Date(timeIntervalSince1970: 1_749_945_600)
+    let utcZone = TimeZone(identifier: "UTC")!
 
     /// A sleep-stage segment `startMin` minutes from `midnight` (negative = the
     /// evening before), lasting `durationMin` minutes.
@@ -185,5 +186,42 @@ struct SleepSessionBuilderTests {
         #expect(a[0].end < a[1].end)
         #expect(a.map(\.id) == b.map(\.id))     // input order never changes identity
         #expect(a[0].id == "sleep-\(Int(a[0].start.timeIntervalSince1970))-\(Int(a[0].end.timeIntervalSince1970))")
+    }
+
+    // MARK: - Overlapping segments must union, not sum
+
+    private static let t0 = Date(timeIntervalSince1970: 1_749_945_600)
+    private func seg(_ subtype: String, _ fromHour: Double, _ toHour: Double) -> HealthEvent {
+        let base = Self.t0.addingTimeInterval(23 * 3600)          // 23:00
+        var e = HealthEvent(timestamp: base.addingTimeInterval(fromHour * 3600), category: .sleep,
+                            subtype: subtype, value: (toHour - fromHour) * 3600, unit: "s",
+                            source: .healthKit)
+        e.endTimestamp = base.addingTimeInterval(toHour * 3600)
+        return e
+    }
+
+    @Test func twoTrackersRecordingTheSameNightDoNotDoubleIt() {
+        // A watch and a ring both record the same 8 hours. Ranked equally,
+        // IngestPipeline keeps both on purpose. Summing them says 16.
+        let watch = [seg("asleepCore", 0, 4), seg("asleepDeep", 4, 6), seg("asleepREM", 6, 8)]
+        let ring  = [seg("asleepUnspecified", 0, 8)]
+        let sessions = SleepSessionBuilder.sessions(from: watch + ring, timeZone: utcZone)
+        #expect(sessions.count == 1)
+        #expect(abs(sessions[0].asleepMinutes - 480) < 1)          // 8 h, not 16
+    }
+
+    @Test func asleepTimeNeverExceedsTheSessionsOwnSpan() {
+        // The invariant that makes the above unfixable-by-accident: you cannot be
+        // asleep longer than the night lasted, whatever the sources claim.
+        let sources = [seg("asleepCore", 0, 8), seg("asleepDeep", 0, 8), seg("asleepREM", 0, 8)]
+        let s = SleepSessionBuilder.sessions(from: sources, timeZone: utcZone)[0]
+        #expect(s.asleepMinutes <= s.end.timeIntervalSince(s.start) / 60 + 1)
+    }
+
+    @Test func adjacentNonOverlappingStagesStillSum() {
+        // The guard against over-correcting: an ordinary single-device night,
+        // stages back to back, must be unchanged.
+        let watch = [seg("asleepCore", 0, 4), seg("asleepDeep", 4, 6), seg("asleepREM", 6, 8)]
+        #expect(abs(SleepSessionBuilder.sessions(from: watch, timeZone: utcZone)[0].asleepMinutes - 480) < 1)
     }
 }
