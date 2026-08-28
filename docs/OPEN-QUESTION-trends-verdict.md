@@ -112,3 +112,36 @@ over-reacting to an audit process that is working as intended.
    process is working, or evidence the goal is unreachable and I should stop pursuing it?
 
 Assume no constraint on effort — the priority is being right, not being quick.
+
+---
+
+## Decision — 2026-08-28
+
+**Option A. Ship the chart, coverage, range and gaps; state no direction.** Decided by Leo after
+two independent analyses reached the same recommendation.
+
+The reasoning that carried it:
+
+- The audit findings split into two piles. Implementation errors (variance floor, detrended
+  ranks, effect floor as a rate, honest window figures) are ordinary bugs. The density-guard
+  failures are **identifiability failures**: selection lives in *which* days a person measures,
+  the guard can only see *how many*, and that gap always contains another counterexample.
+- The counterexample that settled it: a patient starts a protocol — the design partner's normal
+  onboarding — weighs **more** often (motivation) and skips the scale after bad days (scale
+  avoidance). Recorded weight steps down on flat physiology, frequency rises, and the round-2
+  sign-condition fix certifies it clean. The verified fix is defeated by the fourth persona.
+- The principled dividing line is **observable missingness**, not passive vs. self-initiated.
+  Device-recorded series carry their confounder (wear) in the data; weight's confounder is how
+  the person felt on the mornings they skipped — definitionally missing, and real user data can
+  never supply the counterfactual.
+- Apple Health already ships trend arrows; the verdict is the commodity feature. Gaps drawn as
+  gaps, "based on 284 of 365 days", and later pairing with symptoms and protocols are the
+  differentiated parts.
+
+**What becomes of the verdict:** a restricted direction layer for device-recorded series is a
+possible **future round** — guarded on wear directly, 52-week windows only, eligibility earned
+by a dense stable record rather than policed by a confound detector, shipped only with honest
+per-series false-trend figures backed by a committed simulation harness. Weight earns a
+direction only ever under a near-daily stable-record gate, possibly never.
+
+The Round 1b spec and plan (2026-08-27 documents) are revised to match.
