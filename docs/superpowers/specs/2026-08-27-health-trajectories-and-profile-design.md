@@ -126,6 +126,13 @@ at ingest. It is not used for anything yet; capturing it is what makes the probl
 instead of never. (Anchored queries mean history already ingested stays nil forever — a later
 round consuming this must expect that.)
 
+*Boundary learned in implementation (2026-08-28):* HRV and respiratory rate ingest as day-level
+statistics aggregates, which have no single source — so those two series carry **no** source
+identifier at all, not merely nil history. The capture covers the per-sample paths (weight,
+resting heart rate, workouts, category samples). Making the original HRV example detectable
+requires switching those types to per-sample anchored queries — its own round, with its own
+data-volume trade-offs.
+
 ## Language and framing
 
 **No directions, stated or implied.** Beyond the standing causal-language ban ("because",
