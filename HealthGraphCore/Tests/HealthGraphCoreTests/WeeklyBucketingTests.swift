@@ -93,11 +93,35 @@ struct WeeklyBucketingTests {
 
     @Test func dstSpringForwardDoesNotBendTheWindow() {
         // The bug the previous plan's convention shipped: 86 400-second math
-        // across 2026-03-08 in America/New_York yields a window one day wrong.
+        // across 2026-03-08 (spring forward) in America/New_York yields a
+        // window one day wrong. asOf's own calendar week starts Sunday
+        // 2026-03-15 00:00 EDT (firstWeekday = 1, Gregorian default); the two
+        // readings' weeks (Mar 1 and Mar 8) are still EST — so the 12-week
+        // walk back from asOf's week to compute windowStart CROSSES the
+        // spring-forward transition, losing an hour under fixed-seconds math.
+        //
+        // asOf is deliberately 23:30, not midnight — a real "now" almost
+        // never lands on midnight, and a midnight asOf can't expose this
+        // error: Calendar's day-count floor absorbs any sub-24h discrepancy
+        // once both ends sit on exact local-midnight boundaries (proven by
+        // hand: fixed-seconds math lands windowStart at 23:00 the day
+        // before the correct midnight, and floor(N days + 1 hour) == N
+        // regardless). At 23:30 the lost hour tips the floor by exactly one
+        // day — that is the actual kill shot, on `daysInWindow`, not on the
+        // per-day weekStart values (those are derived independently per
+        // reading's own day via `dateInterval(of: .weekOfYear, for:)` and
+        // never touch windowStart at all, so they can't distinguish this
+        // mutant either way — kept below as a correctness check, not the
+        // discriminator).
         // expectedDays is computed independently via calendar day-counting.
+        let asOf = nyc.date(from: DateComponents(year: 2026, month: 3, day: 20, hour: 23, minute: 30))!
         let pts = [p(2026, 3, 6, 70, in: nyc), p(2026, 3, 9, 71, in: nyc)]
-        let out = WeeklyBucketing.bucket(pts, weeksBack: 13, asOf: date(2026, 3, 12, in: nyc), calendar: nyc)
+        let out = WeeklyBucketing.bucket(pts, weeksBack: 13, asOf: asOf, calendar: nyc)
         #expect(out.weeks.count == 2)                                   // different weeks
-        #expect(out.coverage.daysInWindow == expectedDays(weeksBack: 13, asOf: date(2026, 3, 12, in: nyc), calendar: nyc))
+        #expect(out.weeks.map(\.weekStart) == [
+            nyc.dateInterval(of: .weekOfYear, for: date(2026, 3, 6, in: nyc))!.start,
+            nyc.dateInterval(of: .weekOfYear, for: date(2026, 3, 9, in: nyc))!.start
+        ])
+        #expect(out.coverage.daysInWindow == expectedDays(weeksBack: 13, asOf: asOf, calendar: nyc))
     }
 }
