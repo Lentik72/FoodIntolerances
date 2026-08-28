@@ -21,9 +21,11 @@ struct MoreView: View {
                         Label("Can I Eat This?", systemImage: "questionmark.circle.fill")
                     }
 
+                    #if DEBUG
                     NavigationLink(destination: AIInsightsView()) {
                         Label("AI Insights & Patterns", systemImage: "brain.head.profile")
                     }
+                    #endif
 
                     NavigationLink(destination: UserProfileView()) {
                         Label("My Profile", systemImage: "person.crop.circle.fill")
@@ -45,9 +47,11 @@ struct MoreView: View {
                         Label("Notification Settings", systemImage: "bell.badge")
                     }
 
+                    #if DEBUG
                     NavigationLink(destination: AISettingsView()) {
                         Label("AI Settings", systemImage: "cpu")
                     }
+                    #endif
 
                     Button {
                         showAvoidList = true
@@ -117,7 +121,9 @@ struct MoreView: View {
             FoodQueryView()
         }
         .sheet(isPresented: $showAIDebugInspector) {
+            #if DEBUG
             AIDebugInspectorView()
+            #endif
         }
     }
 }

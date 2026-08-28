@@ -338,6 +338,7 @@ struct ReviewView: View {
 
                 // Generate AI response for the new log
                 if let log = logEntry {
+                    #if DEBUG
                     let assistant = PersonalAIAssistant()
                     let response = assistant.generateResponse(
                         for: log,
@@ -356,6 +357,10 @@ struct ReviewView: View {
                     } else {
                         viewModel.showSavedMessage = true
                     }
+                    #else
+                    _ = log
+                    viewModel.showSavedMessage = true
+                    #endif
                 } else {
                     viewModel.showSavedMessage = true
                 }

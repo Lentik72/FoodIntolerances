@@ -46,7 +46,12 @@ One responsibility per statistics file, so each can be mutated in isolation. `Tr
 
 ### Task 1: Sleep sessions must union overlapping segments
 
-A shipped bug, not a trajectory feature. `SleepSessionBuilder.session(from:)` does `totals[subtype] += duration` and sums the stage totals, while `IngestPipeline` deliberately keeps overlapping segments from equal-rank sources ("coverage is never truncated") on the assumption a consumer will union them. Nothing does, and every HealthKit row is equal-rank. Two sleep trackers produce roughly double the sleep, with no clamp anywhere — nothing prevents a 14-hour night. Functional-medicine and peptide patients are among the likeliest people to wear two, so this is the design partner's exact population.
+A shipped bug, not a trajectory feature. `SleepSessionBuilder.session(from:)` does `totals[subtype] += duration` and sums the stage totals, with no clamp anywhere.
+
+Two independent ingest paths feed it, and the fix must cover both:
+
+- **Same subtype, overlapping times.** `IngestPipeline` deliberately keeps both ("coverage is never truncated" — its overlap query is scoped by `subtype`), on the assumption a consumer will union them. Nothing does.
+- **Different subtypes.** A watch writing `asleepCore`/`asleepDeep`/`asleepREM` and a ring writing `asleepUnspecified` over the same hours never even reach that overlap check — the subtype-scoped query finds nothing to compare, so both insert unconditionally. This is the more common real-world shape, and it is what the Step 1 fixture below exercises. Two sleep trackers produce roughly double the sleep, with no clamp anywhere — nothing prevents a 14-hour night. Functional-medicine and peptide patients are among the likeliest people to wear two, so this is the design partner's exact population.
 
 **Files:** Modify `HealthGraphCore/Sources/HealthGraphCore/Timeline/SleepSessionBuilder.swift`; extend `HealthGraphCore/Tests/HealthGraphCoreTests/SleepSessionBuilderTests.swift`.
 
@@ -97,6 +102,10 @@ Collect `(start, end)` for every asleep-stage segment, sort by start, merge over
 
 `asleepMinutes` feeds `ShortSleepExposureSource` in the evidence engine and the Timeline sleep row. Run the full package suite and report any existing test whose expectations move. **Do not edit an existing test to accommodate this change** — a shifted sleep total can change a mined relationship, and that is the controller's call, not the implementer's.
 
+Audited: no existing fixture in `SleepSessionBuilderTests`, `TimelineDayBuilderTests`, `ExposureSourceTests` or `TimelineViewModelTests` contains two overlapping *asleep-stage* segments — the one named `overlappingSegmentsChainByFurthestEnd` overlaps `inBed` with `asleepCore`, and `inBed` is excluded from `asleepMinutes` by definition. So the expectation is that nothing existing moves. If something does, that is a finding.
+
+**The user-visible consequence is a product question this plan does not answer.** A two-tracker user's nights were being doubled, so short-sleep nights looked long and `ShortSleepExposureSource` never flagged them. After the fix they flag — and `InsightsRefreshCoordinator` recomputes silently on the next app open, so new sleep-linked relationships can appear, and existing ones shift, with no in-app signal. The affected population is precisely the one named above. Whether that warrants any user-facing note is the controller's call; **record the decision rather than letting it happen by default.**
+
 - [ ] **Step 4: Mutants**
 
 1. Sum durations without unioning → `twoTrackersRecordingTheSameNightDoNotDoubleIt` fails.
@@ -114,7 +123,11 @@ git commit -m "fix(sleep): union overlapping segments before totalling asleep ti
 
 `HKSource`, `HKSourceRevision`, `HKDevice` and `bundleIdentifier` appear nowhere in the codebase; `mapSample` keeps only value, timestamp, unit and timezone, and every HealthKit row collapses to `EventSource.healthKit`. A new watch that shifts the HRV baseline, or a second scale reading 1.5 kg differently, is therefore **undetectable** — permanently, for data already ingested.
 
-This round only **stores** it. Using it is a later round. Capturing it now is what makes the problem solvable later rather than never.
+This round only **stores** it. Using it is a later round.
+
+**Be precise about what that buys, because the plan's first draft overstated it.** `HealthKitIngestor` reads through `HKAnchoredObjectQuery` with the anchor persisted per sample type in `UserDefaults`. An anchored query only redelivers samples added or changed *since* the anchor — so for any user who has already synced, historical samples are **never** redelivered and will carry no source identifier **permanently**, not merely "not yet". This captures source for new samples only.
+
+That is still worth doing — it is the difference between a device-change detector being possible in six months and being impossible forever — but a later round consuming this data must expect nil across all pre-existing history. **Raise as a decision for the controller:** a one-time anchor reset for the per-sample types (weight, HRV, resting HR, respiratory rate) would re-ingest history *with* source, and `IngestPipeline` dedups by key so re-ingest updates in place rather than duplicating. It costs a long re-read. Do not do it as part of this task; report the trade-off.
 
 **Files:** Modify `Models/HealthKitIngestor.swift` and `HealthGraphCore/Sources/HealthGraphCore/Ingestion/HealthKitSampleMapper.swift`; test `HealthGraphCoreTests/HealthKitSampleMapperTests.swift`.
 
@@ -125,6 +138,8 @@ This round only **stores** it. Using it is a later round. Capturing it now is wh
 - [ ] **Step 2: Write the failing test, implement, run**
 
 Thread `HKSource.bundleIdentifier` (and `HKDevice.name` when present) through the sample-data structs the mapper already accepts, so the mapper stays testable without HealthKit present.
+
+**Keep it a flat `[String: String]`.** Every metadata consumer in the codebase decodes `[String: String]` and reads its own key, so an added string key is invisible to all of them. Nesting a sub-object instead would make that row's metadata fail to decode for *every* existing consumer — all-or-nothing per row.
 
 ```swift
     @Test func theRecordingSourceIsPreserved() {

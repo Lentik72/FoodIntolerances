@@ -1,3 +1,17 @@
+#if DEBUG
+// Excluded from Release builds on purpose.
+//
+// This code sends health content (symptoms, known triggers) to a third-party
+// LLM. It is unreachable in Release today — the legacy shell that leads here is
+// itself #if DEBUG — but unreachable is not the same as absent, and reachability
+// is one NavigationLink away. Compiling it out makes "that code isn't in the
+// build" a fact rather than an argument, and makes the compiler the guard: any
+// Release-compiled reference now fails to build.
+//
+// A consumer LLM endpoint will not sign a BAA, so this path can never carry
+// practice data. On-device inference (Apple Foundation Models, iOS 26) is the
+// supported route — see docs/product-direction.md.
+
 import Foundation
 import Security
 
@@ -544,3 +558,5 @@ struct UserDefault<T> {
         set { UserDefaults.standard.set(newValue, forKey: key) }
     }
 }
+
+#endif

@@ -1502,6 +1502,7 @@ struct AIInsightsSummaryCard: View {
                 }
 
                 // View All link
+                #if DEBUG
                 if totalInsightCount >= 3 {
                     HStack {
                         Spacer()
@@ -1513,6 +1514,7 @@ struct AIInsightsSummaryCard: View {
                     }
                     .padding(.top, 4)
                 }
+                #endif
             }
 
             // One-time "What I Do" hint (dismissible)
