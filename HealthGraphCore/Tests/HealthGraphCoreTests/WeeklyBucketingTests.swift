@@ -28,15 +28,6 @@ struct WeeklyBucketingTests {
         DailyPoint(day: date(year, month, day, in: calendar), value: value)
     }
 
-    /// The window's day count, computed independently of `WeeklyBucketing` via
-    /// calendar day-counting (never seconds) — so this can't share a bug with
-    /// the implementation it is checking.
-    private func expectedDays(weeksBack: Int, asOf: Date, calendar: Calendar) -> Int {
-        let currentWeekStart = calendar.dateInterval(of: .weekOfYear, for: asOf)!.start
-        let windowStart = calendar.date(byAdding: .weekOfYear, value: -(weeksBack - 1), to: currentWeekStart)!
-        return calendar.dateComponents([.day], from: windowStart, to: asOf).day! + 1
-    }
-
     @Test func aReadingLandsInTheSameWeekWhicheverDayTheAnalysisRuns() {
         // Calendar anchoring, the actual stability property. Analyse the same
         // corpus on Tuesday and again on Wednesday: every reading keeps its week.
@@ -113,15 +104,19 @@ struct WeeklyBucketingTests {
         // never touch windowStart at all, so they can't distinguish this
         // mutant either way — kept below as a correctness check, not the
         // discriminator).
-        // expectedDays is computed independently via calendar day-counting.
         let asOf = nyc.date(from: DateComponents(year: 2026, month: 3, day: 20, hour: 23, minute: 30))!
         let pts = [p(2026, 3, 6, 70, in: nyc), p(2026, 3, 9, 71, in: nyc)]
         let out = WeeklyBucketing.bucket(pts, weeksBack: 13, asOf: asOf, calendar: nyc)
         #expect(out.weeks.count == 2)                                   // different weeks
-        #expect(out.weeks.map(\.weekStart) == [
-            nyc.dateInterval(of: .weekOfYear, for: date(2026, 3, 6, in: nyc))!.start,
-            nyc.dateInterval(of: .weekOfYear, for: date(2026, 3, 9, in: nyc))!.start
-        ])
-        #expect(out.coverage.daysInWindow == expectedDays(weeksBack: 13, asOf: asOf, calendar: nyc))
+        // 2026-03-01 and 2026-03-08 are Sundays, and nyc's firstWeekday is
+        // Sunday (Gregorian default) — so these DateComponents-built
+        // midnights ARE the calendar week starts, via a different code path
+        // (`date(_:_:_:in:)`) than the source's `dateInterval(of: .weekOfYear)`.
+        #expect(out.weeks.map(\.weekStart) == [date(2026, 3, 1, in: nyc), date(2026, 3, 8, in: nyc)])
+        // Hand derivation, independent of both the source and any calendar
+        // API: windowStart Sun 2025-12-21 through asOf 2026-03-20 inclusive
+        // = 11 days of Dec (21...31) + 31 (Jan) + 28 (Feb, 2026 not leap) +
+        // 20 (Mar 1...20) = 90.
+        #expect(out.coverage.daysInWindow == 90)
     }
 }
