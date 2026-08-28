@@ -46,6 +46,8 @@ Both flaws are fixed below. The rest of the first spec's method — weekly media
 gaps-not-interpolated, absent-not-caveated, one shared multiplicity policy — survived the audit and
 is unchanged.
 
+**Product direction and the constraints this round inherits:** `docs/product-direction.md`.
+
 ## Why this round still goes first
 
 Not "because it needs no assumptions" — that was wrong. The honest reasons:

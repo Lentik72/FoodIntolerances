@@ -59,6 +59,8 @@ The daily rating is not a feature that happens to help the statistics. **The rat
 observability record.** A day with a rating is observed; a day without one is unknown. There is no
 heuristic, no threshold, no argument about what silence means.
 
+**Product direction and the constraints this round inherits:** `docs/product-direction.md`.
+
 ## Product principles
 
 **On-device is the default and stays the default.** No account, no backend, no sync in this round
