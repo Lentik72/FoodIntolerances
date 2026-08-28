@@ -74,8 +74,7 @@ public enum WeeklyBucketing {
         asOf: Date,
         calendar: Calendar
     ) -> (weeks: [WeeklyPoint], coverage: SeriesCoverage) {
-        let currentWeekStart = calendar.dateInterval(of: .weekOfYear, for: asOf)!.start
-        let windowStart = calendar.date(byAdding: .weekOfYear, value: -(weeksBack - 1), to: currentWeekStart)!
+        let windowStart = windowStart(weeksBack: weeksBack, asOf: asOf, calendar: calendar)
 
         // Per-day median first: readings on one day collapse to that day's
         // median before a week ever sees them, so three weigh-ins on Monday
@@ -107,6 +106,17 @@ public enum WeeklyBucketing {
             weeksInWindow: weeksBack
         )
         return (weeks, coverage)
+    }
+
+    /// The first calendar day of the window: `weeksBack` calendar weeks back
+    /// from the start of the week containing `asOf`, inclusive of that week.
+    /// Extracted out of `bucket` so this walk-back formula is composed in
+    /// exactly one place — `TrajectoryService` (Task 5) needs the same
+    /// window start to size its fetch interval and must call this rather
+    /// than re-deriving it. `internal`: both callers live in this module.
+    internal static func windowStart(weeksBack: Int, asOf: Date, calendar: Calendar) -> Date {
+        let currentWeekStart = calendar.dateInterval(of: .weekOfYear, for: asOf)!.start
+        return calendar.date(byAdding: .weekOfYear, value: -(weeksBack - 1), to: currentWeekStart)!
     }
 
     /// Middle value of a sorted copy of `xs`; even counts average the middle
