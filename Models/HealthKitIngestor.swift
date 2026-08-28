@@ -300,6 +300,11 @@ final class HealthKitIngestor: ObservableObject {
 
     static func mapSample(_ sample: HKSample) -> HealthEvent? {
         let timezoneID = sample.metadata?[HKMetadataKeyTimeZone] as? String
+        // The writing app's bundle ID and (when Health has one) the physical
+        // device name. Stored, not yet consumed — see HealthKitSampleMapper's
+        // Source Provenance section.
+        let sourceBundleID = sample.sourceRevision.source.bundleIdentifier
+        let deviceName = sample.device?.name
         if let workout = sample as? HKWorkout {
             var name = workout.workoutActivityType.hgActivityName
             name = name.prefix(1).lowercased() + name.dropFirst()
@@ -312,7 +317,8 @@ final class HealthKitIngestor: ObservableObject {
                 .doubleValue(for: .meterUnit(with: .kilo))
             return HealthKitSampleMapper.map(
                 WorkoutData(activityName: canonicalName, start: workout.startDate, end: workout.endDate,
-                            kcal: kcal, distanceKm: distance, timezoneID: timezoneID),
+                            kcal: kcal, distanceKm: distance, timezoneID: timezoneID,
+                            sourceBundleID: sourceBundleID, deviceName: deviceName),
                 source: .healthKit)
         }
         if let quantity = sample as? HKQuantitySample {
@@ -320,7 +326,8 @@ final class HealthKitIngestor: ObservableObject {
             return HealthKitSampleMapper.map(
                 QuantitySampleData(identifier: id, start: quantity.startDate, end: quantity.endDate,
                                    value: quantity.quantity.doubleValue(for: hkUnit(for: id)),
-                                   unit: unitString(for: id), timezoneID: timezoneID),
+                                   unit: unitString(for: id), timezoneID: timezoneID,
+                                   sourceBundleID: sourceBundleID, deviceName: deviceName),
                 source: .healthKit)
         }
         if let category = sample as? HKCategorySample {
@@ -331,7 +338,8 @@ final class HealthKitIngestor: ObservableObject {
                 CategorySampleData(identifier: category.categoryType.identifier,
                                    start: category.startDate, end: category.endDate,
                                    value: category.value, timezoneID: timezoneID,
-                                   menstrualCycleStart: cycleStart),
+                                   menstrualCycleStart: cycleStart,
+                                   sourceBundleID: sourceBundleID, deviceName: deviceName),
                 source: .healthKit)
         }
         return nil
