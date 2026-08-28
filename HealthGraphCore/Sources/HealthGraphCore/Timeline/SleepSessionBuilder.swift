@@ -9,13 +9,17 @@ public struct SleepSession: Equatable, Sendable, Identifiable {
     public let start: Date               // earliest segment start (bed time)
     public let end: Date                 // latest segment end (wake time)
     public let kind: Kind
-    /// Per-stage totals for display. Each is the naive sum of that stage's
-    /// segments and is NOT deduplicated: two sources both recording e.g.
-    /// `asleepCore` over the same hour double-count it here. Approximate
-    /// when sources overlap — do not derive `asleepMinutes` from these.
+    /// Per-stage total for display: the naive sum of this stage's segments,
+    /// NOT deduplicated. Two sources both recording e.g. `asleepCore` over
+    /// the same hour double-count it here. Approximate when sources overlap
+    /// — do not derive `asleepMinutes` from these; see
+    /// `stageTotalsExceedAsleepTime`.
     public let coreMinutes: Double
+    /// Naive per-source sum, not deduplicated — see `coreMinutes`.
     public let deepMinutes: Double
+    /// Naive per-source sum, not deduplicated — see `coreMinutes`.
     public let remMinutes: Double
+    /// Naive per-source sum, not deduplicated — see `coreMinutes`.
     public let unspecifiedMinutes: Double
     public let awakeMinutes: Double
     public let inBedMinutes: Double
@@ -26,6 +30,14 @@ public struct SleepSession: Equatable, Sendable, Identifiable {
     /// tracker covering the same hours never adds to the total. `inBed`
     /// overlaps the stages and is never included.
     public let asleepMinutes: Double
+
+    /// True when the per-stage totals above sum to materially more than
+    /// `asleepMinutes` — i.e. two sources' stage totals overlap. A
+    /// one-minute tolerance absorbs rounding. Drives the Timeline row's
+    /// overlap disclosure; never used to correct the totals themselves.
+    public var stageTotalsExceedAsleepTime: Bool {
+        (coreMinutes + deepMinutes + remMinutes + unspecifiedMinutes) - asleepMinutes > 1
+    }
 
     /// Deterministic across rebuilds of the same slice — drives SwiftUI row
     /// identity and the Timeline's expansion state.

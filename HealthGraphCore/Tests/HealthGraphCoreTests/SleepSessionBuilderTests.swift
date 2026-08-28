@@ -224,4 +224,16 @@ struct SleepSessionBuilderTests {
         let watch = [seg("asleepCore", 0, 4), seg("asleepDeep", 4, 6), seg("asleepREM", 6, 8)]
         #expect(abs(SleepSessionBuilder.sessions(from: watch, timeZone: utcZone)[0].asleepMinutes - 480) < 1)
     }
+
+    @Test func stageTotalsExceedAsleepTimeFlagsOnlyGenuineOverlap() {
+        // Co-asserted: true for the two-tracker overlap, false for the
+        // ordinary single-device night — neither assertion may pass vacuously.
+        let watch = [seg("asleepCore", 0, 4), seg("asleepDeep", 4, 6), seg("asleepREM", 6, 8)]
+        let ring  = [seg("asleepUnspecified", 0, 8)]
+        let overlapping = SleepSessionBuilder.sessions(from: watch + ring, timeZone: utcZone)[0]
+        #expect(overlapping.stageTotalsExceedAsleepTime)
+
+        let singleDevice = SleepSessionBuilder.sessions(from: watch, timeZone: utcZone)[0]
+        #expect(!singleDevice.stageTotalsExceedAsleepTime)
+    }
 }
