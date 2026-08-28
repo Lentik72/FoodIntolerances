@@ -1,5 +1,6 @@
 import Foundation
 import HealthKit
+import SwiftData
 import HealthGraphCore
 
 struct BackfillProgress {
@@ -16,10 +17,20 @@ final class HealthKitIngestor: ObservableObject {
     @Published var isRunning = false
     @Published var progress: BackfillProgress?
     @Published var lastBackfillFailures: [String] = []
+    /// From the HealthKit biological-sex characteristic, populated on a
+    /// granted authorization. Not persisted anywhere (no schema change this
+    /// round, and nothing consumes it yet) — capturing it now is what makes
+    /// a later consumer possible without a second HealthKit round-trip.
+    @Published private(set) var biologicalSex: BiologicalSex?
 
     private let healthStore = HKHealthStore()
     private let database: AppDatabase
     private let pipeline: IngestPipeline
+
+    /// Set once at launch (FoodIntolerancesApp) so a granted authorization
+    /// can populate `UserProfile.dateOfBirth`. Optional and fail-open: nil
+    /// simply skips the profile write, never blocks authorization or ingest.
+    var modelContainer: ModelContainer?
 
     static let backfillCompletedKey = "hg.hk.backfillCompleted"
 
@@ -50,8 +61,20 @@ final class HealthKitIngestor: ObservableObject {
         }
     }
 
+    /// Read-only characteristics (date of birth, biological sex): the
+    /// profile's "read from HealthKit where permitted" source (spec §
+    /// "The profile"). `characteristicType(forIdentifier:)` never returns
+    /// nil for these two well-known identifiers; `compactMap` only guards
+    /// the API's optional signature.
+    static var characteristicTypes: [HKCharacteristicType] {
+        [HKObjectType.characteristicType(forIdentifier: .dateOfBirth),
+         HKObjectType.characteristicType(forIdentifier: .biologicalSex)].compactMap { $0 }
+    }
+
     static var readTypes: Set<HKObjectType> {
-        Set(perSampleTypes as [HKObjectType]).union(Set(dailyStatTypes as [HKObjectType]))
+        Set(perSampleTypes as [HKObjectType])
+            .union(Set(dailyStatTypes as [HKObjectType]))
+            .union(Set(characteristicTypes as [HKObjectType]))
     }
 
     // MARK: - Authorization
@@ -59,6 +82,44 @@ final class HealthKitIngestor: ObservableObject {
     func requestAuthorization() async throws {
         guard HKHealthStore.isHealthDataAvailable() else { return }
         try await healthStore.requestAuthorization(toShare: [], read: Self.readTypes)
+        // A successful return does NOT imply every type was actually
+        // granted (Apple reports denied reads as "not determined", never a
+        // throw) — the characteristic reads below simply throw/no-op for
+        // whichever of the two was denied, same fail-open shape as the rest
+        // of this class.
+        populateProfileFromHealthKitCharacteristics()
+    }
+
+    /// Reads the DOB and biological-sex characteristics (each independently
+    /// optional — either may be denied or unset) and writes what HealthKit
+    /// answers into the profile. Never overwrites an existing
+    /// `dateOfBirth` — a value already on the profile (HK-sourced or
+    /// user-entered via `UserProfileView`'s "ask") wins over a later HK
+    /// read. Biological sex has no profile column (no schema change this
+    /// round) so it is only cached on `self`.
+    private func populateProfileFromHealthKitCharacteristics() {
+        if let sexObject = try? healthStore.biologicalSex() {
+            biologicalSex = BiologicalSex(sexObject.biologicalSex)
+        }
+
+        guard let modelContainer,
+              let components = try? healthStore.dateOfBirthComponents(),
+              let dob = Calendar(identifier: .gregorian).date(from: components) else { return }
+
+        let context = modelContainer.mainContext
+        do {
+            let profile = try context.fetch(FetchDescriptor<UserProfile>()).first ?? {
+                let created = UserProfile()
+                context.insert(created)
+                return created
+            }()
+            guard profile.dateOfBirth == nil else { return }
+            profile.dateOfBirth = dob
+            profile.lastUpdated = Date()
+            try context.save()
+        } catch {
+            Logger.error(error, message: "Failed to populate profile from HealthKit characteristics", category: .data)
+        }
     }
 
     // MARK: - Backfill
@@ -343,6 +404,21 @@ final class HealthKitIngestor: ObservableObject {
                 source: .healthKit)
         }
         return nil
+    }
+}
+
+extension BiologicalSex {
+    /// `.notSet` (never permitted, or the user declined in Health) maps to
+    /// `nil` — there is no `BiologicalSex.notSet` case, deliberately: an
+    /// unanswered characteristic is absence, not a fourth category.
+    init?(_ hk: HKBiologicalSex) {
+        switch hk {
+        case .female: self = .female
+        case .male: self = .male
+        case .other: self = .other
+        case .notSet: return nil
+        @unknown default: return nil
+        }
     }
 }
 

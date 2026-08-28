@@ -11,7 +11,10 @@ class HealthMonitoringService {
         for profile: UserProfile,
         context: ModelContext
     ) -> [HealthScreeningSchedule] {
-        let age = profile.age
+        // DOB-derived with a stored-age fallback: reading `.age` directly
+        // here would silently stop screening for anyone who has entered a
+        // date of birth without also carrying a stored age.
+        let age = profile.currentAge()
         let gender = profile.gender
         let conditions = profile.healthConditions
 
@@ -241,8 +244,10 @@ class HealthMonitoringService {
             ))
         }
 
-        // Age-based recommendations
-        if let age = profile.age {
+        // Age-based recommendations. DOB-derived with a stored-age fallback
+        // — see `UserProfile.currentAge` — so a DOB the user has entered
+        // doesn't silently disable these once a stored `age` goes stale.
+        if let age = profile.currentAge() {
             if age >= 40 && !testResults.contains(where: { $0.testName.contains("Cholesterol") }) {
                 recommendations.append(HealthRecommendation(
                     title: "Get Cholesterol Checked",

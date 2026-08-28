@@ -1,5 +1,6 @@
 import Foundation
 import SwiftData
+import HealthGraphCore
 
 /// User's personal profile for AI personalization
 @Model
@@ -182,6 +183,28 @@ class UserProfile: Identifiable {
         self.dietType = dietType
         self.targetSleepHours = targetSleepHours
         self.memoryLevel = memoryLevel
+    }
+}
+
+// MARK: - Derived age (DOB with a stored-age fallback)
+
+extension UserProfile {
+    /// Maps this SwiftData model onto the package's `PersonProfile` value
+    /// type. Biological sex has no column here (no schema change this
+    /// round — see `HealthKitIngestor.biologicalSex`), so it is always nil.
+    var asPersonProfile: PersonProfile {
+        PersonProfile(dateOfBirth: dateOfBirth, storedAge: age, biologicalSex: nil, heightCm: heightCm)
+    }
+
+    /// `dateOfBirth`-derived age, falling back to the stored `age` column
+    /// when `dateOfBirth` is absent — which, today, is every existing user
+    /// (nothing writes `dateOfBirth` before this round). Callers that need
+    /// "how old is this person right now" — `HealthMonitoringService`'s
+    /// age-gated screening included — must read THIS, never `age` directly:
+    /// reading `age` directly ignores a `dateOfBirth` the user has since
+    /// entered.
+    func currentAge(asOf: Date = Date(), calendar: Calendar = .current) -> Int? {
+        asPersonProfile.currentAge(asOf: asOf, calendar: calendar)
     }
 }
 

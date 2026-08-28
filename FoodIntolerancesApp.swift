@@ -198,6 +198,12 @@ struct FoodIntolerancesApp: App {
                 if enableDiagnostics {
                     Logger.debug("Diagnostics mode enabled", category: .app)
                 }
+                // Wired here (not at HealthKitIngestor construction, which
+                // predates the container) so a granted HealthKit
+                // authorization — first-run Connect included — can populate
+                // UserProfile.dateOfBirth. Optional on the ingestor and set
+                // before any authorization request reaches the user.
+                healthKitIngestor.modelContainer = sharedModelContainer
             }
         }
     }
