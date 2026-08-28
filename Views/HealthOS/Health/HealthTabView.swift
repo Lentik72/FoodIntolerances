@@ -114,6 +114,27 @@ struct HealthTabView: View {
 
                 VStack(spacing: 0) {
                     NavigationLink {
+                        TrajectoriesView()
+                    } label: {
+                        HStack {
+                            Image(systemName: "chart.xyaxis.line")
+                                .foregroundStyle(HealthTheme.accent)
+                            Text("Trends")
+                                .foregroundStyle(HealthTheme.ink)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.footnote)
+                                .foregroundStyle(HealthTheme.inkMuted)
+                        }
+                        .padding(16)
+                        .contentShape(Rectangle())
+                    }
+                    .accessibilityHint("Weekly medians for weight, sleep, steps, and vitals over time")
+                }
+                .hgCard()
+
+                VStack(spacing: 0) {
+                    NavigationLink {
                         DataSourcesView(ingestor: ingestor, importStatus: importStatus)
                     } label: {
                         HStack {

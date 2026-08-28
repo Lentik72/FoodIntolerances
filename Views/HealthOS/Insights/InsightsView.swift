@@ -29,6 +29,9 @@ struct InsightsView: View {
                 }
                 .overlay(alignment: .bottom) { undoToast }
                 .animation(.easeOut(duration: 0.2), value: vm.pendingUndo)
+                NonDiagnosticFooter()
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
             }
         }
         .task {
