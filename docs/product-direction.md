@@ -108,7 +108,45 @@ and a working migration story are already in place — that is most of what a sy
 Adding an owner column later is a routine migration in this repo. Accounts built now would be
 scaffolding to throw away.
 
+## AI: language, not evidence
+
+**The division of labour is the whole decision: a model handles language, the engine handles
+evidence.** Nothing a model says may become a claim about what helps someone.
+
+The engine already does the harder and more defensible thing — within-person inference with
+confounders, stability checks, multiplicity correction, an observational ceiling, and
+measurement-density guards. A language model would do that worse and far more confidently, and
+confidence without justification is exactly what a clinician discards.
+
+**Where a model earns its place:**
+
+- **Extraction.** Turning a protocol into structured data — a photo of a handout, a PDF from the
+  practice, a page from the internet — into substance, dose, timing, frequency, duration. Language
+  work, which is what these models are good at, and the risk is contained because **the user
+  confirms before it saves**. A misread dose is a safety problem; a confirmation step makes it a
+  typo. Same for reading a supplement label.
+- **Questions about your own data.** "What changed since I started magnesium?" The model finds and
+  phrases; the engine supplies the numbers and the caveats.
+
+**On-device, so this costs nothing in compliance.** The deployment target is iOS 26 and Apple's
+Foundation Models framework is not yet used anywhere in the app. A local model means no network
+call, no API key, no third-party provider and **no BAA** — it fits the on-device default rather than
+fighting it. This is why retiring `CloudAIService` from Release and adding on-device AI are not in
+tension: one sends health data to a third party, the other does not leave the phone.
+
+**The knowledge catalogs are data, not weights.** Medication risks, interactions, vitamin A
+accumulation, daily ibuprofen and kidney effects — these need citations a clinician can check. A
+model may help *extract* them from labels and literature, but what ships must be reviewable records
+with sources. Baked into parameters, a single claim cannot be audited or corrected without
+retraining.
+
 ## Considered and rejected
+
+**Training a model on pooled user outcomes.** Won't have the scale — a few hundred patients is far
+short, and the signal that matters here is within-person regardless. It destroys interpretability,
+and for clinical use "why" is not optional: a practice can act on "your flares track your short-sleep
+weeks, 14 of 19 times", not on a model's opinion. And it inherits the survivorship problem below,
+with training-consent questions on top.
 
 **A shared cross-user protocol database ranking "what works".** Pooled efficacy from uncontrolled,
 self-selected, unblinded data, with survivorship bias as its dominant signal — forty people try a
