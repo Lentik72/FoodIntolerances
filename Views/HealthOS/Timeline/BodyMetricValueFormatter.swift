@@ -21,12 +21,17 @@ enum WeightUnit {
 enum BodyMetricValueFormatter {
     private static let poundsPerKilogram = 2.20462
 
+    /// Formats a raw kilogram value in the user's preferred unit, to one decimal place.
+    static func line(kg: Double, unit: WeightUnit) -> String {
+        let shown = unit == .pounds ? kg * poundsPerKilogram : kg
+        return String(format: "%.1f %@", shown, unit.abbreviation)
+    }
+
     static func line(for event: HealthEvent, unit: WeightUnit) -> String? {
         guard event.category == .bodyMetric,
               event.subtype == "weight",
               event.unit == "kg",
               let kg = event.value else { return nil }
-        let shown = unit == .pounds ? kg * poundsPerKilogram : kg
-        return String(format: "%.1f %@", shown, unit.abbreviation)
+        return line(kg: kg, unit: unit)
     }
 }
