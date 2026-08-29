@@ -34,6 +34,12 @@ final class HealthKitIngestor: ObservableObject {
 
     static let backfillCompletedKey = "hg.hk.backfillCompleted"
 
+    /// Tombstone for `UserProfileView`'s "Remove Date of Birth": once set, a
+    /// later authorization pass must never silently repopulate the DOB it
+    /// just removed. Written by hand at the two UI sites that change intent
+    /// (remove / manually pick a new one) — see `shouldPopulateDateOfBirth`.
+    static let dobRemovedKey = "hg.profile.dobRemoved"
+
     init(database: AppDatabase = HealthGraphProvider.shared) {
         self.database = database
         self.pipeline = IngestPipeline(database: database)
@@ -95,8 +101,9 @@ final class HealthKitIngestor: ObservableObject {
     /// answers into the profile. Never overwrites an existing
     /// `dateOfBirth` — a value already on the profile (HK-sourced or
     /// user-entered via `UserProfileView`'s "ask") wins over a later HK
-    /// read. Biological sex has no profile column (no schema change this
-    /// round) so it is only cached on `self`.
+    /// read, and a user-removed DOB (the tombstone) stays removed. Biological
+    /// sex has no profile column (no schema change this round) so it is only
+    /// cached on `self`.
     private func populateProfileFromHealthKitCharacteristics() {
         if let sexObject = try? healthStore.biologicalSex() {
             biologicalSex = BiologicalSex(sexObject.biologicalSex)
@@ -109,17 +116,42 @@ final class HealthKitIngestor: ObservableObject {
         let context = modelContainer.mainContext
         do {
             let profile = try context.fetch(FetchDescriptor<UserProfile>()).first ?? {
-                let created = UserProfile()
+                let created = Self.newProfileSeededWithGlobalUnits()
                 context.insert(created)
                 return created
             }()
-            guard profile.dateOfBirth == nil else { return }
+            guard Self.shouldPopulateDateOfBirth(
+                storedDOB: profile.dateOfBirth,
+                tombstone: UserDefaults.standard.bool(forKey: Self.dobRemovedKey)) else { return }
             profile.dateOfBirth = dob
             profile.lastUpdated = Date()
             try context.save()
         } catch {
             Logger.error(error, message: "Failed to populate profile from HealthKit characteristics", category: .data)
         }
+    }
+
+    /// A freshly-created profile seeded exactly like every other profile
+    /// creator (`OnboardingContainerView`, `UserProfileView`) seeds it: the
+    /// resolved global measurement system, never the bare `UserProfile()`
+    /// default ("imperial" regardless of locale — see
+    /// `UnitSystem.newProfileUnitPreference`). `defaults`/`locale` are
+    /// injectable so the seeding is testable without standing up HealthKit.
+    nonisolated static func newProfileSeededWithGlobalUnits(defaults: UserDefaults = .standard,
+                                                             locale: Locale = .current) -> UserProfile {
+        let profile = UserProfile()
+        profile.unitPreference = UnitSystem.newProfileUnitPreference(
+            global: defaults.string(forKey: UnitPreferenceBootstrap.globalKey) ?? "", locale: locale)
+        return profile
+    }
+
+    /// Pure guard for the DOB-population write: only when the profile has no
+    /// DOB yet AND the user never explicitly removed one (the
+    /// `dobRemovedKey` tombstone, written by hand at `UserProfileView`'s
+    /// "Remove Date of Birth" action and cleared when the user manually
+    /// picks a new DOB there).
+    nonisolated static func shouldPopulateDateOfBirth(storedDOB: Date?, tombstone: Bool) -> Bool {
+        storedDOB == nil && !tombstone
     }
 
     // MARK: - Backfill

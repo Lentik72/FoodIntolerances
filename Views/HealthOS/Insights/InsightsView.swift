@@ -15,23 +15,32 @@ struct InsightsView: View {
                 #if DEBUG
                 if vm.demoDataLoaded { demoDataBanner }
                 #endif
+                // Outer Group applies the paper background to BOTH the main
+                // content and the footer below (Group forwards a modifier to
+                // each of its children individually) — the footer needs the
+                // same background it used to sit outside of. The inner Group
+                // keeps navigationDestination/overlay/animation scoped to
+                // just the main content, unchanged from before.
                 Group {
-                    if vm.feed.sections.isEmpty {
-                        // Demoted-to-empty-state coverage strip (spec §5) — reused whole, not duplicated.
-                        InsightsPlaceholderView()
-                    } else {
-                        feed
+                    Group {
+                        if vm.feed.sections.isEmpty {
+                            // Demoted-to-empty-state coverage strip (spec §5) — reused whole, not duplicated.
+                            InsightsPlaceholderView()
+                        } else {
+                            feed
+                        }
                     }
+                    .navigationDestination(for: UUID.self) { relationshipID in
+                        InsightDetailView(relationshipID: relationshipID)
+                    }
+                    .overlay(alignment: .bottom) { undoToast }
+                    .animation(.easeOut(duration: 0.2), value: vm.pendingUndo)
+
+                    NonDiagnosticFooter()
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 8)
                 }
                 .background(HealthTheme.paper)
-                .navigationDestination(for: UUID.self) { relationshipID in
-                    InsightDetailView(relationshipID: relationshipID)
-                }
-                .overlay(alignment: .bottom) { undoToast }
-                .animation(.easeOut(duration: 0.2), value: vm.pendingUndo)
-                NonDiagnosticFooter()
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 8)
             }
         }
         .task {

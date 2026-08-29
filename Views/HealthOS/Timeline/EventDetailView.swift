@@ -195,13 +195,24 @@ struct EventDetailView: View {
         let labels = ["kcal": "Calories", "distanceKm": "Distance (km)",
                       "phase": "Moon phase", "season": "Season",
                       "menstrualCycleStart": "Cycle"]
-        // "provenance" is the engine's TemporalProvenance flag, not health information —
-        // presentation-only filter (the stored metadata keeps it; mining depends on it).
-        // ONLY this key: other unknown keys stay visible, they may carry imported data.
-        // "menstrualCycleStart" == "false" is also suppressed: it's the majority case on
-        // flow days (not-a-start) and would be noise — only an affirmative start is a row.
-        return dict.filter { $0.key != "provenance" && !($0.key == "menstrualCycleStart" && $0.value == "false") }
+        return dict.filter { Self.isPresentationVisible(key: $0.key, value: $0.value) }
             .sorted { $0.key < $1.key }
             .map { (key: $0.key, label: labels[$0.key] ?? $0.key, value: $0.value) }
+    }
+
+    /// Presentation-only filter over the stored metadata dict (mining still
+    /// reads every key — this only decides what the Details card shows).
+    /// "provenance" is the engine's `TemporalProvenance` flag, not health
+    /// information. "sourceBundleID"/"deviceName" are the same class of
+    /// thing — which app/device recorded this — not health information;
+    /// surfacing device info to the user is a later round's deliberate
+    /// decision, not a side effect of this filter. ONLY these three keys:
+    /// other unknown keys stay visible, they may carry imported data.
+    /// "menstrualCycleStart" == "false" is also suppressed: it's the
+    /// majority case on flow days (not-a-start) and would be noise — only
+    /// an affirmative start is a row.
+    static func isPresentationVisible(key: String, value: String) -> Bool {
+        !["provenance", "sourceBundleID", "deviceName"].contains(key)
+            && !(key == "menstrualCycleStart" && value == "false")
     }
 }

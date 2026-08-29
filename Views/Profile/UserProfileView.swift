@@ -65,13 +65,24 @@ struct UserProfileView: View {
                             displayedComponents: .date
                         )
                         .labelsHidden()
-                        .onChange(of: dateOfBirth) { _, _ in hasChanges = true }
+                        .onChange(of: dateOfBirth) { _, newValue in
+                            hasChanges = true
+                            // A manual pick is the user re-asserting a DOB — lift the
+                            // "Remove Date of Birth" tombstone so a later HealthKit
+                            // authorization pass isn't blocked by an old removal.
+                            if newValue != nil {
+                                UserDefaults.standard.set(false, forKey: HealthKitIngestor.dobRemovedKey)
+                            }
+                        }
                     }
 
                     if dateOfBirth != nil {
                         Button(role: .destructive) {
                             dateOfBirth = nil
                             hasChanges = true
+                            // Tombstone the removal so populateProfileFromHealthKitCharacteristics
+                            // never silently repopulates what was just removed.
+                            UserDefaults.standard.set(true, forKey: HealthKitIngestor.dobRemovedKey)
                         } label: {
                             Text("Remove Date of Birth")
                         }

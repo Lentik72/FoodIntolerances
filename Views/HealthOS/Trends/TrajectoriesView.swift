@@ -32,7 +32,9 @@ struct TrajectoriesView: View {
 
                 windowPicker
 
-                if state.snapshots.isEmpty {
+                if state.isLoading && state.snapshots.isEmpty {
+                    loadingState
+                } else if state.snapshots.isEmpty {
                     emptyState
                 } else {
                     ForEach(Array(state.snapshots.enumerated()), id: \.offset) { _, snapshot in
@@ -40,8 +42,6 @@ struct TrajectoriesView: View {
                             .hgCard()
                     }
                 }
-
-                NonDiagnosticFooter()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
@@ -50,6 +50,18 @@ struct TrajectoriesView: View {
         .background(HealthTheme.paper)
         .navigationTitle("Trends")
         .task { state.appeared() }
+        .safeAreaInset(edge: .bottom) {
+            NonDiagnosticFooter()
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(HealthTheme.paper)
+        }
+    }
+
+    private var loadingState: some View {
+        ProgressView()
+            .frame(maxWidth: .infinity)
+            .padding(16)
     }
 
     private var windowPicker: some View {

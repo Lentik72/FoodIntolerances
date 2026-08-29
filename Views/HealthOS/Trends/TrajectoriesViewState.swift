@@ -56,6 +56,11 @@ final class TrajectoriesViewState: ObservableObject {
     private func load(window: TrendWindow) async {
         defer { isLoading = false }
         let asOf = now()
-        snapshots = (try? await service.snapshots(window: window, asOf: asOf)) ?? []
+        do {
+            snapshots = try await service.snapshots(window: window, asOf: asOf)
+        } catch {
+            Logger.error(error, message: "Failed to load trajectory snapshots", category: .data)
+            snapshots = []
+        }
     }
 }

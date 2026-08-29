@@ -86,8 +86,11 @@ public enum TrajectorySeries: CaseIterable, Equatable, Sendable {
             // night that starts 23:00 Monday and ends 07:00 Tuesday is
             // Tuesday's sleep — attributing it to Monday shifts every night
             // in the chart by one day.
+            // A session with no measured asleep time (inBed-only segments,
+            // asleepMinutes == 0) must not chart as a 0-hour night — that is
+            // the exact crash-to-the-floor rendering the spec forbids.
             return SleepSessionBuilder.sessions(from: live, timeZone: calendar.timeZone)
-                .filter { $0.kind == .night }
+                .filter { $0.kind == .night && $0.asleepMinutes > 0 }
                 .map { DailyPoint(day: calendar.startOfDay(for: $0.end), value: $0.asleepMinutes / 60) }
         }
 
