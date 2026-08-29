@@ -89,7 +89,11 @@ struct TrajectoriesView: View {
 /// One series' card: name, the descriptive summary (coverage folded in),
 /// and the chart. Nothing else — no per-row action, no tap target, no
 /// verdict badge.
-private struct TrajectoryRowView: View {
+///
+/// `internal` (not `private`) so `TrajectoryChartRenderTests` can force a
+/// real `ImageRenderer` pass over the actual chart — the only thing that
+/// ever renders `chart` before a device does.
+struct TrajectoryRowView: View {
     let snapshot: TrajectorySnapshot
     let system: UnitSystem
     private let calendar = Calendar.current
@@ -122,6 +126,20 @@ private struct TrajectoryRowView: View {
         .padding(16)
     }
 
+    /// A run's series identity for `foregroundStyle(by:)`/
+    /// `chartForegroundStyleScale`. MUST be a categorical (`String`)
+    /// plottable, not `Int`: Swift Charts reads an `Int` `.value(_:)` as a
+    /// quantitative/continuous plottable, so a single-run series (no
+    /// gaps — the ordinary case for most logged series) produces a
+    /// ONE-element domain for what Charts treats as a linear scale, and
+    /// Charts' linear scale traps building a domain with fewer than two
+    /// values. Confirmed via
+    /// `TrajectoryChartRenderTests.singleContiguousRunRendersWithoutTrapping`:
+    /// `Charts/ConcreteScale+Continuous.swift:182: Precondition failed:
+    /// Linear scale domain must contain two values`. A `String` id reads as
+    /// categorical, whose scale has no such minimum.
+    private func runID(_ index: Int) -> String { "run-\(index)" }
+
     private var chart: some View {
         Chart {
             // One LineMark run per contiguous stretch of calendar weeks,
@@ -139,7 +157,7 @@ private struct TrajectoryRowView: View {
                         x: .value("Week", point.weekStart),
                         y: .value("Value", point.value)
                     )
-                    .foregroundStyle(by: .value("Run", runIndex))
+                    .foregroundStyle(by: .value("Run", runID(runIndex)))
                     .interpolationMethod(.linear)   // no smoothing, no fitted curve
                     .lineStyle(StrokeStyle(lineWidth: 2))
                 }
@@ -168,11 +186,33 @@ private struct TrajectoryRowView: View {
             }
         }
         .chartForegroundStyleScale(
-            domain: Array(0..<max(runs.count, 1)),
+            domain: (0..<max(runs.count, 1)).map(runID),
             range: Array(repeating: HealthTheme.accent, count: max(runs.count, 1))
         )
         .chartLegend(.hidden)
         .accessibilityLabel(Text("\(snapshot.series.displayName) chart"))
         .accessibilityValue(Text(TrajectoryPresentation.summary(for: snapshot, system: system)))
+        .applyingFlatSeriesYDomain(low: snapshot.rangeLow, high: snapshot.rangeHigh)
+    }
+}
+
+private extension View {
+    /// Charts' automatic linear y-scale traps when the domain it derives
+    /// from the plotted marks has equal bounds — e.g. a snapshot with
+    /// exactly one charted week, where `rangeLow == rangeHigh` by
+    /// construction (min and max of a single value are equal). Confirmed
+    /// via `TrajectoryChartRenderTests.flatSeriesRendersWithoutTrapping`:
+    /// `Charts/ConcreteScale+Continuous.swift:182: Precondition failed:
+    /// Linear scale domain must contain two values`. Only THIS degenerate
+    /// case gets an explicit, padded domain — every other snapshot keeps
+    /// Charts' own auto-derived y-domain untouched.
+    @ViewBuilder
+    func applyingFlatSeriesYDomain(low: Double, high: Double) -> some View {
+        if low < high {
+            self
+        } else {
+            let pad = max(abs(low) * 0.05, 0.5)
+            self.chartYScale(domain: (low - pad)...(high + pad))
+        }
     }
 }
