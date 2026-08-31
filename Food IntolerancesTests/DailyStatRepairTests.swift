@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import HealthKit
 @testable import Food_Intolerances
 
 /// Pins the one-shot repair's gate and its stamping contract: it must run
@@ -85,5 +86,36 @@ struct DailyStatRepairTests {
         await DailyStatRepair.runIfDue(defaults: defaults) { try reingest.run() }
         #expect(reingest.callCount == 2)
         #expect(defaults.integer(forKey: DailyStatRepair.versionKey) == 0)
+    }
+
+    // MARK: - "nothing to repair" classification
+
+    /// The one error the repair must NOT count as a failure. A type that was
+    /// never requested (added to the table after this install's backfill)
+    /// reads back `.errorAuthorizationNotDetermined`, which means "no rows of
+    /// this type were ever written", not "the read broke". Counting it as a
+    /// failure would leave the version unstamped and re-read a full year for
+    /// every type on every launch, forever. Every OTHER error still fails.
+    @Test func onlyAuthorizationNotDeterminedIsNothingToRepair() {
+        #expect(HealthKitIngestor.isNothingToRepair(HKError(.errorAuthorizationNotDetermined)))
+        // A different HK failure is a real failure — retry next launch.
+        #expect(!HealthKitIngestor.isNothingToRepair(HKError(.errorDatabaseInaccessible)))
+        // Including the adjacent authorization state: an explicit denial is
+        // not "we never asked".
+        #expect(!HealthKitIngestor.isNothingToRepair(HKError(.errorAuthorizationDenied)))
+        // And so is anything that isn't a HealthKit error at all.
+        #expect(!HealthKitIngestor.isNothingToRepair(Boom()))
+    }
+
+    /// The same classification when HealthKit hands back a plain bridged
+    /// `NSError` rather than a Swift `HKError` value.
+    @Test func nothingToRepairRecognizesTheBridgedNSError() {
+        let notDetermined = NSError(domain: HKErrorDomain,
+                                    code: HKError.Code.errorAuthorizationNotDetermined.rawValue)
+        #expect(HealthKitIngestor.isNothingToRepair(notDetermined))
+        // Same code in a foreign domain is a coincidence, not an authorization state.
+        #expect(!HealthKitIngestor.isNothingToRepair(
+            NSError(domain: "com.example.other",
+                    code: HKError.Code.errorAuthorizationNotDetermined.rawValue)))
     }
 }

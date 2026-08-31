@@ -13,8 +13,8 @@ struct BodyMetricValueFormatterTests {
 
     @Test func kilogramsRenderOneDecimal() {
         #expect(BodyMetricValueFormatter.line(for: weight(81.4), unit: .kilograms) == "81.4 kg")
-        // A whole-number kg keeps its trailing ".0" — guards against an Int-style "90 kg"
-        // regression (cf. UserProfile.weightDisplayString, which does render Int kg).
+        // A whole-number kg keeps its trailing ".0" — guards against an Int-style
+        // "90 kg" regression, which would silently drop precision the Timeline shows.
         #expect(BodyMetricValueFormatter.line(for: weight(90), unit: .kilograms) == "90.0 kg")
     }
     @Test func poundsConvertThenRenderOneDecimal() {

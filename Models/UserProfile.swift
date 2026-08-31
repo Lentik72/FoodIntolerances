@@ -48,16 +48,10 @@ class UserProfile: Identifiable {
         }
     }
 
-    /// Weight displayed in user's preferred format
-    var weightDisplayString: String? {
-        guard let kg = weightKg else { return nil }
-        if unitPreference == "imperial" {
-            let lbs = kg * 2.20462
-            return "\(Int(lbs)) lbs"
-        } else {
-            return "\(Int(kg)) kg"
-        }
-    }
+    // No `weightDisplayString` here by design: `BodyMetricValueFormatter` owns
+    // the one kg→lb conversion in the app (see its Global Constraint). A second
+    // one here would be a second rounding, a second unit spelling and a second
+    // source of truth.
 
     /// Clear body measurements (for privacy)
     func clearBodyMeasurements() {

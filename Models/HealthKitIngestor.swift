@@ -400,12 +400,33 @@ final class HealthKitIngestor: ObservableObject {
         for type in Self.dailyStatTypes {
             do {
                 total = total + (try await ingestDailyStats(for: type, from: start, to: Date()))
+            } catch let error where Self.isNothingToRepair(error) {
+                // Never requested → nothing of this type was ever written →
+                // nothing to repair. NOT a failure: counting it as one would
+                // keep the repair permanently unstamped (see below).
+                Logger.info("HK daily-stat repair skipped \(type.identifier): never authorized, so no rows exist",
+                            category: .data)
             } catch {
                 failed.append(type.identifier)
             }
         }
         guard failed.isEmpty else { throw DailyStatRepairError.typesFailed(failed) }
         return total
+    }
+
+    /// Whether a re-ingest error means "there is nothing here to repair"
+    /// rather than "the repair failed".
+    ///
+    /// HealthKit hides a *denied* read as an empty result, so the only
+    /// authorization state that surfaces as an error is a type this install
+    /// never asked for — which happens the first time `DailyStatRepair`'s
+    /// version is bumped after a new type joins the daily table, on every
+    /// install that hasn't re-imported since. No rows of that type exist, so
+    /// there is nothing for the repair to rewrite. Treating it as a failure
+    /// would leave the version unstamped forever and re-read a full year for
+    /// all types on every launch. Every other error is a real failure.
+    nonisolated static func isNothingToRepair(_ error: Error) -> Bool {
+        (error as? HKError)?.code == .errorAuthorizationNotDetermined
     }
 
     // MARK: - HK → DTO conversion

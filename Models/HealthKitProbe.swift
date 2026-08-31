@@ -74,7 +74,11 @@ enum HealthKitProbe {
 
     private static func statistics(type: HKQuantityType, identifier: String, unit: HKUnit,
                                    from start: Date, to end: Date, samplePredicate: Bool) async -> [String] {
-        // Mirrors HealthKitIngestor.ingestDailyStats line for line.
+        // Deliberately reproduces the PRE-fix window: the predicate starts at
+        // `start` while the buckets are anchored at `dayStart`. That mismatch
+        // is the diagnostic — the contrast with the fixed ingestor (which
+        // anchors both at the day boundary) is what this probe exists to show.
+        // Do NOT "fix" it here to match the ingestor.
         let aggregation = HealthKitSampleMapper.dailyStatOptions(for: identifier)
         let options: HKStatisticsOptions = aggregation == .sum ? .cumulativeSum : .discreteAverage
         let dayStart = Calendar.current.startOfDay(for: start)
