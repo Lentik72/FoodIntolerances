@@ -193,6 +193,12 @@ final class HealthKitIngestor: ObservableObject {
             done += 1
         }
         UserDefaults.standard.set(true, forKey: Self.backfillCompletedKey)
+        // A backfill run by this (fixed) code already wrote whole days, so
+        // there is nothing for the one-shot repair to correct: stamp it done
+        // rather than make a fresh install re-read a year for nothing. An
+        // install whose backfill ran on the old code has no stamp, so the
+        // repair runs once on its next launch.
+        UserDefaults.standard.set(DailyStatRepair.currentVersion, forKey: DailyStatRepair.versionKey)
         return total
     }
 
@@ -242,19 +248,42 @@ final class HealthKitIngestor: ObservableObject {
 
     // MARK: - Daily statistics
 
+    /// The whole-calendar-day range a daily-statistics query covers. `start`
+    /// is floored to local midnight so the HealthKit sample predicate and the
+    /// bucket enumeration begin at the SAME instant — a time-of-day reaching
+    /// the predicate is exactly the defect this pins (the day-2 bucket summed
+    /// only the samples after that time of day and overwrote the full-day row).
+    nonisolated static func dailyStatRange(from start: Date, to end: Date,
+                                           calendar: Calendar = .current) -> DateInterval {
+        let dayStart = calendar.startOfDay(for: start)
+        // `max` only so a caller that inverts the arguments gets an empty
+        // range instead of a `DateInterval` precondition trap.
+        return DateInterval(start: dayStart, end: max(dayStart, end))
+    }
+
+    /// The trailing window `recomputeRecentDailyStats` re-reads: the start of
+    /// the calendar day two days before `now`, through `now`.
+    nonisolated static func recentDailyStatWindow(now: Date,
+                                                  calendar: Calendar = .current) -> DateInterval {
+        let twoDaysBack = calendar.date(byAdding: .day, value: -2, to: now) ?? now
+        return dailyStatRange(from: twoDaysBack, to: now, calendar: calendar)
+    }
+
     func ingestDailyStats(for type: HKQuantityType, from start: Date,
                           to end: Date) async throws -> IngestSummary {
         let identifier = type.identifier
         let aggregation = HealthKitSampleMapper.dailyStatOptions(for: identifier)
         let options: HKStatisticsOptions = aggregation == .sum ? .cumulativeSum : .discreteAverage
-        let dayStart = Calendar.current.startOfDay(for: start)
+        // ONE range, used by the predicate, the anchor and the enumeration
+        // alike: whole calendar days, so no bucket can cover a partial day.
+        let range = Self.dailyStatRange(from: start, to: end)
 
         let collection: HKStatisticsCollection = try await withCheckedThrowingContinuation { cont in
             let query = HKStatisticsCollectionQuery(
                 quantityType: type,
-                quantitySamplePredicate: HKQuery.predicateForSamples(withStart: start, end: end),
+                quantitySamplePredicate: HKQuery.predicateForSamples(withStart: range.start, end: range.end),
                 options: options,
-                anchorDate: dayStart,
+                anchorDate: range.start,
                 intervalComponents: DateComponents(day: 1))
             query.initialResultsHandler = { _, result, error in
                 if let error { cont.resume(throwing: error) }
@@ -265,7 +294,7 @@ final class HealthKitIngestor: ObservableObject {
         }
 
         var events: [HealthEvent] = []
-        collection.enumerateStatistics(from: dayStart, to: end) { stats, _ in
+        collection.enumerateStatistics(from: range.start, to: range.end) { stats, _ in
             let quantity = aggregation == .sum ? stats.sumQuantity() : stats.averageQuantity()
             guard let quantity else { return }
             let value = quantity.doubleValue(for: Self.hkUnit(for: identifier))
@@ -335,15 +364,42 @@ final class HealthKitIngestor: ObservableObject {
         }
     }
 
-    /// Daily-stat types have no anchors: recompute the trailing 2 days —
-    /// dedupKeys make the re-ingest an idempotent same-day update.
+    /// Daily-stat types have no anchors: recompute the trailing 2 whole
+    /// calendar days — dedupKeys make the re-ingest an idempotent same-day
+    /// update, which is why the window must never start mid-day (a partial
+    /// day would overwrite the correct row, not add to it).
     private func recomputeRecentDailyStats(for type: HKQuantityType) async {
-        let start = Calendar.current.date(byAdding: .day, value: -2, to: Date())!
+        let window = Self.recentDailyStatWindow(now: Date())
         do {
-            _ = try await ingestDailyStats(for: type, from: start, to: Date())
+            _ = try await ingestDailyStats(for: type, from: window.start, to: window.end)
         } catch {
-            Logger.error("HK daily-stat recompute failed", category: .data)
+            Logger.error(error, message: "HK daily-stat recompute failed for \(type.identifier)",
+                         category: .data)
         }
+    }
+
+    /// Re-reads every daily-statistics type over the last `years` and writes
+    /// the whole-day values through the normal pipeline (in-place updates via
+    /// the existing dedup keys). Used by `DailyStatRepair` only. Throws if ANY
+    /// type failed — after re-ingesting the rest — so a caller can refuse to
+    /// mark the repair done. Touches none of the user-facing import state
+    /// (`isRunning`, `progress`, `lastBackfillFailures`, `HealthImportStatusStore`):
+    /// this is a silent background pass the user never asked for.
+    /// No `requestAuthorization()` here — the repair only runs after a
+    /// completed backfill, which already asked.
+    func reingestDailyStats(years: Int = 1) async throws -> IngestSummary {
+        let start = Calendar.current.date(byAdding: .year, value: -years, to: Date())!
+        var total = IngestSummary()
+        var failed: [String] = []
+        for type in Self.dailyStatTypes {
+            do {
+                total = total + (try await ingestDailyStats(for: type, from: start, to: Date()))
+            } catch {
+                failed.append(type.identifier)
+            }
+        }
+        guard failed.isEmpty else { throw DailyStatRepairError.typesFailed(failed) }
+        return total
     }
 
     // MARK: - HK → DTO conversion

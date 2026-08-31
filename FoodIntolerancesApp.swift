@@ -148,7 +148,14 @@ struct FoodIntolerancesApp: App {
                         // As common modifiers on the Group they would run during
                         // onboarding — fetching weather and prompting for location
                         // before the user has been told why.
-                        .task { healthKitIngestor.startObserving() }
+                        .task {
+                            healthKitIngestor.startObserving()
+                            // Silent, once per install: rewrites the daily-stat
+                            // rows the pre-fix trailing recompute clobbered.
+                            await DailyStatRepair.runIfDue {
+                                _ = try await healthKitIngestor.reingestDailyStats()
+                            }
+                        }
                         .task { emitCoordinator.emit(forced: false) }
                         .onChange(of: scenePhase) { _, phase in
                             guard phase == .active else { return }
