@@ -193,12 +193,18 @@ final class HealthKitIngestor: ObservableObject {
             done += 1
         }
         UserDefaults.standard.set(true, forKey: Self.backfillCompletedKey)
-        // A backfill run by this (fixed) code already wrote whole days, so
-        // there is nothing for the one-shot repair to correct: stamp it done
-        // rather than make a fresh install re-read a year for nothing. An
+        // A CLEAN backfill run by this (fixed) code already wrote whole days,
+        // so there is nothing for the one-shot repair to correct: stamp it
+        // done rather than make a fresh install re-read a year for nothing. An
         // install whose backfill ran on the old code has no stamp, so the
         // repair runs once on its next launch.
-        UserDefaults.standard.set(DailyStatRepair.currentVersion, forKey: DailyStatRepair.versionKey)
+        if lastBackfillFailures.isEmpty {
+            // Guarded: the loop above swallows a per-type throw into
+            // `lastBackfillFailures`, so a daily type that failed here left
+            // rows missing or stale — stamping would disarm the one mechanism
+            // that would ever re-read them. Leave the repair armed instead.
+            UserDefaults.standard.set(DailyStatRepair.currentVersion, forKey: DailyStatRepair.versionKey)
+        }
         return total
     }
 
