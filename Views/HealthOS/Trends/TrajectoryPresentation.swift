@@ -36,6 +36,28 @@ enum TrajectoryPresentation {
         "\(dayCount) of 7 days so far"
     }
 
+    /// An x-axis tick label. 13 weeks: month + day ("Jun 7"). 52 weeks:
+    /// abbreviated month + a two-digit year ("Dec '25") — the apostrophe is
+    /// what stops a year-grain label from being read as the day-grain one the
+    /// other window uses ("Dec 25").
+    ///
+    /// BOTH parts come from the same `Date.FormatStyle`, never from a
+    /// `Calendar.component(.year:)`: that reads the ERA year, so under a
+    /// Buddhist or Japanese current calendar it would print a year that
+    /// disagrees with the locale-formatted month standing next to it (and with
+    /// what `.year(.twoDigits)` renders for the same instant). Drawn on the
+    /// chart, so it is swept for banned language exactly like `summary`.
+    static func xAxisLabel(for date: Date, window: TrendWindow, locale: Locale = .current) -> String {
+        switch window {
+        case .weeks13:
+            return date.formatted(.dateTime.month(.abbreviated).day().locale(locale))
+        case .weeks52:
+            let month = date.formatted(.dateTime.month(.abbreviated).locale(locale))
+            let year = date.formatted(.dateTime.year(.twoDigits).locale(locale))
+            return "\(month) '\(year)"
+        }
+    }
+
     // MARK: - Chart values (whatever the summary says, the chart plots)
 
     /// A weekly value in the unit the summary line shows: weight through

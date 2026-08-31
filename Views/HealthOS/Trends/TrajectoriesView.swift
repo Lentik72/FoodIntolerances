@@ -118,19 +118,6 @@ struct TrajectoryRowView: View {
         TrajectoryPresentation.displayValue(value, for: snapshot.series, system: system)
     }
 
-    /// 13 weeks: month + day ("Jun 7"). 52 weeks: abbreviated month + a
-    /// two-digit year ("Dec '25") — the apostrophe is what stops a year-grain
-    /// label from being read as the day-grain one the other window uses.
-    private func xAxisLabel(_ date: Date) -> String {
-        switch snapshot.window {
-        case .weeks13:
-            return date.formatted(.dateTime.month(.abbreviated).day())
-        case .weeks52:
-            let year = calendar.component(.year, from: date) % 100
-            return "\(date.formatted(.dateTime.month(.abbreviated))) '\(String(format: "%02d", year))"
-        }
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(snapshot.series.displayName)
@@ -223,7 +210,9 @@ struct TrajectoryRowView: View {
                 AxisGridLine()
                 AxisTick()
                 AxisValueLabel {
-                    if let date = value.as(Date.self) { Text(xAxisLabel(date)) }
+                    if let date = value.as(Date.self) {
+                        Text(TrajectoryPresentation.xAxisLabel(for: date, window: snapshot.window))
+                    }
                 }
             }
         }

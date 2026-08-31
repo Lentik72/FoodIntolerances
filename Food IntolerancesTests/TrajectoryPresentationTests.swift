@@ -82,10 +82,26 @@ import HealthGraphCore
             }
         }
         // The summary is not the only string on the card: the chart draws the
-        // current week's caption too, and it is held to the same bar.
+        // current week's caption and its axis labels too, and every one of
+        // them is held to the same bar.
         for dayCount in 1...7 {
             assertClean(TrajectoryPresentation.currentWeekCaption(dayCount: dayCount), "caption \(dayCount)")
         }
+        for window in TrendWindow.allCases {
+            assertClean(TrajectoryPresentation.xAxisLabel(for: Self.axisDate, window: window), "axis \(window)")
+        }
+    }
+
+    /// 2025-12-15, built from an explicit Gregorian calendar so the expected
+    /// strings below don't depend on the runner's current calendar.
+    private static let axisDate = Calendar(identifier: .gregorian)
+        .date(from: DateComponents(year: 2025, month: 12, day: 15))!
+
+    @Test func axisLabelsCarryTheirWindowsGrain() {
+        let en = Locale(identifier: "en_US")
+        #expect(TrajectoryPresentation.xAxisLabel(for: Self.axisDate, window: .weeks13, locale: en) == "Dec 15")
+        // The apostrophe is load-bearing: "Dec 25" would read as a day.
+        #expect(TrajectoryPresentation.xAxisLabel(for: Self.axisDate, window: .weeks52, locale: en) == "Dec '25")
     }
 
     // MARK: - Chart values (the chart plots what the summary says)
