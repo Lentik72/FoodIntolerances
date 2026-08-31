@@ -24,6 +24,7 @@ struct HealthGraphDebugView: View {
     @State private var showingImporter = false
     @State private var importProgress: Int?
     @State private var relationshipReport: String?
+    @State private var probeReport: String?
 
     private var database: AppDatabase { HealthGraphProvider.shared }
 
@@ -157,6 +158,23 @@ struct HealthGraphDebugView: View {
                     .disabled(isWorking)
                 if let relationshipReport {
                     Text(relationshipReport)
+                        .font(.caption2.monospaced())
+                        .textSelection(.enabled)
+                }
+            }
+            Section("HealthKit probe (raw samples vs. the ingestor's daily-stat query)") {
+                ForEach(["HKQuantityTypeIdentifierHeartRateVariabilitySDNN",
+                         "HKQuantityTypeIdentifierHeartRate",
+                         "HKQuantityTypeIdentifierRespiratoryRate",
+                         "HKQuantityTypeIdentifierStepCount",
+                         "HKQuantityTypeIdentifierBodyMass"], id: \.self) { id in
+                    Button("Probe \(id.replacingOccurrences(of: "HKQuantityTypeIdentifier", with: ""))") {
+                        probeReport = "probing…"
+                        Task { probeReport = await HealthKitProbe.report(identifier: id) }
+                    }
+                }
+                if let probeReport {
+                    Text(probeReport)
                         .font(.caption2.monospaced())
                         .textSelection(.enabled)
                 }
