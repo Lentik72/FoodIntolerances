@@ -88,6 +88,17 @@ struct TrajectorySeriesTests {
         #expect(abs(points[0].value - 8.0) < 0.01)       // only the night's duration
     }
 
+    @Test func stepsAreLabelledStepsWithoutChangingTheStorageUnit() {
+        // "91–5944 count" is what a person actually read on the device. The
+        // LABEL changes; the storage unit `HealthKitSampleMapper` writes must
+        // not, or every stored steps event stops matching its own unit.
+        #expect(TrajectorySeries.steps.displayUnit == "steps")
+        #expect(TrajectorySeries.steps.unit == "count")
+        for series in TrajectorySeries.allCases where series != .steps {
+            #expect(series.displayUnit == series.unit, "\(series)")
+        }
+    }
+
     @Test func theCatalogIsExactlyTheSixSeriesWeSupport() {
         // Protects the copy sweep in Task 8 from passing over an empty
         // collection, and pins blood pressure OUT.

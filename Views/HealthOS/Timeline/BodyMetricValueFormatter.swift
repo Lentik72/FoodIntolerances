@@ -21,10 +21,17 @@ enum WeightUnit {
 enum BodyMetricValueFormatter {
     private static let poundsPerKilogram = 2.20462
 
+    /// A raw kilogram value in the user's preferred unit, unformatted — what a
+    /// chart plots, since a chart cannot plot a string. THE conversion: `line`
+    /// formats exactly this, so copy and chart can never disagree, and no
+    /// second `poundsPerKilogram` may exist anywhere in the app.
+    static func value(kg: Double, unit: WeightUnit) -> Double {
+        unit == .pounds ? kg * poundsPerKilogram : kg
+    }
+
     /// Formats a raw kilogram value in the user's preferred unit, to one decimal place.
     static func line(kg: Double, unit: WeightUnit) -> String {
-        let shown = unit == .pounds ? kg * poundsPerKilogram : kg
-        return String(format: "%.1f %@", shown, unit.abbreviation)
+        String(format: "%.1f %@", value(kg: kg, unit: unit), unit.abbreviation)
     }
 
     static func line(for event: HealthEvent, unit: WeightUnit) -> String? {

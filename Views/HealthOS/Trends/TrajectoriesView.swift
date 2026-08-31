@@ -102,13 +102,33 @@ struct TrajectoryRowView: View {
         TrajectoryPresentation.weeklyRuns(snapshot.weeks, calendar: calendar)
     }
 
-    /// The calendar week containing "now" — the one week whose `dayCount`
-    /// can legitimately be less than 7 simply because it hasn't finished
-    /// yet, not because of a gap in logging. Only THIS point gets the
-    /// "so far" annotation; every other point's dayCount is left to the
-    /// chart's gaps to speak for itself.
-    private var currentWeekStart: Date? {
-        calendar.dateInterval(of: .weekOfYear, for: Date())?.start
+    /// The week containing the `asOf` the service bucketed with — the one
+    /// week whose `dayCount` can legitimately be less than 7 simply because
+    /// it hasn't finished yet, not because of a gap in logging. Only THIS
+    /// point gets the ring and the "so far" caption; every other point's
+    /// dayCount is left to the chart's gaps to speak for itself. Read off the
+    /// snapshot, never re-derived from `Date()`: a second read can land on the
+    /// other side of a week boundary from the one the buckets were built with.
+    private var currentWeekPoint: WeeklyPoint? {
+        snapshot.weeks.first { $0.weekStart == snapshot.currentWeekStart }
+    }
+
+    /// This point in the unit the summary line above the chart shows.
+    private func displayValue(_ value: Double) -> Double {
+        TrajectoryPresentation.displayValue(value, for: snapshot.series, system: system)
+    }
+
+    /// 13 weeks: month + day ("Jun 7"). 52 weeks: abbreviated month + a
+    /// two-digit year ("Dec '25") — the apostrophe is what stops a year-grain
+    /// label from being read as the day-grain one the other window uses.
+    private func xAxisLabel(_ date: Date) -> String {
+        switch snapshot.window {
+        case .weeks13:
+            return date.formatted(.dateTime.month(.abbreviated).day())
+        case .weeks52:
+            let year = calendar.component(.year, from: date) % 100
+            return "\(date.formatted(.dateTime.month(.abbreviated))) '\(String(format: "%02d", year))"
+        }
     }
 
     var body: some View {
@@ -141,7 +161,10 @@ struct TrajectoryRowView: View {
     private func runID(_ index: Int) -> String { "run-\(index)" }
 
     private var chart: some View {
-        Chart {
+        // Both scales are computed once, from display values: whatever unit
+        // the summary line states is the unit the marks and the axis carry.
+        let range = TrajectoryPresentation.displayRange(for: snapshot, system: system)
+        return Chart {
             // One LineMark run per contiguous stretch of calendar weeks,
             // each tagged with its OWN series identity (`run` index) via
             // `foregroundStyle(by:)` — that is what stops Swift Charts from
@@ -155,7 +178,7 @@ struct TrajectoryRowView: View {
                 ForEach(run, id: \.weekStart) { point in
                     LineMark(
                         x: .value("Week", point.weekStart),
-                        y: .value("Value", point.value)
+                        y: .value("Value", displayValue(point.value))
                     )
                     .foregroundStyle(by: .value("Run", runID(runIndex)))
                     .interpolationMethod(.linear)   // no smoothing, no fitted curve
@@ -163,22 +186,20 @@ struct TrajectoryRowView: View {
                 }
             }
             ForEach(snapshot.weeks, id: \.weekStart) { point in
-                if point.weekStart == currentWeekStart {
+                if point.weekStart == snapshot.currentWeekStart {
+                    // The unfinished week reads as unfinished: a hollow ring,
+                    // not another settled reading.
                     PointMark(
                         x: .value("Week", point.weekStart),
-                        y: .value("Value", point.value)
+                        y: .value("Value", displayValue(point.value))
                     )
                     .foregroundStyle(HealthTheme.accent)
-                    .symbolSize(36)
-                    .annotation(position: .top) {
-                        Text("\(point.dayCount) of 7 days so far")
-                            .font(.caption2)
-                            .foregroundStyle(HealthTheme.inkMuted)
-                    }
+                    .symbolSize(64)
+                    .symbol(BasicChartSymbolShape.circle.strokeBorder(lineWidth: 2))
                 } else {
                     PointMark(
                         x: .value("Week", point.weekStart),
-                        y: .value("Value", point.value)
+                        y: .value("Value", displayValue(point.value))
                     )
                     .foregroundStyle(HealthTheme.accent)
                     .symbolSize(24)
@@ -190,29 +211,39 @@ struct TrajectoryRowView: View {
             range: Array(repeating: HealthTheme.accent, count: max(runs.count, 1))
         )
         .chartLegend(.hidden)
+        // Explicit, never automatic: Charts' auto y-scale starts at zero, which
+        // flattens 170–173 lb into a straight line, and its auto x-scale shrinks
+        // to whatever data a card happens to have, so a series that stopped
+        // logging in August looks complete and no two cards share an axis.
+        .chartYScale(domain: TrajectoryPresentation.yDomain(low: range.low, high: range.high))
+        .chartXScale(domain: TrajectoryPresentation.xDomain(for: snapshot),
+                     range: .plotDimension(startPadding: 8, endPadding: 8))
+        .chartXAxis {
+            AxisMarks(values: .automatic(desiredCount: 4)) { value in
+                AxisGridLine()
+                AxisTick()
+                AxisValueLabel {
+                    if let date = value.as(Date.self) { Text(xAxisLabel(date)) }
+                }
+            }
+        }
+        // Drawn in the plot's own top-trailing corner rather than attached to
+        // the point: as an annotation it collided with the line on a 52-week
+        // chart. `yDomain`'s 40% upper pad is the band it sits in.
+        .chartOverlay { proxy in
+            GeometryReader { geometry in
+                if let point = currentWeekPoint, let plotFrame = proxy.plotFrame {
+                    let plot = geometry[plotFrame]
+                    Text(TrajectoryPresentation.currentWeekCaption(dayCount: point.dayCount))
+                        .font(.caption2)
+                        .foregroundStyle(HealthTheme.inkMuted)
+                        .padding(4)
+                        .frame(width: plot.width, height: plot.height, alignment: .topTrailing)
+                        .offset(x: plot.minX, y: plot.minY)
+                }
+            }
+        }
         .accessibilityLabel(Text("\(snapshot.series.displayName) chart"))
         .accessibilityValue(Text(TrajectoryPresentation.summary(for: snapshot, system: system)))
-        .applyingFlatSeriesYDomain(low: snapshot.rangeLow, high: snapshot.rangeHigh)
-    }
-}
-
-private extension View {
-    /// Charts' automatic linear y-scale traps when the domain it derives
-    /// from the plotted marks has equal bounds — e.g. a snapshot with
-    /// exactly one charted week, where `rangeLow == rangeHigh` by
-    /// construction (min and max of a single value are equal). Confirmed
-    /// via `TrajectoryChartRenderTests.flatSeriesRendersWithoutTrapping`:
-    /// `Charts/ConcreteScale+Continuous.swift:182: Precondition failed:
-    /// Linear scale domain must contain two values`. Only THIS degenerate
-    /// case gets an explicit, padded domain — every other snapshot keeps
-    /// Charts' own auto-derived y-domain untouched.
-    @ViewBuilder
-    func applyingFlatSeriesYDomain(low: Double, high: Double) -> some View {
-        if low < high {
-            self
-        } else {
-            let pad = max(abs(low) * 0.05, 0.5)
-            self.chartYScale(domain: (low - pad)...(high + pad))
-        }
     }
 }

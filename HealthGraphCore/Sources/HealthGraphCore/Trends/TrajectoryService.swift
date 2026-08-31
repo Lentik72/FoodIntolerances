@@ -33,6 +33,10 @@ public struct TrajectoryService: Sendable {
     /// Output is in catalog order (`TrajectorySeries.allCases`).
     public func snapshots(window: TrendWindow, asOf: Date) async throws -> [TrajectorySnapshot] {
         let windowStart = WeeklyBucketing.windowStart(weeksBack: window.rawValue, asOf: asOf, calendar: calendar)
+        // Carried on every snapshot so all six cards share ONE x-axis, and
+        // so the "so far" week is identified by the same `asOf` the buckets
+        // were built from rather than by a second `Date()` read in the view.
+        let currentWeekStart = calendar.dateInterval(of: .weekOfYear, for: asOf)!.start
 
         // The fetch interval starts one calendar day before the window
         // start, not at the window start itself: a night session that
@@ -60,7 +64,8 @@ public struct TrajectoryService: Sendable {
             let medians = weeks.map(\.value)
             return TrajectorySnapshot(
                 series: series, window: window, weeks: weeks, coverage: coverage,
-                rangeLow: medians.min()!, rangeHigh: medians.max()!
+                rangeLow: medians.min()!, rangeHigh: medians.max()!,
+                windowStart: windowStart, currentWeekStart: currentWeekStart
             )
         }
     }

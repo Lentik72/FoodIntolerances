@@ -59,6 +59,12 @@ public enum TrajectorySeries: CaseIterable, Equatable, Sendable {
         }
     }
 
+    /// The unit label shown to a person. The storage unit stays what
+    /// `HealthKitSampleMapper` writes ("count" for steps); only the label
+    /// changes. Weight's label is unit-system-dependent and resolved by the
+    /// app-side presentation, so it stays "kg" here.
+    public var displayUnit: String { self == .steps ? "steps" : unit }
+
     public var displayName: String {
         switch self {
         case .weight: "Weight"

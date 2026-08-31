@@ -26,6 +26,11 @@ public struct TrajectorySnapshot: Sendable {
     public let rangeLow: Double
     /// Maximum weekly median across the window — NOT the maximum raw reading.
     public let rangeHigh: Double
+    /// First calendar day of the window (`WeeklyBucketing.windowStart`).
+    public let windowStart: Date
+    /// Start of the calendar week containing `asOf` — the right edge of the
+    /// chart and the only week whose dayCount may legitimately be < 7.
+    public let currentWeekStart: Date
 
     public init(
         series: TrajectorySeries,
@@ -33,7 +38,9 @@ public struct TrajectorySnapshot: Sendable {
         weeks: [WeeklyPoint],
         coverage: SeriesCoverage,
         rangeLow: Double,
-        rangeHigh: Double
+        rangeHigh: Double,
+        windowStart: Date,
+        currentWeekStart: Date
     ) {
         self.series = series
         self.window = window
@@ -41,5 +48,7 @@ public struct TrajectorySnapshot: Sendable {
         self.coverage = coverage
         self.rangeLow = rangeLow
         self.rangeHigh = rangeHigh
+        self.windowStart = windowStart
+        self.currentWeekStart = currentWeekStart
     }
 }

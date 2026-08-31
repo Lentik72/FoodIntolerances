@@ -23,6 +23,16 @@ struct BodyMetricValueFormatterTests {
         // 90.0 × 2.20462 = 198.4158 → 198.4  (pins conversion + rounding direction)
         #expect(BodyMetricValueFormatter.line(for: weight(90), unit: .pounds) == "198.4 lb")
     }
+    /// The numeric half of the conversion, which the Trends chart plots (it
+    /// cannot plot a formatted string). `line` must format exactly this value
+    /// — one conversion path for the chart, the axis and the copy, or the
+    /// chart silently draws kilograms under a "lb" summary.
+    @Test func valueConvertsWithoutFormatting() {
+        #expect(BodyMetricValueFormatter.value(kg: 74, unit: .kilograms) == 74.0)
+        #expect(abs(BodyMetricValueFormatter.value(kg: 74, unit: .pounds) - 163.14) < 0.01)
+        #expect(BodyMetricValueFormatter.line(kg: 74, unit: .pounds) == "163.1 lb")
+    }
+
     @Test func kilogramsRoundsToOneDecimal() {
         // The nearest double to 81.45 is >81.45 (NOT a half-tie), so "%.1f" rounds up to 81.5
         // under any rounding mode — deterministic, not platform-fragile. Discriminates round

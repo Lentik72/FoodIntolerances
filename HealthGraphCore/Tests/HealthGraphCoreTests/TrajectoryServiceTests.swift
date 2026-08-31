@@ -122,6 +122,23 @@ struct TrajectoryServiceTests {
         #expect(!rs.contains { $0.series == .weight })
     }
 
+    @Test func snapshotCarriesItsWindow() async throws {
+        // The chart's x-axis is shared across every card, so the window must
+        // come from the SAME `asOf` the service bucketed with — a view that
+        // re-derives it from `Date()` drifts across a week boundary and
+        // silently re-scales one card and not another.
+        let r = try await service(sixWeeksWeight())
+            .snapshots(window: .weeks13, asOf: Self.now).first { $0.series == .weight }!
+        let expectedStart = WeeklyBucketing.windowStart(weeksBack: TrendWindow.weeks13.rawValue,
+                                                        asOf: Self.now, calendar: utc)
+        let expectedCurrentWeek = utc.dateInterval(of: .weekOfYear, for: Self.now)!.start
+        #expect(r.windowStart == expectedStart)
+        #expect(r.currentWeekStart == expectedCurrentWeek)
+        // 13 weeks INCLUDING the current one — so the left edge sits exactly
+        // twelve calendar weeks before the right edge, not thirteen.
+        #expect(r.windowStart == utc.date(byAdding: .weekOfYear, value: -12, to: expectedCurrentWeek)!)
+    }
+
     @Test func theRangeIsOverWeeklyMediansNotRawReadings() async throws {
         // One 200 kg suitcase-on-the-scale day must not become the range.
         let r = try await service(steadyWeightWithOneOutlierDay())

@@ -36,10 +36,17 @@ import HealthGraphCore
             coverage: SeriesCoverage(daysWithData: weeks.count * 7, daysInWindow: 91,
                                      weeksWithData: weeks.count, weeksInWindow: 13),
             rangeLow: weeks.map(\.value).min() ?? 0,
-            rangeHigh: weeks.map(\.value).max() ?? 0
+            rangeHigh: weeks.map(\.value).max() ?? 0,
+            windowStart: weekStart(-12),
+            currentWeekStart: weekStart(0)
         )
     }
 
+    /// `offset` weeks from the CURRENT calendar week — negative is the past.
+    /// Every fixture below sits inside the window the snapshot declares
+    /// (`weekStart(-12)...weekStart(0)`), because the chart now clips to that
+    /// x-domain: a mark outside it would render nothing and quietly turn
+    /// these render tests into assertions about an empty plot.
     private func weekStart(_ offset: Int) -> Date {
         let now = calendar.dateInterval(of: .weekOfYear, for: Date())!.start
         return calendar.date(byAdding: .weekOfYear, value: offset, to: now)!
@@ -52,8 +59,8 @@ import HealthGraphCore
     /// `Int` plottable read as quantitative against an explicit categorical
     /// `chartForegroundStyleScale`.
     @Test func twoRunGapRendersWithoutTrapping() {
-        let weeks = [0, 1, 3].map { offset in
-            WeeklyPoint(weekStart: weekStart(offset), value: 68 + Double(offset), dayCount: 7)
+        let weeks = [-4, -3, -1].map { offset in
+            WeeklyPoint(weekStart: weekStart(offset), value: 72 + Double(offset), dayCount: 7)
         }
         let row = TrajectoryRowView(snapshot: snapshot(weeks: weeks), system: .metric)
         let image = ImageRenderer(content: row.frame(width: 320, height: 140)).uiImage
@@ -63,7 +70,7 @@ import HealthGraphCore
     /// One run, every value identical — `rangeLow == rangeHigh`, a
     /// degenerate y-domain some chart layout paths mishandle.
     @Test func flatSeriesRendersWithoutTrapping() {
-        let weeks = (0..<4).map { offset in
+        let weeks = (-4 ..< 0).map { offset in
             WeeklyPoint(weekStart: weekStart(offset), value: 70, dayCount: 7)
         }
         let row = TrajectoryRowView(snapshot: snapshot(weeks: weeks), system: .metric)
@@ -82,8 +89,35 @@ import HealthGraphCore
     /// contain two values" trap as `flatSeriesRendersWithoutTrapping`, but
     /// on the color scale rather than the y-scale.
     @Test func singleContiguousRunRendersWithoutTrapping() {
-        let weeks = (0..<4).map { offset in
-            WeeklyPoint(weekStart: weekStart(offset), value: 68 + Double(offset), dayCount: 7)
+        let weeks = (-4 ..< 0).map { offset in
+            WeeklyPoint(weekStart: weekStart(offset), value: 72 + Double(offset), dayCount: 7)
+        }
+        let row = TrajectoryRowView(snapshot: snapshot(weeks: weeks), system: .metric)
+        let image = ImageRenderer(content: row.frame(width: 320, height: 140)).uiImage
+        #expect(image != nil)
+    }
+
+    /// The same four weeks under `.imperial`, where every plotted y is a
+    /// CONVERTED value (68 kg → 149.9 lb) and the y-domain is computed over
+    /// converted numbers. Layout must survive the unit the summary line
+    /// actually shows, not only the storage unit.
+    @Test func imperialWeightRendersWithoutTrapping() {
+        let weeks = (-4 ..< 0).map { offset in
+            WeeklyPoint(weekStart: weekStart(offset), value: 72 + Double(offset), dayCount: 7)
+        }
+        let row = TrajectoryRowView(snapshot: snapshot(weeks: weeks), system: .imperial)
+        let image = ImageRenderer(content: row.frame(width: 320, height: 140)).uiImage
+        #expect(image != nil)
+    }
+
+    /// A snapshot whose last week IS `currentWeekStart`, one day in: the only
+    /// shape that draws the hollow ring AND the "so far" caption in the
+    /// plot's headroom band via `chartOverlay`. Every other fixture here
+    /// stops before the current week, so this is the sole render of that path.
+    @Test func currentWeekRingAndCaptionRenderWithoutTrapping() {
+        let weeks = (-3 ... 0).map { offset in
+            WeeklyPoint(weekStart: weekStart(offset), value: 72 + Double(offset),
+                        dayCount: offset == 0 ? 1 : 7)
         }
         let row = TrajectoryRowView(snapshot: snapshot(weeks: weeks), system: .metric)
         let image = ImageRenderer(content: row.frame(width: 320, height: 140)).uiImage
