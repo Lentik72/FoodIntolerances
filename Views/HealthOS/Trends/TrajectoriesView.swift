@@ -226,6 +226,13 @@ struct TrajectoryRowView: View {
                     Text(TrajectoryPresentation.currentWeekCaption(dayCount: point.dayCount))
                         .font(.caption2)
                         .foregroundStyle(HealthTheme.inkMuted)
+                        // On the card's own surface, so a y-gridline landing at
+                        // the caption's height reads as a gridline behind a
+                        // label and not as a strikethrough through it (Sleep
+                        // Duration's top tick did exactly that on device).
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(HealthTheme.card, in: Capsule())
                         .padding(4)
                         .frame(width: plot.width, height: plot.height, alignment: .topTrailing)
                         .offset(x: plot.minX, y: plot.minY)
