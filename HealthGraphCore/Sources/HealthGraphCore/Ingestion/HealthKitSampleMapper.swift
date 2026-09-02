@@ -10,10 +10,18 @@ public struct QuantitySampleData: Sendable {
     public let value: Double
     public let unit: String
     public let timezoneID: String?
+    /// `HKSource.bundleIdentifier` / `HKDevice.name` of the sample that
+    /// produced this reading, when the caller has one. Absent for
+    /// export-file-derived samples and defaulted so existing call sites
+    /// keep compiling and keep meaning "unknown source".
+    public let sourceBundleID: String?
+    public let deviceName: String?
     public init(identifier: String, start: Date, end: Date,
-                value: Double, unit: String, timezoneID: String?) {
+                value: Double, unit: String, timezoneID: String?,
+                sourceBundleID: String? = nil, deviceName: String? = nil) {
         self.identifier = identifier; self.start = start; self.end = end
         self.value = value; self.unit = unit; self.timezoneID = timezoneID
+        self.sourceBundleID = sourceBundleID; self.deviceName = deviceName
     }
 }
 
@@ -29,11 +37,17 @@ public struct CategorySampleData: Sendable {
     /// inference. Defaulted so the export parser and all existing fixtures
     /// keep compiling and keep meaning "unknown".
     public let menstrualCycleStart: Bool?
+    /// `HKSource.bundleIdentifier` / `HKDevice.name` of the sample that
+    /// produced this reading, when the caller has one.
+    public let sourceBundleID: String?
+    public let deviceName: String?
     public init(identifier: String, start: Date, end: Date, value: Int, timezoneID: String?,
-                menstrualCycleStart: Bool? = nil) {
+                menstrualCycleStart: Bool? = nil,
+                sourceBundleID: String? = nil, deviceName: String? = nil) {
         self.identifier = identifier; self.start = start; self.end = end
         self.value = value; self.timezoneID = timezoneID
         self.menstrualCycleStart = menstrualCycleStart
+        self.sourceBundleID = sourceBundleID; self.deviceName = deviceName
     }
 }
 
@@ -44,10 +58,16 @@ public struct WorkoutData: Sendable {
     public let kcal: Double?
     public let distanceKm: Double?
     public let timezoneID: String?
+    /// `HKSource.bundleIdentifier` / `HKDevice.name` of the sample that
+    /// produced this reading, when the caller has one.
+    public let sourceBundleID: String?
+    public let deviceName: String?
     public init(activityName: String, start: Date, end: Date,
-                kcal: Double?, distanceKm: Double?, timezoneID: String?) {
+                kcal: Double?, distanceKm: Double?, timezoneID: String?,
+                sourceBundleID: String? = nil, deviceName: String? = nil) {
         self.activityName = activityName; self.start = start; self.end = end
         self.kcal = kcal; self.distanceKm = distanceKm; self.timezoneID = timezoneID
+        self.sourceBundleID = sourceBundleID; self.deviceName = deviceName
     }
 }
 
@@ -196,6 +216,44 @@ public enum HealthKitSampleMapper {
         }
     }
 
+    // MARK: - Source Provenance
+    //
+    // Stored, not yet consumed: a later round can use this to detect a
+    // device change (a new watch shifting the HRV baseline, a second scale
+    // reading differently) instead of that difference being permanently
+    // invisible. Flat [String: String], merged into any pre-existing
+    // metadata dict rather than replacing it — every metadata consumer in
+    // this codebase decodes [String: String] and reads its own key.
+
+    private static func mergingSource(into dict: [String: String],
+                                      bundleID: String?, deviceName: String?) -> [String: String] {
+        var merged = dict
+        if let bundleID { merged["sourceBundleID"] = bundleID }
+        if let deviceName { merged["deviceName"] = deviceName }
+        return merged
+    }
+
+    private static func encodedMetadata(_ dict: [String: String]) -> Data? {
+        dict.isEmpty ? nil : try? JSONEncoder().encode(dict)
+    }
+
+    /// nil when there is no source to record, so branches that previously
+    /// always emitted `metadata: nil` keep doing so for samples without one.
+    private static func sourceMetadata(bundleID: String?, deviceName: String?) -> Data? {
+        encodedMetadata(mergingSource(into: [:], bundleID: bundleID, deviceName: deviceName))
+    }
+
+    /// The recording HealthKit source's bundle identifier, when the mapped
+    /// event carried one (see the field's doc comment above). Not used by
+    /// any consumer yet.
+    public static func sourceBundleID(of event: HealthEvent) -> String? {
+        guard let metadata = event.metadata,
+              let dict = try? JSONDecoder().decode([String: String].self, from: metadata) else {
+            return nil
+        }
+        return dict["sourceBundleID"]
+    }
+
     // MARK: - Export String Mapping
 
     private static let exportStringMap: [String: Int] = [
@@ -244,7 +302,7 @@ public enum HealthKitSampleMapper {
             unit: canonicalUnit,
             source: source,
             confidence: confidence,
-            metadata: nil,
+            metadata: sourceMetadata(bundleID: sample.sourceBundleID, deviceName: sample.deviceName),
             dedupKey: DedupKey.point(category, subtype, sample.start)
         )
     }
@@ -266,7 +324,7 @@ public enum HealthKitSampleMapper {
                 unit: "min",
                 source: source,
                 confidence: 1.0,
-                metadata: nil,
+                metadata: sourceMetadata(bundleID: sample.sourceBundleID, deviceName: sample.deviceName),
                 dedupKey: DedupKey.duration(.sleep, subtype, start: sample.start, end: sample.end)
             )
         }
@@ -284,7 +342,7 @@ public enum HealthKitSampleMapper {
                 unit: "min",
                 source: source,
                 confidence: 1.0,
-                metadata: nil,
+                metadata: sourceMetadata(bundleID: sample.sourceBundleID, deviceName: sample.deviceName),
                 dedupKey: DedupKey.duration(.stress, "mindfulness", start: sample.start, end: sample.end)
             )
         }
@@ -303,10 +361,13 @@ public enum HealthKitSampleMapper {
 
             // Tri-state: OMIT the key when nil. Writing "false" for nil would
             // make export/legacy records ineligible for run inference.
-            var meta: Data?
+            var cycleMeta: [String: String] = [:]
             if let start = sample.menstrualCycleStart {
-                meta = try? JSONEncoder().encode(["menstrualCycleStart": start ? "true" : "false"])
+                cycleMeta["menstrualCycleStart"] = start ? "true" : "false"
             }
+            let meta = encodedMetadata(mergingSource(into: cycleMeta,
+                                                      bundleID: sample.sourceBundleID,
+                                                      deviceName: sample.deviceName))
 
             return HealthEvent(
                 timestamp: sample.start,
@@ -348,7 +409,7 @@ public enum HealthKitSampleMapper {
                 unit: "severity",
                 source: source,
                 confidence: 1.0,
-                metadata: nil,
+                metadata: sourceMetadata(bundleID: sample.sourceBundleID, deviceName: sample.deviceName),
                 dedupKey: DedupKey.point(.symptom, subtype, sample.start)
             )
         }
@@ -368,6 +429,7 @@ public enum HealthKitSampleMapper {
         if let distanceKm = sample.distanceKm {
             metaDict["distanceKm"] = String(format: "%.1f", distanceKm)
         }
+        metaDict = mergingSource(into: metaDict, bundleID: sample.sourceBundleID, deviceName: sample.deviceName)
 
         let metadata = try? JSONEncoder().encode(metaDict)
 

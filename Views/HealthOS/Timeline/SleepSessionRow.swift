@@ -112,6 +112,13 @@ struct SleepSessionRow: View {
                 }
                 .accessibilityElement(children: .combine)
             }
+            if session.stageTotalsExceedAsleepTime {
+                // Disclosure, not hiding: stage rows stay as reported per
+                // source. Note, muted, no color/icon — a fact, not a warning.
+                Text("Stage times from more than one source overlap; they add to more than the night's total.")
+                    .font(.caption)
+                    .foregroundStyle(HealthTheme.inkMuted)
+            }
         }
     }
 

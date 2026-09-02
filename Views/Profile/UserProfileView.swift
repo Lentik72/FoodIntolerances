@@ -11,18 +11,23 @@ struct UserProfileView: View {
     // Editing state
     @State private var age: String = ""
     @State private var gender: String = ""
+    /// Source of truth for `currentAge` when present; `age` above is the
+    /// fallback (see `PersonProfile.currentAge`). Optional in the UI, not
+    /// just in storage — nil renders as "not set", never a bogus default.
+    @State private var dateOfBirth: Date?
     @State private var selectedConditions: Set<String> = []
     @State private var activityLevel: String = ""
     @State private var dietType: String = ""
     @State private var targetSleepHours: Double = 8.0
     @State private var memoryLevel: AIMemoryLevel = .patterns
 
-    // Optional Health Details (height/weight)
+    // Optional Health Details (height only — weight is a series now, read
+    // from HealthKit-derived events, not this write-only profile column;
+    // see the round's decision record:
+    // docs/superpowers/specs/2026-08-27-health-trajectories-and-profile-design.md).
     @State private var heightFeet: String = ""
     @State private var heightInches: String = ""
     @State private var heightCm: String = ""
-    @State private var weightLbs: String = ""
-    @State private var weightKg: String = ""
     @State private var unitPreference: String = "imperial"
     @AppStorage("hg.measurementSystem") private var rawUnitSystem = ""
 
@@ -39,7 +44,7 @@ struct UserProfileView: View {
         NavigationStack {
             Form {
                 // Basic Info Section
-                Section("Basic Information") {
+                Section {
                     HStack {
                         Text("Age")
                         Spacer()
@@ -50,6 +55,39 @@ struct UserProfileView: View {
                             .onChange(of: age) { _, _ in hasChanges = true }
                     }
 
+                    HStack {
+                        Text("Date of Birth")
+                        Spacer()
+                        DatePicker(
+                            "Date of Birth",
+                            selection: Binding($dateOfBirth, replacingNilWith: defaultDateOfBirth),
+                            in: ...Date(),
+                            displayedComponents: .date
+                        )
+                        .labelsHidden()
+                        .onChange(of: dateOfBirth) { _, newValue in
+                            hasChanges = true
+                            // A manual pick is the user re-asserting a DOB — lift the
+                            // "Remove Date of Birth" tombstone so a later HealthKit
+                            // authorization pass isn't blocked by an old removal.
+                            if newValue != nil {
+                                UserDefaults.standard.set(false, forKey: HealthKitIngestor.dobRemovedKey)
+                            }
+                        }
+                    }
+
+                    if dateOfBirth != nil {
+                        Button(role: .destructive) {
+                            dateOfBirth = nil
+                            hasChanges = true
+                            // Tombstone the removal so populateProfileFromHealthKitCharacteristics
+                            // never silently repopulates what was just removed.
+                            UserDefaults.standard.set(true, forKey: HealthKitIngestor.dobRemovedKey)
+                        } label: {
+                            Text("Remove Date of Birth")
+                        }
+                    }
+
                     Picker("Gender", selection: $gender) {
                         Text("Select").tag("")
                         ForEach(Gender.allCases, id: \.rawValue) { g in
@@ -57,6 +95,11 @@ struct UserProfileView: View {
                         }
                     }
                     .onChange(of: gender) { _, _ in hasChanges = true }
+                } header: {
+                    Text("Basic Information")
+                } footer: {
+                    Text("Date of birth is used for age-based health screening when available. Age is the fallback when it isn't set.")
+                        .font(.caption)
                 }
 
                 // Health Conditions Section
@@ -140,17 +183,6 @@ struct UserProfileView: View {
                                 .onChange(of: heightInches) { _, _ in hasChanges = true }
                             Text("\"")
                         }
-
-                        HStack {
-                            Text("Weight")
-                            Spacer()
-                            TextField("lbs", text: $weightLbs)
-                                .keyboardType(.numberPad)
-                                .multilineTextAlignment(.trailing)
-                                .frame(width: 80)
-                                .onChange(of: weightLbs) { _, _ in hasChanges = true }
-                            Text("lbs")
-                        }
                     } else {
                         HStack {
                             Text("Height")
@@ -161,17 +193,6 @@ struct UserProfileView: View {
                                 .frame(width: 80)
                                 .onChange(of: heightCm) { _, _ in hasChanges = true }
                             Text("cm")
-                        }
-
-                        HStack {
-                            Text("Weight")
-                            Spacer()
-                            TextField("kg", text: $weightKg)
-                                .keyboardType(.numberPad)
-                                .multilineTextAlignment(.trailing)
-                                .frame(width: 80)
-                                .onChange(of: weightKg) { _, _ in hasChanges = true }
-                            Text("kg")
                         }
                     }
 
@@ -287,13 +308,19 @@ struct UserProfileView: View {
         }
     }
 
+    /// A plausible placeholder shown the first time the picker opens on an
+    /// unset date of birth; nothing is written until the user actually picks
+    /// a date (`Binding($dateOfBirth, replacingNilWith:)` only writes on
+    /// `set`, never on `get`).
+    private var defaultDateOfBirth: Date {
+        Calendar.current.date(byAdding: .year, value: -30, to: Date()) ?? Date()
+    }
+
     private func clearMeasurements() {
         profile?.clearBodyMeasurements()
         heightFeet = ""
         heightInches = ""
         heightCm = ""
-        weightLbs = ""
-        weightKg = ""
         try? modelContext.save()
     }
 
@@ -306,6 +333,7 @@ struct UserProfileView: View {
         if let profileAge = profile.age {
             age = String(profileAge)
         }
+        dateOfBirth = profile.dateOfBirth
         gender = profile.gender ?? ""
         selectedConditions = Set(profile.healthConditions)
         activityLevel = profile.activityLevel ?? ""
@@ -314,7 +342,8 @@ struct UserProfileView: View {
         memoryLevel = AIMemoryLevel(rawValue: profile.memoryLevel) ?? .patterns
         unitPreference = profile.unitPreference
 
-        // Load height/weight
+        // Load height (weight is a series now — see the Optional Health
+        // Details declaration above — so this view never reads weightKg).
         if let cm = profile.heightCm {
             if unitPreference == "imperial" {
                 let totalInches = cm / 2.54
@@ -324,15 +353,6 @@ struct UserProfileView: View {
                 heightInches = String(inches)
             } else {
                 heightCm = String(Int(cm))
-            }
-        }
-
-        if let kg = profile.weightKg {
-            if unitPreference == "imperial" {
-                let lbs = Int(kg * 2.20462)
-                weightLbs = String(lbs)
-            } else {
-                weightKg = String(Int(kg))
             }
         }
 
@@ -349,6 +369,7 @@ struct UserProfileView: View {
         }
 
         profile.age = Int(age)
+        profile.dateOfBirth = dateOfBirth
         profile.gender = gender.isEmpty ? nil : gender
         profile.healthConditions = Array(selectedConditions)
         profile.activityLevel = activityLevel.isEmpty ? nil : activityLevel
@@ -375,19 +396,6 @@ struct UserProfileView: View {
         } else {
             if let cm = Double(heightCm) {
                 profile.heightCm = cm
-                profile.bodyMeasurementsUpdated = Date()
-            }
-        }
-
-        // Save weight (convert to kg for internal storage)
-        if unitPreference == "imperial" {
-            if let lbs = Double(weightLbs) {
-                profile.weightKg = lbs / 2.20462
-                profile.bodyMeasurementsUpdated = Date()
-            }
-        } else {
-            if let kg = Double(weightKg) {
-                profile.weightKg = kg
                 profile.bodyMeasurementsUpdated = Date()
             }
         }

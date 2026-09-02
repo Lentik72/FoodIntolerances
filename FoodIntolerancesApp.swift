@@ -148,7 +148,14 @@ struct FoodIntolerancesApp: App {
                         // As common modifiers on the Group they would run during
                         // onboarding — fetching weather and prompting for location
                         // before the user has been told why.
-                        .task { healthKitIngestor.startObserving() }
+                        .task {
+                            healthKitIngestor.startObserving()
+                            // Silent, once per install: rewrites the daily-stat
+                            // rows the pre-fix trailing recompute clobbered.
+                            await DailyStatRepair.runIfDue {
+                                _ = try await healthKitIngestor.reingestDailyStats()
+                            }
+                        }
                         .task { emitCoordinator.emit(forced: false) }
                         .onChange(of: scenePhase) { _, phase in
                             guard phase == .active else { return }
@@ -198,6 +205,12 @@ struct FoodIntolerancesApp: App {
                 if enableDiagnostics {
                     Logger.debug("Diagnostics mode enabled", category: .app)
                 }
+                // Wired here (not at HealthKitIngestor construction, which
+                // predates the container) so a granted HealthKit
+                // authorization — first-run Connect included — can populate
+                // UserProfile.dateOfBirth. Optional on the ingestor and set
+                // before any authorization request reaches the user.
+                healthKitIngestor.modelContainer = sharedModelContainer
             }
         }
     }

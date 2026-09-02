@@ -9,16 +9,35 @@ public struct SleepSession: Equatable, Sendable, Identifiable {
     public let start: Date               // earliest segment start (bed time)
     public let end: Date                 // latest segment end (wake time)
     public let kind: Kind
+    /// Per-stage total for display: the naive sum of this stage's segments,
+    /// NOT deduplicated. Two sources both recording e.g. `asleepCore` over
+    /// the same hour double-count it here. Approximate when sources overlap
+    /// — do not derive `asleepMinutes` from these; see
+    /// `stageTotalsExceedAsleepTime`.
     public let coreMinutes: Double
+    /// Naive per-source sum, not deduplicated — see `coreMinutes`.
     public let deepMinutes: Double
+    /// Naive per-source sum, not deduplicated — see `coreMinutes`.
     public let remMinutes: Double
+    /// Naive per-source sum, not deduplicated — see `coreMinutes`.
     public let unspecifiedMinutes: Double
     public let awakeMinutes: Double
     public let inBedMinutes: Double
     public let segmentCount: Int
 
-    /// Time actually asleep. `inBed` overlaps the stages and is never included.
-    public var asleepMinutes: Double { coreMinutes + deepMinutes + remMinutes + unspecifiedMinutes }
+    /// Time actually asleep: the union of every asleep-stage segment
+    /// (core/deep/rem/unspecified), overlapping segments merged so a second
+    /// tracker covering the same hours never adds to the total. `inBed`
+    /// overlaps the stages and is never included.
+    public let asleepMinutes: Double
+
+    /// True when the per-stage totals above sum to materially more than
+    /// `asleepMinutes` — i.e. two sources' stage totals overlap. A
+    /// one-minute tolerance absorbs rounding. Drives the Timeline row's
+    /// overlap disclosure; never used to correct the totals themselves.
+    public var stageTotalsExceedAsleepTime: Bool {
+        (coreMinutes + deepMinutes + remMinutes + unspecifiedMinutes) - asleepMinutes > 1
+    }
 
     /// Deterministic across rebuilds of the same slice — drives SwiftUI row
     /// identity and the Timeline's expansion state.
@@ -27,11 +46,12 @@ public struct SleepSession: Equatable, Sendable, Identifiable {
     public init(start: Date, end: Date, kind: Kind,
                 coreMinutes: Double, deepMinutes: Double, remMinutes: Double,
                 unspecifiedMinutes: Double, awakeMinutes: Double, inBedMinutes: Double,
-                segmentCount: Int) {
+                asleepMinutes: Double, segmentCount: Int) {
         self.start = start; self.end = end; self.kind = kind
         self.coreMinutes = coreMinutes; self.deepMinutes = deepMinutes
         self.remMinutes = remMinutes; self.unspecifiedMinutes = unspecifiedMinutes
         self.awakeMinutes = awakeMinutes; self.inBedMinutes = inBedMinutes
+        self.asleepMinutes = asleepMinutes
         self.segmentCount = segmentCount
     }
 }
@@ -40,6 +60,11 @@ public enum SleepSessionBuilder {
     /// A hole in the sleep data of at least this long starts a new session.
     /// Recorded `awake` segments are data, not holes — they extend the chain.
     public static let sessionGap: TimeInterval = 3600
+
+    /// Subtypes that count as time asleep. `inBed` and `awake` are excluded.
+    private static let asleepStageSubtypes: Set<String> = [
+        "asleepCore", "asleepDeep", "asleepREM", "asleepUnspecified"
+    ]
 
     /// Folds raw `.sleep` duration events into sessions, sorted ascending by
     /// `end`. Point `.sleep` events (no `endTimestamp`) are ignored here and
@@ -84,7 +109,13 @@ public enum SleepSessionBuilder {
         let rem = totals["asleepREM"] ?? 0
         let unspecified = totals["asleepUnspecified"] ?? 0
         let inBed = totals["inBed"] ?? 0
-        let asleep = core + deep + rem + unspecified
+        // Two sources can each claim the same hour of sleep (same stage from
+        // two devices, or different stages — e.g. a watch's staged sleep and
+        // a ring's `asleepUnspecified` — over the same window). Union the
+        // raw segments rather than summing the per-stage totals above, and
+        // clamp to the session's own span as a last-resort guard: you cannot
+        // be asleep longer than the night lasted.
+        let asleep = min(unionMinutes(ofAsleepStages: segments), end.timeIntervalSince(start) / 60)
         return SleepSession(start: start, end: end,
                             kind: kind(start: start, end: end,
                                        asleepBasis: asleep > 0 ? asleep : inBed,
@@ -93,7 +124,31 @@ public enum SleepSessionBuilder {
                             unspecifiedMinutes: unspecified,
                             awakeMinutes: totals["awake"] ?? 0,
                             inBedMinutes: inBed,
+                            asleepMinutes: asleep,
                             segmentCount: segments.count)
+    }
+
+    /// Merges overlapping (or touching) asleep-stage intervals, regardless of
+    /// subtype or source, and returns the total covered minutes.
+    private static func unionMinutes(ofAsleepStages segments: [HealthEvent]) -> Double {
+        let intervals = segments
+            .filter { asleepStageSubtypes.contains($0.subtype ?? "") }
+            .map { ($0.timestamp, $0.endTimestamp!) }
+            .sorted { $0.0 < $1.0 }
+        guard var runStart = intervals.first?.0, var runEnd = intervals.first?.1 else { return 0 }
+
+        var total = 0.0
+        for (segStart, segEnd) in intervals.dropFirst() {
+            if segStart <= runEnd {
+                runEnd = max(runEnd, segEnd)
+            } else {
+                total += runEnd.timeIntervalSince(runStart) / 60
+                runStart = segStart
+                runEnd = segEnd
+            }
+        }
+        total += runEnd.timeIntervalSince(runStart) / 60
+        return total
     }
 
     /// Nap iff short (< 3 h), fully inside one local day, starting 06:00 or

@@ -80,6 +80,12 @@ struct ExperimentsView: View {
             }
         }
         .onAppear { state.appeared() }
+        .safeAreaInset(edge: .bottom) {
+            NonDiagnosticFooter()
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(HealthTheme.paper)
+        }
     }
 }
 

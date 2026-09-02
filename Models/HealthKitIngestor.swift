@@ -1,5 +1,6 @@
 import Foundation
 import HealthKit
+import SwiftData
 import HealthGraphCore
 
 struct BackfillProgress {
@@ -16,12 +17,28 @@ final class HealthKitIngestor: ObservableObject {
     @Published var isRunning = false
     @Published var progress: BackfillProgress?
     @Published var lastBackfillFailures: [String] = []
+    /// From the HealthKit biological-sex characteristic, populated on a
+    /// granted authorization. Not persisted anywhere (no schema change this
+    /// round, and nothing consumes it yet) — capturing it now is what makes
+    /// a later consumer possible without a second HealthKit round-trip.
+    @Published private(set) var biologicalSex: BiologicalSex?
 
     private let healthStore = HKHealthStore()
     private let database: AppDatabase
     private let pipeline: IngestPipeline
 
+    /// Set once at launch (FoodIntolerancesApp) so a granted authorization
+    /// can populate `UserProfile.dateOfBirth`. Optional and fail-open: nil
+    /// simply skips the profile write, never blocks authorization or ingest.
+    var modelContainer: ModelContainer?
+
     static let backfillCompletedKey = "hg.hk.backfillCompleted"
+
+    /// Tombstone for `UserProfileView`'s "Remove Date of Birth": once set, a
+    /// later authorization pass must never silently repopulate the DOB it
+    /// just removed. Written by hand at the two UI sites that change intent
+    /// (remove / manually pick a new one) — see `shouldPopulateDateOfBirth`.
+    static let dobRemovedKey = "hg.profile.dobRemoved"
 
     init(database: AppDatabase = HealthGraphProvider.shared) {
         self.database = database
@@ -50,8 +67,20 @@ final class HealthKitIngestor: ObservableObject {
         }
     }
 
+    /// Read-only characteristics (date of birth, biological sex): the
+    /// profile's "read from HealthKit where permitted" source (spec §
+    /// "The profile"). `characteristicType(forIdentifier:)` never returns
+    /// nil for these two well-known identifiers; `compactMap` only guards
+    /// the API's optional signature.
+    static var characteristicTypes: [HKCharacteristicType] {
+        [HKObjectType.characteristicType(forIdentifier: .dateOfBirth),
+         HKObjectType.characteristicType(forIdentifier: .biologicalSex)].compactMap { $0 }
+    }
+
     static var readTypes: Set<HKObjectType> {
-        Set(perSampleTypes as [HKObjectType]).union(Set(dailyStatTypes as [HKObjectType]))
+        Set(perSampleTypes as [HKObjectType])
+            .union(Set(dailyStatTypes as [HKObjectType]))
+            .union(Set(characteristicTypes as [HKObjectType]))
     }
 
     // MARK: - Authorization
@@ -59,6 +88,70 @@ final class HealthKitIngestor: ObservableObject {
     func requestAuthorization() async throws {
         guard HKHealthStore.isHealthDataAvailable() else { return }
         try await healthStore.requestAuthorization(toShare: [], read: Self.readTypes)
+        // A successful return does NOT imply every type was actually
+        // granted (Apple reports denied reads as "not determined", never a
+        // throw) — the characteristic reads below simply throw/no-op for
+        // whichever of the two was denied, same fail-open shape as the rest
+        // of this class.
+        populateProfileFromHealthKitCharacteristics()
+    }
+
+    /// Reads the DOB and biological-sex characteristics (each independently
+    /// optional — either may be denied or unset) and writes what HealthKit
+    /// answers into the profile. Never overwrites an existing
+    /// `dateOfBirth` — a value already on the profile (HK-sourced or
+    /// user-entered via `UserProfileView`'s "ask") wins over a later HK
+    /// read, and a user-removed DOB (the tombstone) stays removed. Biological
+    /// sex has no profile column (no schema change this round) so it is only
+    /// cached on `self`.
+    private func populateProfileFromHealthKitCharacteristics() {
+        if let sexObject = try? healthStore.biologicalSex() {
+            biologicalSex = BiologicalSex(sexObject.biologicalSex)
+        }
+
+        guard let modelContainer,
+              let components = try? healthStore.dateOfBirthComponents(),
+              let dob = Calendar(identifier: .gregorian).date(from: components) else { return }
+
+        let context = modelContainer.mainContext
+        do {
+            let profile = try context.fetch(FetchDescriptor<UserProfile>()).first ?? {
+                let created = Self.newProfileSeededWithGlobalUnits()
+                context.insert(created)
+                return created
+            }()
+            guard Self.shouldPopulateDateOfBirth(
+                storedDOB: profile.dateOfBirth,
+                tombstone: UserDefaults.standard.bool(forKey: Self.dobRemovedKey)) else { return }
+            profile.dateOfBirth = dob
+            profile.lastUpdated = Date()
+            try context.save()
+        } catch {
+            Logger.error(error, message: "Failed to populate profile from HealthKit characteristics", category: .data)
+        }
+    }
+
+    /// A freshly-created profile seeded exactly like every other profile
+    /// creator (`OnboardingContainerView`, `UserProfileView`) seeds it: the
+    /// resolved global measurement system, never the bare `UserProfile()`
+    /// default ("imperial" regardless of locale — see
+    /// `UnitSystem.newProfileUnitPreference`). `defaults`/`locale` are
+    /// injectable so the seeding is testable without standing up HealthKit.
+    nonisolated static func newProfileSeededWithGlobalUnits(defaults: UserDefaults = .standard,
+                                                             locale: Locale = .current) -> UserProfile {
+        let profile = UserProfile()
+        profile.unitPreference = UnitSystem.newProfileUnitPreference(
+            global: defaults.string(forKey: UnitPreferenceBootstrap.globalKey) ?? "", locale: locale)
+        return profile
+    }
+
+    /// Pure guard for the DOB-population write: only when the profile has no
+    /// DOB yet AND the user never explicitly removed one (the
+    /// `dobRemovedKey` tombstone, written by hand at `UserProfileView`'s
+    /// "Remove Date of Birth" action and cleared when the user manually
+    /// picks a new DOB there).
+    nonisolated static func shouldPopulateDateOfBirth(storedDOB: Date?, tombstone: Bool) -> Bool {
+        storedDOB == nil && !tombstone
     }
 
     // MARK: - Backfill
@@ -100,6 +193,18 @@ final class HealthKitIngestor: ObservableObject {
             done += 1
         }
         UserDefaults.standard.set(true, forKey: Self.backfillCompletedKey)
+        // A CLEAN backfill run by this (fixed) code already wrote whole days,
+        // so there is nothing for the one-shot repair to correct: stamp it
+        // done rather than make a fresh install re-read a year for nothing. An
+        // install whose backfill ran on the old code has no stamp, so the
+        // repair runs once on its next launch.
+        if lastBackfillFailures.isEmpty {
+            // Guarded: the loop above swallows a per-type throw into
+            // `lastBackfillFailures`, so a daily type that failed here left
+            // rows missing or stale — stamping would disarm the one mechanism
+            // that would ever re-read them. Leave the repair armed instead.
+            UserDefaults.standard.set(DailyStatRepair.currentVersion, forKey: DailyStatRepair.versionKey)
+        }
         return total
     }
 
@@ -149,19 +254,42 @@ final class HealthKitIngestor: ObservableObject {
 
     // MARK: - Daily statistics
 
+    /// The whole-calendar-day range a daily-statistics query covers. `start`
+    /// is floored to local midnight so the HealthKit sample predicate and the
+    /// bucket enumeration begin at the SAME instant — a time-of-day reaching
+    /// the predicate is exactly the defect this pins (the day-2 bucket summed
+    /// only the samples after that time of day and overwrote the full-day row).
+    nonisolated static func dailyStatRange(from start: Date, to end: Date,
+                                           calendar: Calendar = .current) -> DateInterval {
+        let dayStart = calendar.startOfDay(for: start)
+        // `max` only so a caller that inverts the arguments gets an empty
+        // range instead of a `DateInterval` precondition trap.
+        return DateInterval(start: dayStart, end: max(dayStart, end))
+    }
+
+    /// The trailing window `recomputeRecentDailyStats` re-reads: the start of
+    /// the calendar day two days before `now`, through `now`.
+    nonisolated static func recentDailyStatWindow(now: Date,
+                                                  calendar: Calendar = .current) -> DateInterval {
+        let twoDaysBack = calendar.date(byAdding: .day, value: -2, to: now) ?? now
+        return dailyStatRange(from: twoDaysBack, to: now, calendar: calendar)
+    }
+
     func ingestDailyStats(for type: HKQuantityType, from start: Date,
                           to end: Date) async throws -> IngestSummary {
         let identifier = type.identifier
         let aggregation = HealthKitSampleMapper.dailyStatOptions(for: identifier)
         let options: HKStatisticsOptions = aggregation == .sum ? .cumulativeSum : .discreteAverage
-        let dayStart = Calendar.current.startOfDay(for: start)
+        // ONE range, used by the predicate, the anchor and the enumeration
+        // alike: whole calendar days, so no bucket can cover a partial day.
+        let range = Self.dailyStatRange(from: start, to: end)
 
         let collection: HKStatisticsCollection = try await withCheckedThrowingContinuation { cont in
             let query = HKStatisticsCollectionQuery(
                 quantityType: type,
-                quantitySamplePredicate: HKQuery.predicateForSamples(withStart: start, end: end),
+                quantitySamplePredicate: HKQuery.predicateForSamples(withStart: range.start, end: range.end),
                 options: options,
-                anchorDate: dayStart,
+                anchorDate: range.start,
                 intervalComponents: DateComponents(day: 1))
             query.initialResultsHandler = { _, result, error in
                 if let error { cont.resume(throwing: error) }
@@ -172,7 +300,7 @@ final class HealthKitIngestor: ObservableObject {
         }
 
         var events: [HealthEvent] = []
-        collection.enumerateStatistics(from: dayStart, to: end) { stats, _ in
+        collection.enumerateStatistics(from: range.start, to: range.end) { stats, _ in
             let quantity = aggregation == .sum ? stats.sumQuantity() : stats.averageQuantity()
             guard let quantity else { return }
             let value = quantity.doubleValue(for: Self.hkUnit(for: identifier))
@@ -242,15 +370,63 @@ final class HealthKitIngestor: ObservableObject {
         }
     }
 
-    /// Daily-stat types have no anchors: recompute the trailing 2 days —
-    /// dedupKeys make the re-ingest an idempotent same-day update.
+    /// Daily-stat types have no anchors: recompute the trailing 2 whole
+    /// calendar days — dedupKeys make the re-ingest an idempotent same-day
+    /// update, which is why the window must never start mid-day (a partial
+    /// day would overwrite the correct row, not add to it).
     private func recomputeRecentDailyStats(for type: HKQuantityType) async {
-        let start = Calendar.current.date(byAdding: .day, value: -2, to: Date())!
+        let window = Self.recentDailyStatWindow(now: Date())
         do {
-            _ = try await ingestDailyStats(for: type, from: start, to: Date())
+            _ = try await ingestDailyStats(for: type, from: window.start, to: window.end)
         } catch {
-            Logger.error("HK daily-stat recompute failed", category: .data)
+            Logger.error(error, message: "HK daily-stat recompute failed for \(type.identifier)",
+                         category: .data)
         }
+    }
+
+    /// Re-reads every daily-statistics type over the last `years` and writes
+    /// the whole-day values through the normal pipeline (in-place updates via
+    /// the existing dedup keys). Used by `DailyStatRepair` only. Throws if ANY
+    /// type failed — after re-ingesting the rest — so a caller can refuse to
+    /// mark the repair done. Touches none of the user-facing import state
+    /// (`isRunning`, `progress`, `lastBackfillFailures`, `HealthImportStatusStore`):
+    /// this is a silent background pass the user never asked for.
+    /// No `requestAuthorization()` here — the repair only runs after a
+    /// completed backfill, which already asked.
+    func reingestDailyStats(years: Int = 1) async throws -> IngestSummary {
+        let start = Calendar.current.date(byAdding: .year, value: -years, to: Date())!
+        var total = IngestSummary()
+        var failed: [String] = []
+        for type in Self.dailyStatTypes {
+            do {
+                total = total + (try await ingestDailyStats(for: type, from: start, to: Date()))
+            } catch let error where Self.isNothingToRepair(error) {
+                // Never requested → nothing of this type was ever written →
+                // nothing to repair. NOT a failure: counting it as one would
+                // keep the repair permanently unstamped (see below).
+                Logger.info("HK daily-stat repair skipped \(type.identifier): never authorized, so no rows exist",
+                            category: .data)
+            } catch {
+                failed.append(type.identifier)
+            }
+        }
+        guard failed.isEmpty else { throw DailyStatRepairError.typesFailed(failed) }
+        return total
+    }
+
+    /// Whether a re-ingest error means "there is nothing here to repair"
+    /// rather than "the repair failed".
+    ///
+    /// HealthKit hides a *denied* read as an empty result, so the only
+    /// authorization state that surfaces as an error is a type this install
+    /// never asked for — which happens the first time `DailyStatRepair`'s
+    /// version is bumped after a new type joins the daily table, on every
+    /// install that hasn't re-imported since. No rows of that type exist, so
+    /// there is nothing for the repair to rewrite. Treating it as a failure
+    /// would leave the version unstamped forever and re-read a full year for
+    /// all types on every launch. Every other error is a real failure.
+    nonisolated static func isNothingToRepair(_ error: Error) -> Bool {
+        (error as? HKError)?.code == .errorAuthorizationNotDetermined
     }
 
     // MARK: - HK → DTO conversion
@@ -300,6 +476,11 @@ final class HealthKitIngestor: ObservableObject {
 
     static func mapSample(_ sample: HKSample) -> HealthEvent? {
         let timezoneID = sample.metadata?[HKMetadataKeyTimeZone] as? String
+        // The writing app's bundle ID and (when Health has one) the physical
+        // device name. Stored, not yet consumed — see HealthKitSampleMapper's
+        // Source Provenance section.
+        let sourceBundleID = sample.sourceRevision.source.bundleIdentifier
+        let deviceName = sample.device?.name
         if let workout = sample as? HKWorkout {
             var name = workout.workoutActivityType.hgActivityName
             name = name.prefix(1).lowercased() + name.dropFirst()
@@ -312,7 +493,8 @@ final class HealthKitIngestor: ObservableObject {
                 .doubleValue(for: .meterUnit(with: .kilo))
             return HealthKitSampleMapper.map(
                 WorkoutData(activityName: canonicalName, start: workout.startDate, end: workout.endDate,
-                            kcal: kcal, distanceKm: distance, timezoneID: timezoneID),
+                            kcal: kcal, distanceKm: distance, timezoneID: timezoneID,
+                            sourceBundleID: sourceBundleID, deviceName: deviceName),
                 source: .healthKit)
         }
         if let quantity = sample as? HKQuantitySample {
@@ -320,7 +502,8 @@ final class HealthKitIngestor: ObservableObject {
             return HealthKitSampleMapper.map(
                 QuantitySampleData(identifier: id, start: quantity.startDate, end: quantity.endDate,
                                    value: quantity.quantity.doubleValue(for: hkUnit(for: id)),
-                                   unit: unitString(for: id), timezoneID: timezoneID),
+                                   unit: unitString(for: id), timezoneID: timezoneID,
+                                   sourceBundleID: sourceBundleID, deviceName: deviceName),
                 source: .healthKit)
         }
         if let category = sample as? HKCategorySample {
@@ -331,10 +514,26 @@ final class HealthKitIngestor: ObservableObject {
                 CategorySampleData(identifier: category.categoryType.identifier,
                                    start: category.startDate, end: category.endDate,
                                    value: category.value, timezoneID: timezoneID,
-                                   menstrualCycleStart: cycleStart),
+                                   menstrualCycleStart: cycleStart,
+                                   sourceBundleID: sourceBundleID, deviceName: deviceName),
                 source: .healthKit)
         }
         return nil
+    }
+}
+
+extension BiologicalSex {
+    /// `.notSet` (never permitted, or the user declined in Health) maps to
+    /// `nil` — there is no `BiologicalSex.notSet` case, deliberately: an
+    /// unanswered characteristic is absence, not a fourth category.
+    init?(_ hk: HKBiologicalSex) {
+        switch hk {
+        case .female: self = .female
+        case .male: self = .male
+        case .other: self = .other
+        case .notSet: return nil
+        @unknown default: return nil
+        }
     }
 }
 

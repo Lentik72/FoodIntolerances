@@ -146,6 +146,26 @@ struct HealthKitSampleMapperTests {
         #expect(HealthKitSampleMapper.dailyStatOptions(
             for: "HKQuantityTypeIdentifierHeartRate") == .average)
     }
+
+    private func sample(bundleID: String?) -> QuantitySampleData {
+        QuantitySampleData(identifier: "HKQuantityTypeIdentifierRestingHeartRate",
+                           start: t0, end: t0, value: 58, unit: "bpm", timezoneID: nil,
+                           sourceBundleID: bundleID, deviceName: nil)
+    }
+
+    @Test func theRecordingSourceIsPreserved() {
+        // Not used yet. Stored so that when two devices disagree, the difference
+        // is recoverable instead of permanently invisible.
+        let event = HealthKitSampleMapper.map(sample(bundleID: "com.oura.health"), source: .healthKit)!
+        #expect(HealthKitSampleMapper.sourceBundleID(of: event) == "com.oura.health")
+    }
+
+    @Test func anAbsentSourceIsNotAnError() {
+        // Older samples and some writers carry none; ingestion must not drop them.
+        let event = HealthKitSampleMapper.map(sample(bundleID: nil), source: .healthKit)
+        #expect(event != nil)
+        #expect(HealthKitSampleMapper.sourceBundleID(of: event!) == nil)
+    }
 }
 
 @Suite struct MenstrualCycleStartTests {
